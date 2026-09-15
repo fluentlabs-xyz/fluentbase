@@ -87,9 +87,9 @@ use crate::{
         dkg_transport::{build_body_engine, register_dkg_subchannel},
         log_resolver::DkgLogKey,
         metrics::BeaconMetrics,
+        AGREEMENT_JOURNAL_PARTITION_PREFIX,
     },
     digest::Digest,
-    dpos::AGREEMENT_JOURNAL_PARTITION_PREFIX,
     outer::SharedMux,
     sync_metrics::SafetyHalt,
     REPLAY_BUFFER, SCHEME_RETENTION_EPOCHS, WRITE_BUFFER,
@@ -276,7 +276,7 @@ pub(crate) struct AgreementNetworks<VS, VR, CS, CR, XS, XR, BS, BR> {
 /// `prefix` (production passes `""`; the in-crate testbed a per-node prefix, see
 /// [`crate::engine::engine_partition`]). The base name is
 /// [`AGREEMENT_JOURNAL_PARTITION_PREFIX`], declared beside the plane's other
-/// partition names.
+/// partition names in `beacon/mod.rs`.
 ///
 /// Disjoint from the ordering plane's `consensus_epoch_{n}` by name, and removed
 /// wholesale after the abort — nothing else ever reclaims it. Private: the

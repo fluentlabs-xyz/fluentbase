@@ -181,54 +181,6 @@ const PARKED_BOUNDARY_WARN_EVERY: u64 = 150;
 /// itself (`OuterBuilder.partition_prefix`) so the two never drift.
 const MARSHAL_PARTITION_PREFIX: &str = "consensus_marshal";
 
-/// Partition for the durable `Round → σ` store behind the
-/// `beacon::seed_index::SeedIndex`. Deliberately NOT under
-/// [`MARSHAL_PARTITION_PREFIX`]: this is a Fluent-side store beside the marshal's,
-/// not part of it, and it must stay independently prunable.
-///
-/// Renamed from `beacon-seed-journal` when the backing primitive moved from
-/// `journal::segmented::fixed` to `ordinal::Ordinal`: the two on-disk formats are
-/// incompatible, and pointing at a fresh name lets the retention window simply
-/// refill.
-///
-/// That refill is no longer free. No block body couriers σ any more — the live
-/// derive and the crash-survivor replay both key on the block's own round — so a
-/// cold store costs the replay its first source and pushes it onto the local
-/// certificate, then the upstream, then a defer. **A further format change needs
-/// a real migration, not a rename.**
-pub(crate) const SEED_JOURNAL_PARTITION: &str = "beacon-seed-ordinal";
-
-/// Partition of the durable mint memo (`epoch → the epoch that MINTED the key in
-/// force at it`, `beacon::artifact::MintIndex`). Empty would mean RAM-only.
-///
-/// NOT the old `beacon-key-ordinal`, and the rename is not cosmetic: that name
-/// belonged to the deleted `epoch → PK_epoch` key journal, whose backing primitive
-/// was `ordinal::Ordinal`, while this is a `Metadata` store of a different record.
-/// A `Metadata` opened over a partition holding another codec's blobs PANICS at
-/// init (`.claude/COMMONWARE_INTERNALS.md`, "wrong codec on an existing
-/// partition"), and "every net relaunches from a fresh genesis" is a deployment
-/// policy, not a property of this code — so the two formats get two names.
-pub(crate) const MINT_MEMO_PARTITION: &str = "beacon-mint-metadata";
-
-/// Partition of the durable `epoch → agreement artifact` store
-/// (`beacon::artifact::ArtifactStore`). Public because the store is
-/// opened by the always-on beacon plane in the node crate, one process-wide
-/// instance — a second handle over this partition would be a dual-writer.
-pub const ARTIFACT_JOURNAL_PARTITION: &str = "beacon-artifact-metadata";
-
-/// Base name of the epoch-key agreement instance's journal partition:
-/// `{partition_prefix}dkg_epoch_{target_epoch}` (`beacon::dkg_engine`, the
-/// private `agreement_partition`). One per target epoch, holding the simplex
-/// voter's journal for the life of the instance.
-///
-/// OWNED by the beacon's agreement launcher, which is also what SWEEPS it: the
-/// instance destroys its own partition after it delivers, and every partition an
-/// abort left behind is reclaimed by the launcher's band sweep — the
-/// `SCHEME_RETENTION_EPOCHS` targets below the actor's epoch clock, by epoch
-/// number, on the edge the clock moves (`dkg_engine::prune_agreements`). Nothing
-/// outside the beacon opens, names or removes one.
-pub(crate) const AGREEMENT_JOURNAL_PARTITION_PREFIX: &str = "dkg_epoch_";
-
 /// Reth handles needed by the DPoS layer. The host adapter at
 /// `crates/node/src/dpos.rs` assembles this from `FullNode<N, AddOns>`;
 /// `transaction_pool`, `chain_spec`, and `data_dir` are intentionally
@@ -1480,7 +1432,7 @@ pub(crate) fn local_tracked_epoch(
 /// component into each per-promotion signer engine. The node crate owns the single
 /// `FluentP2P` (beacon halves + `DkgActor` consume their channel there; the 5
 /// non-beacon channels are owned by 5 persistent plane `Muxer`s), the
-/// EpochTransition-driven Oracle peer-set, the `dkg_height` clock, and reloads the
+/// EpochTransition-driven Oracle peer-set, the ordering-tip watch, and reloads the
 /// `ceremony_store` from `<datadir>/beacon/` once at startup; the signer engine
 /// reads the SAME shared `Arc`s and CLONES the 5 `MuxHandle`s per promotion. There is
 /// exactly ONE network / listen bind / peer set / broker set per process — a
@@ -1514,11 +1466,14 @@ pub struct SharedBeaconPlane {
     /// `tombstones` for arriving from the node crate rather than being defaulted
     /// here: a second instance would be a gauge nothing scrapes.
     pub plane_clock: crate::sync_metrics::PlaneClock,
-    /// The beacon plane's height channel, so `FluentApp` can feed marshal's
-    /// ordering tip into it. Travels with the plane rather than being created
-    /// here for the same reason `plane_clock` does: the receiver is the plane's
-    /// `DkgActor`, and a second channel would be a feeder nothing drains.
-    pub dkg_height_tx: mpsc::Sender<u64>,
+    /// The beacon plane's tip watch — THE clock as the plane reads it:
+    /// `FluentApp` publishes marshal's tip on it beside its own channel
+    /// (`with_beacon_tip`), and the plane's `DkgActor` is its ONE parked
+    /// receiver. Travels with the plane rather than being created here for the
+    /// same reason `plane_clock` does: the actor's receiver was taken from this
+    /// sender before the engine existed, and a sender created here would be one
+    /// the actor never reads.
+    pub beacon_tip: Arc<tokio::sync::watch::Sender<u64>>,
     /// The self-heal / fork-safety metric family, registered ONCE in the node
     /// crate where the beacon plane is built, and the fork-safety latch over it.
     /// Both travel with the plane for the same reason `plane_clock` does: the
@@ -2121,7 +2076,7 @@ impl DposLayer {
             marshal_mux,
             tombstones,
             plane_clock,
-            dkg_height_tx,
+            beacon_tip,
             sync_metrics,
             safety_halt,
         } = beacon_plane;
@@ -2564,10 +2519,10 @@ impl DposLayer {
         // Boundary hook: fires for every `Update::Block`. Spawns
         // fire-and-forget via `ctx.spawn` (NOT `tokio::spawn`, which would
         // depend on the implicit `tokio::Handle::current()` contract under
-        // commonware-tokio). The live-DKG epoch clock no longer rides this
-        // hook — the always-on plane (node crate) owns the `dkg_height` stream
-        // off a persistent finalized-height source, so the `DkgActor` keeps
-        // ticking across the follower phase where this signer hook does not run.
+        // commonware-tokio). The live-DKG epoch clock does not ride this hook —
+        // the `DkgActor` reads the marshal's ordering tip off the plane's own
+        // watch (`SharedBeaconPlane::beacon_tip`), which moves in the follower
+        // phase too, where this signer hook does not run.
         let consecutive_errors = Arc::new(AtomicU32::new(0));
         let et_for_hook = et_arc.clone();
         let ctx_for_hook = ctx.with_label("boundary_hook");
@@ -2978,7 +2933,7 @@ impl DposLayer {
             safety_halt: safety_halt.clone(),
             tombstones,
             plane_clock,
-            dkg_height_tx: Some(dkg_height_tx),
+            beacon_tip: Some(beacon_tip),
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,
             // BROADCAST body cache: at most 4 order-block bodies retained per
@@ -4151,14 +4106,14 @@ impl DposLayer {
             // this handle are unreachable on the follower path — an empty set is
             // the honest state, not a lost signal.
             tombstones: crate::slasher::TombstoneSet::default(),
-            // A follower runs no beacon plane, hence no finalized poller and no
-            // DKG clock — there is no second clock here to diverge from the
-            // ordering tip. An unregistered handle publishes nothing, which is
-            // the honest answer rather than a lag gauge reading the ordering tip
-            // against a permanent zero.
+            // A follower runs no beacon plane, hence no DKG clock — there is no
+            // second clock here to diverge from the ordering tip. An unregistered
+            // handle publishes nothing, which is the honest answer rather than a
+            // lag gauge reading the ordering tip against a permanent zero.
             plane_clock: crate::sync_metrics::PlaneClock::default(),
-            // Same reason: no beacon plane means no height channel to feed.
-            dkg_height_tx: None,
+            // Same reason: no beacon plane holds a receiver, so the app writes
+            // only its own watch and the epoch manager reads that one.
+            beacon_tip: None,
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,
             // BROADCAST body cache: at most 4 order-block bodies retained per
@@ -4420,28 +4375,11 @@ impl DposLayer {
             // `with_epoch_math` arms the defense-in-depth height↔epoch bind: the
             // follower fully trusts upstream committee reads, so it binds each
             // cert's round-epoch to its block's height-derived epoch.
-            //
-            // The live-frontier tee is wired for the ONE cursor it still has, and
-            // the follower does not run it: it has no beacon plane, so the DkgActor
-            // deal clock is a no-op — drop the receiver and each `try_send` is a
-            // benign Closed. (`live_height` went in 4.2 with `upstream_frontier`:
-            // the committee module reads at this node's own ordering-finalized
-            // anchor, so the frontier-aware read it existed for has no consumer.)
-            let (dkg_tx, dkg_rx) = tokio::sync::mpsc::channel::<u64>(1);
-            drop(dkg_rx);
             let mut inlet = crate::cert_inlet::CertInlet::new(inlet_marshal, inlet_committee, c)
                 .with_epoch_math(activation, interval)
                 .with_committee_read_deferred_metric(committee_read_deferred)
                 .with_carry_forward_fail_metric(carry_forward_verify_failed)
-                .with_randomness(inlet_randomness)
-                .with_tee(crate::cert_inlet::LiveFrontierTee {
-                    dkg_height_tx: dkg_tx,
-                    // Unregistered, like this path's other clock handles: every
-                    // `try_send` above is a by-design `Closed`, so counting them
-                    // against a registered counter would publish a drop series for
-                    // a clock this node deliberately does not run.
-                    plane_clock: crate::sync_metrics::PlaneClock::default(),
-                });
+                .with_randomness(inlet_randomness);
             if let Some(rotate) = inlet_rotate {
                 inlet = inlet.with_rotate(rotate);
             }

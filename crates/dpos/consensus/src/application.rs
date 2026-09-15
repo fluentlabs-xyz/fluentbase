@@ -337,24 +337,30 @@ pub struct FluentApp<XC, A> {
     /// `dpos_dkg_clock_height` against a climbing `dpos_ordering_finalized_height`
     /// is readable from outside instead of being two silences.
     plane_clock: crate::sync_metrics::PlaneClock,
-    /// Third feeder into the beacon plane's height channel, fed from the same
-    /// `Update::Tip` the ordering gauge rides. The `DkgActor` clamps to its
-    /// running max, so this is what makes its clock `max(fin + K, tip)` — with no
-    /// arithmetic anywhere and without the finalized poller having to be awake.
-    /// On a node whose execution has stalled it is the only feeder still moving.
-    /// `None` on a follower and in tests: neither runs a beacon plane.
-    dkg_height_tx: Option<tokio::sync::mpsc::Sender<u64>>,
     /// The marshal's ordering tip — the height of the highest finalization this
-    /// node has VERIFIED and stored — published from the same `Update::Tip` arm
-    /// of [`Reporter::report`] the two feeders above ride.
+    /// node has VERIFIED and stored — published from the `Update::Tip` arm of
+    /// [`Reporter::report`], the one place the tip is delivered to this process.
     ///
-    /// Not a second feeder and not a second writer: `report` is the one place
-    /// the tip is delivered to this process, and this is the same value it
-    /// already hands the gauge and the DKG clock, in the one shape a consumer
-    /// can both READ at a decision point and be WOKEN by. Its consumer is
-    /// [`crate::epoch_manager::Actor`], whose live epoch IS `epoch_of(tip)` — so
-    /// the manager takes the tip from the writer that has it rather than
-    /// re-deriving a second copy from a marshal read of its own.
+    /// THE clock of the process, one writer and one PARKED consumer per channel:
+    /// the epoch manager ([`crate::epoch_manager::Actor`], whose live epoch IS
+    /// `epoch_of(tip)`) subscribes through [`Self::ordering_tip`] and parks on
+    /// this one; the beacon's `DkgActor` (`beacon::ValidatorInputs::clock`)
+    /// parks on [`Self::beacon_tip`], a second channel written in the same
+    /// statement below. A watch, so a consumer can both READ the tip at a
+    /// decision point and be WOKEN by it, and nothing is ever dropped.
+    ///
+    /// ONE PARKED RECEIVER PER CHANNEL IS LOAD-BEARING, and it is the whole
+    /// reason the beacon's channel is separate rather than a second
+    /// subscription to this one. `tokio::sync::watch` wakes its receivers
+    /// through a `big_notify` of EIGHT `Notify` shards; a receiver picks its
+    /// shard on every `changed()` call with the per-process thread-local RNG
+    /// (`tokio-1.52.3/src/sync/watch.rs:422` → `runtime/context.rs:125` →
+    /// `FastRand::new` ← `RandomState`), while `notify_waiters` walks the shards
+    /// in index order. Two receivers parked on ONE channel are therefore woken
+    /// in an order drawn from process-random state — which reorders the tasks in
+    /// the ready queue of a seeded, otherwise fully deterministic run. Two
+    /// channels, each with one parked receiver, are woken in the order this app
+    /// writes them, and that order is code.
     ///
     /// `0` until the first tip: the marshal reports one at startup from its
     /// highest stored finalization (CW `marshal/core/actor.rs:397-402`), and a
@@ -364,8 +370,16 @@ pub struct FluentApp<XC, A> {
     /// An `Arc<Sender>` rather than a `Sender` because this app is CLONED (the
     /// marshal's reporter half and the epoch manager's copy are the same app),
     /// and a `watch::Sender` is not `Clone`; every clone must publish into the
-    /// one channel the manager subscribed to.
+    /// one channel the consumers subscribed to.
     ordering_tip: Arc<tokio::sync::watch::Sender<u64>>,
+    /// The beacon plane's own tip channel, when this node runs one: the plane
+    /// builds it before the app exists, keeps the receiver for its `DkgActor`
+    /// and hands the sender in ([`Self::with_beacon_tip`]). Written from the
+    /// same `Update::Tip` arm as [`Self::ordering_tip`], immediately after it,
+    /// so both consumers see every tip and neither can be woken ahead of the
+    /// other by anything but this order. `None` on a node with no beacon plane
+    /// (a follower, a test).
+    beacon_tip: Option<Arc<tokio::sync::watch::Sender<u64>>>,
 }
 
 impl<XC: Clone, A> Clone for FluentApp<XC, A> {
@@ -384,8 +398,8 @@ impl<XC: Clone, A> Clone for FluentApp<XC, A> {
             charges: self.charges.clone(),
             tombstones: self.tombstones.clone(),
             plane_clock: self.plane_clock.clone(),
-            dkg_height_tx: self.dkg_height_tx.clone(),
             ordering_tip: self.ordering_tip.clone(),
+            beacon_tip: self.beacon_tip.clone(),
         }
     }
 }
@@ -421,12 +435,14 @@ where
             // argument: an instance that never receives one publishes nothing,
             // which is what a follower and every test should publish.
             plane_clock: crate::sync_metrics::PlaneClock::default(),
-            dkg_height_tx: None,
-            // Created HERE and not handed in, so that every app in a process —
-            // the marshal's reporter half and the epoch manager's copy are
-            // clones of one `FluentApp` — shares one channel by construction
-            // rather than by a wiring site remembering to pass the same one.
+            // A channel of its own, so every app in a process — the marshal's
+            // reporter half and the epoch manager's copy are clones of one
+            // `FluentApp` — shares one by construction. This one is never
+            // replaced: a node with a beacon plane ADDS the plane's channel
+            // beside it (`with_beacon_tip`).
             ordering_tip: Arc::new(tokio::sync::watch::Sender::new(0)),
+            // Set only on a node that runs a beacon plane.
+            beacon_tip: None,
             genesis: Arc::new(genesis),
             executor,
             boundary_hook,
@@ -446,11 +462,19 @@ where
         self
     }
 
-    /// Feed the beacon plane's height channel from marshal's ordering tip. Only a
-    /// node that runs a beacon plane has one; everything else leaves the feeder
-    /// unwired and the plane keeps its other two.
-    pub fn with_dkg_heights(mut self, dkg_height_tx: tokio::sync::mpsc::Sender<u64>) -> Self {
-        self.dkg_height_tx = Some(dkg_height_tx);
+    /// Publish the ordering tip on THIS watch as well as the app's own. The
+    /// beacon plane is built before the app (`node/dpos.rs`,
+    /// `testbed/stand.rs`) and its `DkgActor` holds a receiver of this very
+    /// sender, so handing it in is what makes the actor's clock a channel this
+    /// app writes rather than one nothing ever writes. Call it before the app is
+    /// cloned — the builders do — or the reporter half keeps a `None` here and
+    /// the actor's `changed()` never fires: no deal, no seal.
+    ///
+    /// A SECOND CHANNEL, not a second subscription to the app's own, and
+    /// `Self::beacon_tip` says why: two receivers parked on one
+    /// `tokio::sync::watch` are woken in a process-random order.
+    pub fn with_beacon_tip(mut self, beacon_tip: Arc<tokio::sync::watch::Sender<u64>>) -> Self {
+        self.beacon_tip = Some(beacon_tip);
         self
     }
 
@@ -1065,23 +1089,25 @@ where
             self.assembler.observe_finalized(block);
             (self.boundary_hook)(block.clone());
         }
-        // The gauge is observability only, but the height channel is not: the tip
-        // is the beacon plane's third feeder, and the only one that keeps moving
-        // once this node's execution stalls. The tip still travels to the executor
+        // The gauge is observability only, but the watch is not: it is the
+        // process's clock — the epoch manager's live-epoch input and the beacon
+        // actor's deal/seal clock — and the only one that keeps moving once this
+        // node's execution stalls. The tip still travels to the executor
         // untouched below either way.
         if let Update::Tip(_, height, _) = &activity {
             self.plane_clock.record_ordering_tip(height.get());
-            // The epoch manager's live-epoch input, and its wake-up: one
-            // `send_replace` is both. Unconditional and lossless where the DKG
-            // feeder below is lossy — a dropped tick there is clamped away by a
-            // consumer that keeps a running max, while the live epoch is a
-            // FUNCTION of the current tip and a consumer that missed the last
-            // tick would hold a stale epoch until the next one.
+            // The value and the wake-up in one `send_replace`: unconditional
+            // (the marshal reports a tip only when it rises, `store_finalization`
+            // guards `height > self.tip`, so there is nothing to filter here) and
+            // lossless — the live epoch is a FUNCTION of the current tip, and a
+            // consumer that missed the last publish would hold a stale epoch
+            // until the next one.
             self.ordering_tip.send_replace(height.get());
-            if let Some(tx) = &self.dkg_height_tx {
-                if tx.try_send(height.get()).is_err() {
-                    self.plane_clock.note_height_drop();
-                }
+            // The beacon plane's channel, written immediately after and from the
+            // same statement: one writer, two channels, a fixed order. See
+            // `beacon_tip` for why this is not a second subscription above.
+            if let Some(beacon_tip) = &self.beacon_tip {
+                beacon_tip.send_replace(height.get());
             }
         }
         // Ack flow: the `Exact` ack inside Update::Block travels INSIDE this
@@ -2685,26 +2711,31 @@ mod tests {
         });
     }
 
-    /// The tip is a FEEDER into the beacon plane's height channel, not just a
-    /// gauge write. This is the property that makes the plane's clock
-    /// `max(fin + K, tip)` without any arithmetic in the node crate: the
-    /// `DkgActor` clamps to its running max, and the tip is the only feeder still
-    /// moving once this node's execution stalls. Computing that max inside the
-    /// finalized poller instead — the design this replaces — would be woken only
-    /// by the finalized watch, which is frozen for exactly the fault the max
-    /// exists for, so nothing here would ever reach the plane.
+    /// The watch handed in by `with_beacon_tip` IS written by the same
+    /// `Update::Tip` that writes the app's own — the property that makes the
+    /// beacon actor's clock and the epoch manager's tip ONE VALUE on two
+    /// channels: the actor holds a receiver taken from the sender BEFORE the app
+    /// existed, the manager subscribes through `ordering_tip()` afterwards, and
+    /// one `Update::Tip` must reach both. A `with_beacon_tip` that dropped the
+    /// sender (or a `report` that wrote only one of the two) would leave the
+    /// actor's receiver on a channel nothing writes — `changed()` never fires,
+    /// no deal, no seal.
     #[test]
-    fn the_tip_feeds_the_beacon_height_channel_with_no_poller_involved() {
+    fn the_tip_is_published_on_the_watch_handed_in_and_on_every_later_subscription() {
         use commonware_consensus::types::{Epoch, View};
 
         let runtime = commonware_runtime::deterministic::Runner::default();
         runtime.start(|_ctx| async move {
             let (mailbox, _rx) = fresh_mailbox();
-            let clock = crate::sync_metrics::PlaneClock::default();
-            let (dkg_tx, mut dkg_rx) = tokio::sync::mpsc::channel::<u64>(1);
-            let mut app = build_app(mailbox, Arc::new(|_b: OrderBlock| {}))
-                .with_plane_clock(clock.clone())
-                .with_dkg_heights(dkg_tx);
+            // The plane's receiver, taken before the app exists.
+            let plane_tip = Arc::new(tokio::sync::watch::Sender::new(0u64));
+            let mut actor_clock = plane_tip.subscribe();
+            let app = build_app(mailbox, Arc::new(|_b: OrderBlock| {}))
+                .with_beacon_tip(plane_tip.clone());
+            // The manager's subscription, taken after — through the app.
+            let mut manager_tip = app.ordering_tip();
+            // The clone the marshal reports into.
+            let mut reporter = app.clone();
 
             let tip = |h: u64| {
                 Update::Tip(
@@ -2713,20 +2744,26 @@ mod tests {
                     Digest(B256::ZERO),
                 )
             };
-            <FluentApp<NoChain, NoTxs> as Reporter>::report(&mut app, tip(900)).await;
-            assert_eq!(
-                dkg_rx.try_recv().ok(),
-                Some(900),
-                "the tip must reach the beacon plane's height channel"
+            <FluentApp<NoChain, NoTxs> as Reporter>::report(&mut reporter, tip(900)).await;
+            assert!(
+                actor_clock.has_changed().expect("the sender is alive"),
+                "the receiver taken from the sender handed in was not woken"
             );
-            assert_eq!(clock.drops(), 0);
+            assert_eq!(*actor_clock.borrow_and_update(), 900);
+            assert!(manager_tip.has_changed().expect("the sender is alive"));
+            assert_eq!(*manager_tip.borrow_and_update(), 900);
+            assert_eq!(
+                *plane_tip.borrow(),
+                900,
+                "published on the sender handed in"
+            );
 
-            // Capacity 1, nothing drained: the second tick has nowhere to go and
-            // must be counted rather than lost silently — a full channel is the one
-            // way this feeder leaves the clock behind without execution stalling.
-            <FluentApp<NoChain, NoTxs> as Reporter>::report(&mut app, tip(901)).await;
-            <FluentApp<NoChain, NoTxs> as Reporter>::report(&mut app, tip(902)).await;
-            assert_eq!(clock.drops(), 1);
+            // Nothing is dropped and nothing coalesces away the newest value: two
+            // tips back to back leave the receiver at the second.
+            <FluentApp<NoChain, NoTxs> as Reporter>::report(&mut reporter, tip(901)).await;
+            <FluentApp<NoChain, NoTxs> as Reporter>::report(&mut reporter, tip(902)).await;
+            assert!(actor_clock.has_changed().expect("the sender is alive"));
+            assert_eq!(*actor_clock.borrow_and_update(), 902);
         });
     }
 }

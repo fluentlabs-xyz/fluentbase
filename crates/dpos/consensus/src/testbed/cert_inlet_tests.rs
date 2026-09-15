@@ -3,22 +3,29 @@
 //! What these tests can see that no other stand test can: the inlet's own verify
 //! gate (`CertInlet::ingest` → `Committee::scheme(E)` → the certificate verify
 //! under the epoch's SEED ORACLE), its non-fault deferral, its data-fault
-//! rotation, and the live-frontier tee. The frontier plane's own `deliver` cannot
+//! rotation, and — since 5.4-А — that the beacon clock of a node fed by an inlet
+//! IS its marshal's tip. The frontier plane's own `deliver` cannot
 //! stand in for any of it: it builds its verifier WITHOUT an oracle
 //! (`plane_upstream.rs::verifier_for` → `build_verifier(.., None)`), so a
 //! certificate whose σ slot has been swapped under an intact multisig passes it
 //! and reaches the caller — the inlet is where the σ is first judged, and before
 //! 5.0а the stand had no inlet at all (`git grep CertInlet testbed/` was empty).
 //!
-//! Three of the seven tests are fed by the node's own frontier PLANE and four
-//! are not, and the split is load-bearing rather than incidental: the plane's
-//! `deliver` refuses a certificate whose epoch this node cannot read, so the
-//! inlet's own deferral is reachable ONLY through
-//! `CertInletSource::PeerArchive` — another node's archive, read directly. Two
-//! tee wirings run beside that split, and they answer different questions: the
-//! LIST of teed heights (`TeeWiring::Observed`) or the ORDER of the tick against
-//! the marshal (`TeeWiring::Production`). `TeeWiring`'s own doc carries the proof
-//! that no single wiring gives both.
+//! Some tests are fed by the node's own frontier PLANE and some are not, and
+//! the split is load-bearing rather than incidental: the plane's `deliver`
+//! refuses a certificate whose epoch this node cannot read, so the inlet's own
+//! deferral is reachable ONLY through `CertInletSource::PeerArchive` — another
+//! node's archive, read directly.
+//!
+//! The list of VERIFIED heights every test reads (`CertInletFacts::delivered`)
+//! is recorded at the marshal seam — `MarshalSink::verify_block`, the first
+//! marshal call on the clean path of `ingest` — not through a beacon-clock tee:
+//! 5.4-А removed the tee (`LiveFrontierTee`), and with it the `TeeWiring` split
+//! (`Observed` = a stand channel drained after `ingest`, `Production` = the
+//! node's real channel) that used to decide whether a run could see the list or
+//! the ORDER of the tick against the marshal. There is no tick any more: the
+//! beacon actor's clock is the marshal's tip itself, so "clock = tip" is a gauge
+//! comparison, asserted where it matters below.
 //!
 //! The NEGATIVE CONTROL of the whole file is `StandConfig::cert_inlet = None`:
 //! every other test in the crate runs it, no node spawns an inlet, and none of
@@ -28,7 +35,7 @@
 
 use super::stand::{
     CertInletCfg, CertInletFacts, CertInletSource, Committees, Outcome, Progress, Stand,
-    StandConfig, TeeWiring, BLOCKER_SITE_CONSENSUS, BLOCKER_SITE_FRONTIER,
+    StandConfig, BLOCKER_SITE_CONSENSUS, BLOCKER_SITE_FRONTIER,
 };
 use crate::beacon::testing::DETERMINISTIC_BOOTSTRAP_EPOCH;
 use metrics_util::debugging::Snapshotter;
@@ -74,6 +81,20 @@ fn inlet(out: &Outcome, i: usize) -> &CertInletFacts {
         .unwrap_or_else(|| panic!("node {i} ran no cert-inlet: {:?}", out.cert_inlet))
 }
 
+/// Node `i`'s two clock gauges at the end of the run, `(ordering, dkg)`: the
+/// marshal's tip as `FluentApp::report` gauged it and the `DkgActor`'s clock as
+/// its clamp gauged it. Both `expect`: a node that publishes neither ran no
+/// beacon actor, which is a fixture error for every test that reads them.
+fn clock_pair(out: &Outcome, i: usize) -> (u64, u64) {
+    let ordering = out
+        .metric(i, "dpos_ordering_finalized_height")
+        .expect("FluentApp gauges the ordering tip on a node with a registered PlaneClock");
+    let dkg = out
+        .metric(i, "dpos_dkg_clock_height")
+        .expect("the DkgActor gauges its clock on a Beacon::Live node");
+    (ordering as u64, dkg as u64)
+}
+
 /// `epoch >= 2 ⇒ committee is {0,1,2}` — nodes 3 and 4 leave at the second
 /// boundary. The same schedule the R-008 test uses, so a node without `PK_2`
 /// exists at all.
@@ -87,27 +108,27 @@ fn drop_the_last_two_from_epoch_two() -> Committees {
     }))
 }
 
-/// (5.0а, the clean path and the TEE) An inlet on a healthy committee member is a
-/// second producer into the marshal its own BFT engine already drives, and it
-/// changes nothing: the node stays in lockstep, nothing halts, no ERROR line
-/// appears. What the run BUYS is the tee and the clean-ingest bookkeeping, which
-/// no other stand configuration can show.
+/// (5.0а, the clean path) An inlet on a healthy committee member is a second
+/// producer into the marshal its own BFT engine already drives, and it changes
+/// nothing: the node stays in lockstep, nothing halts, no ERROR line appears.
+/// What the run BUYS is the clean-ingest bookkeeping, which no other stand
+/// configuration can show.
 ///
 /// Three things are pinned here and nowhere else in the crate:
 ///
 /// 1. **Every attempt was a clean ingest.** `ingests` counts certificates handed
-///    to `CertInlet::ingest`; the tee fires on the LAST line of the clean path
-///    only (`cert_inlet.rs`, after `observe_certificate` and
-///    after the three fault arms have returned), so `tee_heights.len() ==
-///    ingests` says the verify gate passed every time. With `rotations == 0` and
-///    `defers == 0` beside it, all three fault arms and the deferral arm are
-///    witnessed UNTAKEN on an honest run — which is what makes their being
-///    TAKEN, in the two tests below, mean something.
-/// 2. **The tee is monotone and contiguous from 1 — and that is a pin on a RATIO
-///    OF SPEEDS, not on a mechanism.** The by-height feeder re-reads `tier-F + 1`
-///    on every iteration, so nothing in the code forbids it asking the same
-///    height twice: that is exactly what happens when the executor has not
-///    advanced tier-F between two iterations, and it is what the `Frontier`
+///    to `CertInlet::ingest`; `delivered` is recorded at `verify_block`, the
+///    first marshal call on the clean path only (`cert_inlet.rs`, after
+///    `observe_certificate` and after the three fault arms have returned), so
+///    `delivered.len() == ingests` says the verify gate passed every time. With
+///    `rotations == 0` and `defers == 0` beside it, all three fault arms and the
+///    deferral arm are witnessed UNTAKEN on an honest run — which is what makes
+///    their being TAKEN, in the two tests below, mean something.
+/// 2. **The walk is monotone and contiguous from 1 — and that is a pin on a
+///    RATIO OF SPEEDS, not on a mechanism.** The by-height feeder re-reads
+///    `tier-F + 1` on every iteration, so nothing in the code forbids it asking
+///    the same height twice: that is exactly what happens when the executor has
+///    not advanced tier-F between two iterations, and it is what the `Frontier`
 ///    source below does thousands of times. The equality holds here because the
 ///    fetch of `tip + 1` effectively waits for the chain to grow (71 ingests over
 ///    71.9 s of virtual time at one block per second), so what it pins is the
@@ -116,34 +137,32 @@ fn drop_the_last_two_from_epoch_two() -> Committees {
 ///    asked for. One seed (`live(4, 1)`), byte-identical over three runs; a
 ///    slower executor could legitimately repeat a height without the property
 ///    itself changing, so the failure message names the shape and not the count.
+/// 3. **The beacon clock is the marshal's tip.** 5.4-А: the `DkgActor` takes its
+///    clock off the ordering-tip watch `FluentApp::report(Update::Tip)`
+///    publishes — the same value the ordering gauge shows — so on a node whose
+///    marshal is fed by an inlet `dpos_dkg_clock_height` is never ABOVE
+///    `dpos_ordering_finalized_height` (the tee used to fire one call before the
+///    marshal saw the certificate, Д-5.4Б-3) and, at rest, equal to it; and it
+///    is at least the highest height the inlet handed the marshal, which is
+///    what says the inlet's certificates reached the clock at all. NOT
+///    exclusive: the node's own engine reports the same tips on a healthy
+///    node, so this is "the clock is the tip", not "the inlet moved it" — the
+///    catch-up test below is where the inlet is the mover.
 ///
-///    The tee's own tick is wired `TeeWiring::Observed` here, which is what makes
-///    the LIST readable at all — and, by the same token, says nothing about WHEN
-///    the DKG clock moved relative to the marshal's Tip (see `TeeWiring`, and the
-///    production-wiring twin at the bottom of this file).
-/// 3. **The heights reach the `DkgActor`.** The tee's own channel is drained by
-///    the inlet task and forwarded into the REAL `dkg_height_tx` — the channel
-///    whose receiver is `ValidatorInputs::heights` — so `dpos_dkg_height_drops_total
-///    == 0` says nothing was lost on the forward and `dpos_dkg_clock_height >=
-///    max(tee_heights)` says the actor's clamp (`beacon/actor.rs::on_height`) saw
-///    at least that height. NOT exclusive: `FluentApp::report(Update::Tip)` feeds
-///    the same channel on a healthy node, so this is "the forward is not lossy",
-///    not "the tee is the only feeder" (see the journal §4).
-///
-/// Falsifier: `tee_heights.len() != ingests` (a fault or a deferral happened on
-/// an honest run); a non-contiguous or non-monotone tee; a drop on the forward;
-/// a dkg clock below the highest teed height; any rotation or deferral; the
-/// stand losing lockstep, halting, or printing an ERROR — a second producer into
-/// the marshal is not allowed to cost any of those.
+/// Falsifier: `delivered.len() != ingests` (a fault or a deferral happened on an
+/// honest run); a non-contiguous or non-monotone walk; a DKG clock above the
+/// ordering tip (a second, earlier feeder is back), below the highest delivered
+/// height, or unequal to the tip at rest; any rotation or deferral; the stand
+/// losing lockstep, halting, or printing an ERROR — a second producer into the
+/// marshal is not allowed to cost any of those.
 #[test]
-fn an_inlet_on_a_healthy_member_verifies_every_height_it_is_fed_and_tees_it() {
+fn an_inlet_on_a_healthy_member_verifies_every_height_it_is_fed_and_hands_it_to_the_marshal() {
     const TARGET: u64 = 72;
     let mut cfg = StandConfig::live(4, 1);
     cfg.epoch_len = EPOCH_LEN;
     cfg.cert_inlet = Some(CertInletCfg {
         nodes: vec![3],
         source: CertInletSource::NextAboveTier,
-        tee: TeeWiring::Observed,
     });
     let out = Stand::new(cfg).run_until(reached(TARGET), Duration::from_secs(200));
     assert!(!out.timed_out, "heights {:?}", out.heights);
@@ -160,35 +179,38 @@ fn an_inlet_on_a_healthy_member_verifies_every_height_it_is_fed_and_tees_it() {
 
     // (1) Every attempt passed the verify gate; no fault arm and no deferral.
     assert_eq!(
-        f.tee_heights.len() as u64,
+        f.delivered.len() as u64,
         f.ingests,
         "an honest run took a fault or a deferral arm: {f:?}"
     );
     assert_eq!(f.rotations, 0, "an honest upstream cost a rotation: {f:?}");
     assert_eq!(f.defers, 0, "an honest run deferred a certificate: {f:?}");
 
-    // (2) The tee is the by-height walk, exactly: 1, 2, 3, … with no gap and no
+    // (2) The walk is the by-height walk, exactly: 1, 2, 3, … with no gap and no
     // repeat.
     let expected: Vec<u64> = (1..=f.ingests).collect();
     assert_eq!(
-        f.tee_heights, expected,
-        "the tee is not the contiguous walk the feeder asked for: {f:?}"
+        f.delivered, expected,
+        "the delivered list is not the contiguous walk the feeder asked for: {f:?}"
     );
 
-    // (3) The forward into the beacon plane's own height channel lost nothing and
-    // the actor's clock saw it.
-    assert_eq!(
-        out.metric(3, "dpos_dkg_height_drops_total"),
-        Some(0.0),
-        "a teed height was dropped on the forward into dkg_height_tx"
-    );
-    let teed_top = *f.tee_heights.last().expect("non-empty");
-    let dkg_clock = out
-        .metric(3, "dpos_dkg_clock_height")
-        .expect("the DkgActor gauges its clock on a Beacon::Live node");
+    // (3) The beacon clock is the marshal's tip, and the inlet's certificates
+    // are in it.
+    let delivered_top = *f.delivered.last().expect("non-empty");
+    let (ordering, dkg_clock) = clock_pair(&out, 3);
     assert!(
-        dkg_clock >= teed_top as f64,
-        "the DkgActor's clock ({dkg_clock}) never reached the highest teed height ({teed_top})"
+        dkg_clock <= ordering,
+        "the DkgActor's clock ({dkg_clock}) is ABOVE the marshal's tip ({ordering}) — a \
+         feeder other than the tip is back"
+    );
+    assert_eq!(
+        dkg_clock, ordering,
+        "at rest the DkgActor's clock is the marshal's tip, and it is not"
+    );
+    assert!(
+        dkg_clock >= delivered_top,
+        "the DkgActor's clock ({dkg_clock}) never reached the highest height the inlet \
+         handed the marshal ({delivered_top})"
     );
 
     // The second producer is harmless.
@@ -198,12 +220,12 @@ fn an_inlet_on_a_healthy_member_verifies_every_height_it_is_fed_and_tees_it() {
     assert!(out.errors().is_empty(), "{:?}", out.errors());
     only_these_ran_inlets(&out, &[3]);
     eprintln!(
-        "(5.0а/clean) heights={:?} ingests={} tee=[{}..{}] rotations={} defers={} \
-         dkg_clock={dkg_clock} virtual={:?}",
+        "(5.0а/clean) heights={:?} ingests={} delivered=[{}..{}] rotations={} defers={} \
+         ordering={ordering} dkg_clock={dkg_clock} virtual={:?}",
         out.heights,
         f.ingests,
-        f.tee_heights[0],
-        teed_top,
+        f.delivered[0],
+        delivered_top,
         f.rotations,
         f.defers,
         out.virtual_elapsed
@@ -288,10 +310,8 @@ fn an_inlet_on_a_healthy_member_verifies_every_height_it_is_fed_and_tees_it() {
 /// the "keyed" in this test's name is wrong); `rotations == 0` (the fault arm was
 /// not taken, or the threshold never fired); a rotation count that is not
 /// `forged_ingested / 3`; a clean ingest inside the window (then the forgery was
-/// not served to this victim); a dropped forward into the DKG height channel
-/// (which would make a clean ingest look like a fault and the arithmetic above a
-/// coincidence); the honest committee losing lockstep, halting, or printing an
-/// ERROR line.
+/// not served to this victim); the honest committee losing lockstep, halting, or
+/// printing an ERROR line.
 #[cfg(feature = "dpos-devnet-byzantine")]
 #[test]
 fn a_forged_seed_slot_costs_the_upstream_a_rotation_once_the_epoch_key_is_held() {
@@ -320,7 +340,6 @@ fn a_forged_seed_slot_costs_the_upstream_a_rotation_once_the_epoch_key_is_held()
     cfg.cert_inlet = Some(CertInletCfg {
         nodes: vec![VICTIM],
         source: CertInletSource::NextAboveTier,
-        tee: TeeWiring::Observed,
     });
     let mut stand = Stand::new(cfg);
     stand.node(FORGER).role(Role::ForgedSeedUpstream);
@@ -360,11 +379,12 @@ fn a_forged_seed_slot_costs_the_upstream_a_rotation_once_the_epoch_key_is_held()
     );
 
     // (3) THE PREMISE OF THE STREAK: the victim's feeder really walked the window,
-    // and every height it teed there is a height the forger did NOT forge. The
-    // window heights are partitioned by the tee: teed ⇒ verified ⇒ not forged.
+    // and every height it handed the marshal there is a height the forger did
+    // NOT forge. The window heights are partitioned at the marshal seam:
+    // delivered ⇒ verified ⇒ not forged.
     let f = inlet(&out, VICTIM);
-    let teed_in_window: Vec<u64> = f
-        .tee_heights
+    let delivered_in_window: Vec<u64> = f
+        .delivered
         .iter()
         .copied()
         .filter(|h| FORGE_WINDOW.contains(h))
@@ -373,20 +393,24 @@ fn a_forged_seed_slot_costs_the_upstream_a_rotation_once_the_epoch_key_is_held()
         .forged_heights
         .iter()
         .copied()
-        .filter(|h| !teed_in_window.contains(h))
+        .filter(|h| !delivered_in_window.contains(h))
         .collect();
     assert!(
         ingested_forged.len() >= crate::cert_inlet::MAX_UPSTREAM_FAULTS as usize,
         "the victim did not take {} forged certificates in a run — forged={:?} \
-         teed_in_window={teed_in_window:?}: {f:?}",
+         delivered_in_window={delivered_in_window:?}: {f:?}",
         crate::cert_inlet::MAX_UPSTREAM_FAULTS,
         byz.forged_heights
     );
 
     // (4) THE PROPERTY, and it is arithmetic on the PRIVATE `consecutive_faults`
     // rather than a `> 0`: with `defers == 0` every ingest is either a clean one
-    // (it teed) or a data fault, so `faults = ingests − tee_heights.len()` is
-    // exact; the faults all fall in one unbroken run (the feeder walks the window
+    // (it reached the marshal) or a data fault, so `faults = ingests −
+    // delivered.len()` is exact — and exact by construction, not by a drop count:
+    // `delivered` is a direct push at the marshal seam (`RecordingSink`), where
+    // the tee this stood on was a lossy `try_send` whose zero drop count had to
+    // be asserted as the arithmetic's precondition; the faults all fall in one
+    // unbroken run (the feeder walks the window
     // strictly upward and this victim's only by-height source is the forger), so
     // the streak resets ONLY at the threshold and the rotation count must be
     // `faults / MAX_UPSTREAM_FAULTS` exactly. `> 0` would also hold if every
@@ -397,7 +421,7 @@ fn a_forged_seed_slot_costs_the_upstream_a_rotation_once_the_epoch_key_is_held()
         f.defers, 0,
         "a deferral muddies the fault arithmetic: {f:?}"
     );
-    let faults = f.ingests - f.tee_heights.len() as u64;
+    let faults = f.ingests - f.delivered.len() as u64;
     assert_eq!(
         faults,
         ingested_forged.len() as u64,
@@ -413,20 +437,9 @@ fn a_forged_seed_slot_costs_the_upstream_a_rotation_once_the_epoch_key_is_held()
         faults / T
     );
 
-    // (5) THE PREMISE OF THE ARITHMETIC, and the direct witness of the KEY. The
-    // step above reads `faults = ingests − tee_heights.len()`, which is exact only
-    // while no clean ingest was miscounted as a fault — and the one way that could
-    // happen is a tee `try_send` that failed (`cert_inlet.rs:712-717` counts a
-    // failed send as a drop and the height never reaches the list). Zero drops is
-    // therefore the arithmetic's own precondition, stated.
-    assert_eq!(
-        out.metric(VICTIM, "dpos_dkg_height_drops_total"),
-        Some(0.0),
-        "a teed height was lost on the forward, so `ingests − tee.len()` is not the \
-         fault count: {f:?}"
-    );
-    // And the key: every one of those verify failures was judged WITH `PK_2`
-    // resolved, counted on the line that can only increment in that regime.
+    // (5) THE DIRECT WITNESS OF THE KEY: every one of those verify failures was
+    // judged WITH `PK_2` resolved, counted on the line that can only increment
+    // in that regime.
     assert_eq!(
         f.carry_forward_fails,
         ingested_forged.len() as u64,
@@ -447,7 +460,7 @@ fn a_forged_seed_slot_costs_the_upstream_a_rotation_once_the_epoch_key_is_held()
     only_these_ran_inlets(&out, &[VICTIM]);
     eprintln!(
         "(5.0а/Ex-21 keyed) heights={:?} forged={:?} ingested_forged={ingested_forged:?} \
-         teed_in_window={teed_in_window:?} ingests={} rotations={} defers={} \
+         delivered_in_window={delivered_in_window:?} ingests={} rotations={} defers={} \
          carry_forward_fails={} virtual={:?}",
         out.heights,
         byz.forged_heights,
@@ -516,9 +529,9 @@ fn a_forged_seed_slot_costs_the_upstream_a_rotation_once_the_epoch_key_is_held()
 /// `OutOfWindow`/`NotReadable`/`Read`) and step (5) DROPS the answer, counting
 /// `dpos_frontier_dropped_total{reason}` and resolving the waiting `fetch_one`
 /// to `None`. So the highest certificate this inlet can ever see is the top of
-/// its own read window — and that is what the run asserts: the tee stops at
-/// `last(epoch(anchor) + 2)` while the committee is above it, with the plane's
-/// drop counter as the witness. Production has no such gate in front of its
+/// its own read window — and that is what the run asserts: the delivered list
+/// stops at `last(epoch(anchor) + 2)` while the committee is above it, with the
+/// plane's drop counter as the witness. Production has no such gate in front of its
 /// inlet (the WS stream hands over whatever the upstream sends,
 /// `node/src/cert_inlet.rs`), so the deferral arm is a production regime the
 /// stand cannot reach through THIS plane — see the journal §0(9)/§5.
@@ -526,8 +539,8 @@ fn a_forged_seed_slot_costs_the_upstream_a_rotation_once_the_epoch_key_is_held()
 /// Falsifier: the victim NOT standing below the epoch-2 boundary, or re-jumping,
 /// or holding `PK_2` (then the lag is not held and neither arm is what it says);
 /// no keyless admission (then the σ was checked after all); any rotation (a
-/// missing key or this node's own lag was counted as a data fault); the tee
-/// reaching ABOVE the window bound (then `deliver` let an unauthenticatable
+/// missing key or this node's own lag was counted as a data fault); the delivered
+/// list reaching ABOVE the window bound (then `deliver` let an unauthenticatable
 /// certificate through and the whole trust argument of the plane is wrong), or
 /// stopping BELOW it (then something other than the window stopped the feeder and
 /// the bound proves nothing); no plane drop at all; the committee halting.
@@ -556,7 +569,6 @@ fn a_keyless_admission_is_all_the_plane_lets_an_outrun_inlet_see() {
         cfg.cert_inlet = Some(CertInletCfg {
             nodes: vec![VICTIM],
             source: CertInletSource::Frontier,
-            tee: TeeWiring::Observed,
         });
         let mut stand = Stand::new(cfg);
         stand
@@ -626,19 +638,19 @@ fn a_keyless_admission_is_all_the_plane_lets_an_outrun_inlet_see() {
     )
     .expect("the victim executed at least one block");
     let window_top = (anchor_epoch + MAX_COMMITTEE_LOOKAHEAD_EPOCHS + 1) * EPOCH_LEN - 1;
-    let teed_top = *f
-        .tee_heights
+    let delivered_top = *f
+        .delivered
         .last()
         .expect("the inlet verified at least one certificate");
     assert!(
-        teed_top <= window_top,
-        "the inlet verified height {teed_top}, above the top of its own \
+        delivered_top <= window_top,
+        "the inlet verified height {delivered_top}, above the top of its own \
          committee-read window ({window_top}) — `deliver` let an unauthenticatable \
          certificate through"
     );
     assert!(
-        teed_top > (anchor_epoch + MAX_COMMITTEE_LOOKAHEAD_EPOCHS) * EPOCH_LEN - 1,
-        "the inlet stopped at {teed_top}, below the top window epoch — the window \
+        delivered_top > (anchor_epoch + MAX_COMMITTEE_LOOKAHEAD_EPOCHS) * EPOCH_LEN - 1,
+        "the inlet stopped at {delivered_top}, below the top window epoch — the window \
          is not what stopped it and the bound proves nothing: {:?}",
         out.heights
     );
@@ -658,7 +670,7 @@ fn a_keyless_admission_is_all_the_plane_lets_an_outrun_inlet_see() {
     // `plane_upstream.rs`'s increment site), so node 3 — dropped from
     // `committee[2]` by the same schedule, with its upstream links kept — is in
     // this sum too. The conclusion does not rest on the attribution: the BOUND is
-    // pinned by the victim's OWN `teed_top` straddling its own window edge in the
+    // pinned by the victim's OWN `delivered_top` straddling its own window edge in the
     // two assertions above, and this counter only has to witness that the plane
     // refuses SOMETHING in this run rather than delivering everything. The
     // per-inlet, per-node counterpart of the same gate is the archive test below,
@@ -679,7 +691,7 @@ fn a_keyless_admission_is_all_the_plane_lets_an_outrun_inlet_see() {
     only_these_ran_inlets(&out, &[VICTIM]);
     eprintln!(
         "(5.0а/Ex-21 keyless) heights={:?} ingests={} keyless={keyless} rotations={} \
-         defers={} teed_top={teed_top} window_top={window_top} plane_dropped={dropped} \
+         defers={} delivered_top={delivered_top} window_top={window_top} plane_dropped={dropped} \
          virtual={:?}",
         out.heights, f.ingests, f.rotations, f.defers, out.virtual_elapsed
     );
@@ -693,9 +705,9 @@ fn a_keyless_admission_is_all_the_plane_lets_an_outrun_inlet_see() {
 /// leaves `committee[2]` for good, deals nothing, holds no epoch key and never
 /// comes back — every property it shows is a property of an outsider. §0.7(а) of
 /// the Э5 project and row 5.4 need the opposite node: one that IS in the
-/// committee (so it deals its epoch's DKG and the tee's clock matters for its
-/// share), whose EL is nevertheless BEHIND (so the tee is ahead of its own
-/// executed tip), with a live inlet. The stand can build exactly that with
+/// committee (so it deals its epoch's DKG and its beacon clock matters for its
+/// share), whose EL is nevertheless BEHIND (so the marshal's tip is ahead of
+/// its own executed tip), with a live inlet. The stand can build exactly that with
 /// `Stand::partition`, and with no new `Role` and no new `FakeChain` switch: the
 /// cut is physical (it removes the links of BOTH planes, `stand.rs`'s driver
 /// loop), so the isolated member stops finalizing while the other three — a
@@ -706,26 +718,27 @@ fn a_keyless_admission_is_all_the_plane_lets_an_outrun_inlet_see() {
 /// **What the lag is NOT.** During the cut the member is fed nothing at all —
 /// that is what a physical cut means, its inlet's own pulls included. The window
 /// this test is about is the one AFTER the heal, while the member is still behind:
-/// the assertion below counts teed heights strictly between the member's tier-F
-/// at heal and the majority's, i.e. certificates it was MISSING at the moment its
-/// links came back.
+/// the assertion below counts delivered heights strictly between the member's
+/// tier-F at heal and the majority's, i.e. certificates it was MISSING at the
+/// moment its links came back.
 ///
 /// **What it does not claim.** Not that the inlet is what caught the node up: its
 /// own marshal repair is racing the inlet over the same range, and nothing here
-/// separates the two (that separation is 5.4's "with the tee / without it"
-/// comparison). What is claimed is that the inlet stayed live and productive
-/// across the whole episode, that it cost the node nothing (no rotation, no
-/// deferral, no verify failure under a resolvable key), and that the node was and
-/// remained a member.
+/// separates the two. What is claimed is that the inlet stayed live and
+/// productive across the whole episode, that it cost the node nothing (no
+/// rotation, no deferral, no verify failure under a resolvable key), and that
+/// the node was and remained a member. The heal here lands BEFORE the epoch-2
+/// deal window opens, so the DKG is not what this run is about — the test below
+/// (`a_catching_up_validator_deals_its_first_epoch_on_the_live_frontier`) heals
+/// inside the window and is where the beacon clock is under load.
 ///
 /// Falsifier: the partition never firing (no observation to read); no lag at heal
 /// (then the cut did not isolate anything); the member not holding its own
 /// epoch's artifact at the end (then it is the keyless test's outsider, not a
 /// member); an inlet that was never fed, or fed nothing inside the catch-up
 /// window; any rotation, deferral, or carry-forward verify failure (an honest
-/// donor and this node's own lag must cost none of the three); a drop on the tee's
-/// forward; the node failing to rejoin lockstep, or the committee halting or
-/// printing an ERROR.
+/// donor and this node's own lag must cost none of the three); the node failing
+/// to rejoin lockstep, or the committee halting or printing an ERROR.
 #[test]
 fn a_catching_up_committee_member_is_fed_by_its_inlet_while_its_el_is_behind() {
     const LAGGARD: usize = 3;
@@ -741,11 +754,6 @@ fn a_catching_up_committee_member_is_fed_by_its_inlet_while_its_el_is_behind() {
     cfg.cert_inlet = Some(CertInletCfg {
         nodes: vec![LAGGARD],
         source: CertInletSource::NextAboveTier,
-        // `Observed`: the point of the run is WHICH heights the inlet fed the
-        // node while it was behind, and that is the list. The ORDER of the tee
-        // against the marshal — the other half of §0.7(а) — needs the production
-        // wiring and is the test below.
-        tee: TeeWiring::Observed,
     });
     let mut stand = Stand::new(cfg);
     stand
@@ -790,7 +798,7 @@ fn a_catching_up_committee_member_is_fed_by_its_inlet_while_its_el_is_behind() {
     let f = inlet(&out, LAGGARD);
     assert!(f.ingests > 0, "the inlet was never fed at all: {f:?}");
     let in_window: Vec<u64> = f
-        .tee_heights
+        .delivered
         .iter()
         .copied()
         .filter(|h| *h > lag_tip && *h <= majority_tip)
@@ -815,11 +823,6 @@ fn a_catching_up_committee_member_is_fed_by_its_inlet_while_its_el_is_behind() {
     assert_eq!(
         f.carry_forward_fails, 0,
         "a certificate failed BLS verify under a resolvable key: {f:?}"
-    );
-    assert_eq!(
-        out.metric(LAGGARD, "dpos_dkg_height_drops_total"),
-        Some(0.0),
-        "a teed height was dropped on the forward into dkg_height_tx"
     );
 
     // (5) IT CAUGHT UP: the predicate above is `min_height >= TARGET` over ALL
@@ -870,7 +873,6 @@ fn run_held_lag_over_donor_archive(snapshotter: Option<Snapshotter>) -> Outcome 
         source: CertInletSource::PeerArchive {
             from: HELD_LAG_DONOR,
         },
-        tee: TeeWiring::Observed,
     });
     let mut stand = Stand::new(cfg);
     stand
@@ -937,8 +939,8 @@ fn assert_the_lag_is_held(out: &Outcome) {
 ///    the whole statement of `cert_inlet.rs`'s "this node's own lag is not a data
 ///    fault". It is also the POSITIVE CONTROL for the `defers` counter every
 ///    other test in this file asserts to be zero.
-/// 2. **The gate moved from the plane INTO the inlet.** The clean (teed) heights
-///    still stop at the top of the read window, exactly as in the keyless test —
+/// 2. **The gate moved from the plane INTO the inlet.** The clean (delivered)
+///    heights still stop at the top of the read window, exactly as in the keyless test —
 ///    but now the certificates ABOVE it arrive and are refused HERE, by this
 ///    node's own inlet, and the refusal is counted per node rather than
 ///    process-wide.
@@ -956,7 +958,7 @@ fn assert_the_lag_is_held(out: &Outcome) {
 /// victim's window is not below the donor's epoch); any rotation (then the inlet
 /// counted its own lag as a data fault); an ingest that took neither the clean nor
 /// the deferral arm (then the fault arithmetic of the keyed test does not hold
-/// here and one of the two is wrong); a teed height above the window bound (then
+/// here and one of the two is wrong); a delivered height above the window bound (then
 /// the inlet verified a certificate whose committee it cannot read); a
 /// non-monotone or repeating walk; the victim executing into epoch 2 or holding
 /// its key (then it is not the node this fixture is about).
@@ -985,12 +987,12 @@ fn a_donors_archive_hands_the_inlet_an_epoch_it_cannot_read_and_it_defers() {
         "an unreadable committee — this node's OWN lag — cost the donor a rotation: {f:?}"
     );
 
-    // (2) EVERY ingest took one of exactly two arms: clean (teed) or deferred. No
-    // fault arm is reachable here (the donor is honest and the pair comes from its
-    // own archive), and this equality is what says so.
+    // (2) EVERY ingest took one of exactly two arms: clean (delivered) or
+    // deferred. No fault arm is reachable here (the donor is honest and the pair
+    // comes from its own archive), and this equality is what says so.
     assert_eq!(
         f.ingests,
-        f.tee_heights.len() as u64 + f.defers,
+        f.delivered.len() as u64 + f.defers,
         "an ingest took neither the clean nor the deferral arm: {f:?}"
     );
 
@@ -998,7 +1000,7 @@ fn a_donors_archive_hands_the_inlet_an_epoch_it_cannot_read_and_it_defers() {
     // and the top of it is the top of the read window — the same bound the keyless
     // test reads off the plane, now enforced by the inlet itself.
     assert!(
-        f.tee_heights.windows(2).all(|w| w[0] < w[1]),
+        f.delivered.windows(2).all(|w| w[0] < w[1]),
         "the archive walk repeated or went backwards: {f:?}"
     );
     let anchor_epoch = epoch_at_block(
@@ -1008,13 +1010,13 @@ fn a_donors_archive_hands_the_inlet_an_epoch_it_cannot_read_and_it_defers() {
     )
     .expect("the victim executed at least one block");
     let window_top = (anchor_epoch + MAX_COMMITTEE_LOOKAHEAD_EPOCHS + 1) * EPOCH_LEN - 1;
-    let teed_top = *f
-        .tee_heights
+    let delivered_top = *f
+        .delivered
         .last()
         .expect("the inlet verified at least one certificate");
     assert!(
-        teed_top <= window_top,
-        "the inlet verified height {teed_top}, above the top of its own \
+        delivered_top <= window_top,
+        "the inlet verified height {delivered_top}, above the top of its own \
          committee-read window ({window_top})"
     );
     assert!(
@@ -1039,11 +1041,12 @@ fn a_donors_archive_hands_the_inlet_an_epoch_it_cannot_read_and_it_defers() {
     out.assert_lockstep_except(&[3, VICTIM]);
     only_these_ran_inlets(&out, &[VICTIM]);
     eprintln!(
-        "(5.0а/peer-archive defer) heights={:?} ingests={} teed={} teed_top={teed_top} \
-         window_top={window_top} defers={} rotations={} virtual={:?}",
+        "(5.0а/peer-archive defer) heights={:?} ingests={} delivered={} \
+         delivered_top={delivered_top} window_top={window_top} defers={} rotations={} \
+         virtual={:?}",
         out.heights,
         f.ingests,
-        f.tee_heights.len(),
+        f.delivered.len(),
         f.defers,
         f.rotations,
         out.virtual_elapsed
@@ -1443,132 +1446,233 @@ fn an_epoch_outside_this_nodes_read_window_costs_no_peer_its_channel() {
     );
 }
 
-/// (5.0а, A-03 — the wiring row 5.4 has to measure on) The SAME clean-member
-/// fixture as the first test, with the tee handed the node's REAL `dkg_height_tx`
-/// instead of a stand channel.
+/// (5.4-А, the mandatory test of the row) A committee MEMBER whose marshal is
+/// catching up through its inlet INSIDE its first epoch's deal window deals that
+/// epoch before the seal deadline — on the one beacon clock that is left, the
+/// marshal's tip.
 ///
-/// **Why it exists as a test and not as a comment.** Under `TeeWiring::Observed`
-/// the stand reads the tee's heights out of its own channel and forwards them on
-/// AFTER `ingest` returns — that is, after `verify_block` and
-/// `report_finalization` have already driven the marshal. Production does the
-/// opposite: the tee's `try_send` is the last clean-path statement BEFORE those
-/// two calls, so the height is queued for the `DkgActor` while the marshal has
-/// not seen the certificate yet. That ORDER is the subject of Э5 §0.7(а) ("the
-/// tee fires before `store_finalization`, the marshal's Tip after") and of row
-/// 5.4's "with the tee / without it" comparison, and no drain can reproduce it:
-/// `ingest` has no await point between the tee and the marshal call, so nothing
-/// else in that task can run in between (`TeeWiring`'s doc carries the anchors).
-/// This test pins that the production wiring RUNS — the inlet with the real
-/// sender, on a member of a live committee, losing nothing — which is the fixture
-/// 5.4 extends with a lagging EL and a clock comparison.
+/// **What the tee was for, and what replaces it.** `LiveFrontierTee` fed the
+/// `DkgActor` the height of every certificate the inlet verified, one statement
+/// BEFORE the marshal was handed the same certificate (`cert_inlet.rs`, the
+/// deleted `:781-785` above `verify_block`), so that a still-catching-up
+/// early-joiner dealt its first epoch's DKG share at the live frontier instead
+/// of K blocks late on its own EL-finalized clock. 5.4-А removes the tee and the
+/// `fin + K` poller feeder and leaves the actor ONE clock: the ordering tip the
+/// marshal reports (`Update::Tip`, CW `marshal/core/actor.rs:1454-1458`, on
+/// every stored finalization above its tip) and `FluentApp::report` publishes
+/// on the process-wide watch. The inlet still moves that clock — through the
+/// marshal, one call later — and this is the run that says so under the load
+/// the tee existed for.
 ///
-/// What it can and cannot see. It CANNOT see the list of teed heights: a
-/// `tokio::sync::mpsc` channel has one receiver and the beacon actor owns it, so
-/// `tee_heights` is empty by construction and the top teed height is read as
-/// `ingests` instead — legitimate here only because the twin test above pins
-/// `tee == (1..=ingests)` on this very fixture. It also cannot claim the clock
-/// moved BECAUSE of the tee: on a healthy node `FluentApp::report(Update::Tip)`
-/// feeds the same channel. What it does claim is that nothing was dropped on the
-/// production path and that the clock is at least as high as the certificates the
-/// inlet verified.
+/// **The fixture.** Four live nodes, every one in every committee; node 3 runs
+/// the production inlet on its own frontier plane. It is cut off (both planes,
+/// `Stand::partition`) at height 8 and its links come back when the majority
+/// has executed 36 — i.e. INSIDE the epoch-2 deal window: the actor starts
+/// epoch 2's ceremony on entering epoch 1 (`epoch_start(1) = 32` on its clock)
+/// and seals at `epoch_start(2) − DKG_MARGIN_BLOCKS = 44`. At heal the laggard's
+/// own chain stands at 8: its OWN engine cannot open the deal window for it, so
+/// the only way its clock reaches 32 before the network's seal at 44 is the
+/// certificates that arrive after the heal — its marshal's gap repair and its
+/// inlet's by-height walk, both landing in the marshal, whose tip is the clock.
 ///
-/// Falsifier: a non-empty `tee_heights` (then the wiring is not the production
-/// one and this test is the first one again); an inlet that was never fed; any
-/// rotation or deferral; a single dropped height (under this wiring a drop means
-/// the beacon actor's channel was genuinely FULL, which is the counter's
-/// documented meaning and a real finding); a DKG clock below the number of
-/// certificates the inlet verified; the stand losing lockstep, halting or
-/// printing an ERROR.
+/// **What is asserted, and what each assertion is the witness of.**
+///
+/// 1. The premise: the cut fired, the laggard was BELOW the window at heal and
+///    the majority INSIDE it — otherwise the laggard's own chain opened the deal
+///    and the run says nothing about catching up.
+/// 2. It DEALT, on the artifact's own word: the agreed epoch-2 proposal pins a
+///    dealer log at the laggard's seat (`DkgProposal::logs`, `idx` = the
+///    dealer's position in `committee[2]`). An artifact alone would not do —
+///    a member that missed the seal still ACQUIRES the artifact from its peers
+///    (R-121/R-122) — and neither would the chain advancing, since three
+///    dealers out of four are a quorum without it.
+/// 3. It minted a share off that dealing (`dkg_ceremony_ok_total == 1`) and was
+///    never demoted for want of one (`epoch_engine_demoted_no_polynomial_total
+///    == 0`) — the consequence the tee's doc named ("deals its first epoch's
+///    DKG share before the deal deadline").
+/// 4. The clock IS the tip: `dpos_dkg_clock_height <= dpos_ordering_finalized_height`
+///    throughout (a clock above the tip is a second feeder, the thing this row
+///    removes — Д-5.4Б-3), and equal to it at rest.
+/// 5. The inlet fed the catch-up (delivered heights strictly between the
+///    laggard's tier-F at heal and the majority's), cost the node nothing, and
+///    the node rejoined lockstep; no halt, no ERROR.
+///
+/// **Falsifier.** M1 of the row's map — an actor that ignores `changed()` — is
+/// the direct one: the clock stands at the pre-cut height, the actor never
+/// enters epoch 1, never deals, and (2) reds with the laggard's seat missing
+/// from the pinned set while the chain goes on without it. M2 — the app
+/// publishing on a watch the actor does not hold — reds the same way. A heal
+/// landing outside the window reds (1); a dealing that arrived after the
+/// peers' seal reds (2); a share that never minted reds (3); a clock fed from
+/// anywhere but the marshal reds (4).
 #[test]
-fn the_production_tee_wiring_feeds_the_dkg_clock_with_no_drain_of_ours() {
-    /// Short on purpose: this run is about the wiring, and the same fixture's
-    /// contiguity and lockstep properties are pinned at length by the first test.
-    const TARGET: u64 = 24;
-    let mut cfg = StandConfig::live(4, 1);
+fn a_catching_up_validator_deals_its_first_epoch_on_the_live_frontier_without_a_tee() {
+    use crate::beacon::testing::decode_artifact;
+    use commonware_cryptography::Signer as _;
+    use commonware_utils::ordered::Set;
+    const LAGGARD: usize = 3;
+    const N: usize = 4;
+    /// Before the deal window, and before anything the epoch-2 ceremony reads.
+    const CUT_AT: u64 = 8;
+    /// The epoch-2 deal window on the actor's clock: opens on entering epoch 1,
+    /// seals `DKG_MARGIN_BLOCKS` before `epoch_start(2)`.
+    const DEAL_OPENS: u64 = EPOCH_LEN;
+    const SEAL_AT: u64 = EPOCH_2_START - crate::beacon::testing::DKG_MARGIN_BLOCKS;
+    /// The majority's executed tier-F at which the links come back — inside the
+    /// window with room for the laggard to catch up and deal before the seal.
+    const HEAL_ABOVE: u64 = DEAL_OPENS + 4;
+    /// Past `epoch_start(2)`, so the artifact, the share and a σ-carrying epoch
+    /// are all facts of the run.
+    const TARGET: u64 = EPOCH_2_START + EPOCH_LEN;
+    let mut cfg = StandConfig::live(N, 1);
     cfg.epoch_len = EPOCH_LEN;
+    // Explicit rather than inherited: the laggard has to be IN `committee[2]`
+    // for "it dealt" to be about a member.
+    cfg.committees = Committees::All;
     cfg.cert_inlet = Some(CertInletCfg {
-        nodes: vec![3],
+        nodes: vec![LAGGARD],
         source: CertInletSource::NextAboveTier,
-        tee: TeeWiring::Production,
     });
-    let out = Stand::new(cfg).run_until(reached(TARGET), Duration::from_secs(200));
-    assert!(!out.timed_out, "heights {:?}", out.heights);
-
-    let f = inlet(&out, 3);
-    assert!(f.ingests > 0, "the inlet was never fed: {f:?}");
+    let seed = cfg.seed;
+    let mut stand = Stand::new(cfg);
+    stand
+        .partition(&[0, 1, 2], &[LAGGARD])
+        .after_height(CUT_AT)
+        .heal_above(HEAL_ABOVE);
+    let out = stand.run_until(reached(TARGET), Duration::from_secs(400));
     assert!(
-        f.tee_heights.is_empty(),
-        "the stand recorded teed heights under the PRODUCTION wiring, where the \
-         beacon actor owns the only receiver: {f:?}"
+        !out.timed_out,
+        "heights {:?} halted {:?} errors {:?}",
+        out.heights,
+        out.halted,
+        out.errors()
     );
-    assert_eq!(f.rotations, 0, "an honest upstream cost a rotation: {f:?}");
-    assert_eq!(f.defers, 0, "an honest run deferred a certificate: {f:?}");
+
+    // (1) THE PREMISE: cut, heal inside the window, laggard below it.
+    let part = &out.partitions[0];
+    assert!(
+        !part.heights_at_cut.is_empty(),
+        "the partition never fired: {part:?}"
+    );
+    assert!(
+        !part.heights_at_heal.is_empty(),
+        "the partition never healed: {part:?}"
+    );
+    let lag_tip = part.heights_at_heal[LAGGARD];
+    let majority_tip = [0, 1, 2]
+        .iter()
+        .map(|&i| part.heights_at_heal[i])
+        .min()
+        .expect("three nodes");
+    assert!(
+        lag_tip < DEAL_OPENS,
+        "the laggard stood at {lag_tip} at heal, inside the deal window that opens at \
+         {DEAL_OPENS}: its own chain could have opened the deal and the run says nothing \
+         about catching up: {part:?}"
+    );
+    assert!(
+        (DEAL_OPENS..SEAL_AT).contains(&majority_tip),
+        "the majority stood at {majority_tip} at heal, outside the deal window \
+         [{DEAL_OPENS}, {SEAL_AT}): {part:?}"
+    );
+
+    // (2) IT DEALT: the agreed artifact pins a log at the laggard's seat.
+    let (peers, _) = super::stand::keys(seed, N);
+    let roster: Set<fluentbase_bls::PeerPubkey> =
+        Set::from_iter_dedup(peers.iter().map(|k| k.public_key()));
+    let seat = roster
+        .position(&peers[LAGGARD].public_key())
+        .expect("the laggard sits in committee[2]") as u8;
+    let artifact = out.artifacts[LAGGARD]
+        .get(&DETERMINISTIC_BOOTSTRAP_EPOCH)
+        .unwrap_or_else(|| {
+            panic!(
+                "node {LAGGARD} holds no epoch-{DETERMINISTIC_BOOTSTRAP_EPOCH} artifact: {:?}",
+                out.artifacts[LAGGARD].keys().collect::<Vec<_>>()
+            )
+        });
+    let (proposal, _) = decode_artifact(artifact).expect("the served artifact decodes");
+    let pinned_seats: Vec<u8> = proposal.logs.iter().map(|(idx, _)| *idx).collect();
+    assert!(
+        pinned_seats.contains(&seat),
+        "the agreed epoch-{DETERMINISTIC_BOOTSTRAP_EPOCH} set pins seats {pinned_seats:?} and \
+         not the laggard's ({seat}): it did not deal before the seal — heal=[lag {lag_tip} \
+         vs majority {majority_tip}], heights={:?}",
+        out.heights
+    );
+    // And the other three dealt too: the laggard's dealing was not the only one
+    // the seal pinned (a run in which everyone else missed the window would be
+    // about something else).
+    assert_eq!(
+        pinned_seats.len(),
+        N,
+        "the pinned set is not the whole committee: {pinned_seats:?}"
+    );
+
+    // (3) IT MINTED ITS SHARE, and was never demoted for want of one.
+    assert_eq!(
+        out.metric(LAGGARD, "dkg_ceremony_ok_total"),
+        Some(1.0),
+        "the laggard's ceremony did not finalize into a share"
+    );
+    assert_eq!(
+        out.metric(LAGGARD, "epoch_engine_demoted_no_polynomial_total"),
+        Some(0.0),
+        "the laggard was demoted for want of a share"
+    );
+
+    // (4) THE CLOCK IS THE TIP.
+    let (ordering, dkg_clock) = clock_pair(&out, LAGGARD);
+    assert!(
+        dkg_clock <= ordering,
+        "the laggard's DkgActor clock ({dkg_clock}) is ABOVE its marshal's tip ({ordering}): a \
+         feeder other than the tip is back"
+    );
+    assert_eq!(
+        dkg_clock, ordering,
+        "at rest the laggard's DkgActor clock is its marshal's tip, and it is not"
+    );
+    assert!(
+        dkg_clock >= EPOCH_2_START,
+        "the laggard's clock ({dkg_clock}) never reached epoch 2"
+    );
+
+    // (5) THE INLET FED THE CATCH-UP, at no cost, and the node rejoined.
+    let f = inlet(&out, LAGGARD);
+    let in_window: Vec<u64> = f
+        .delivered
+        .iter()
+        .copied()
+        .filter(|h| *h > lag_tip && *h <= majority_tip)
+        .collect();
+    assert!(
+        !in_window.is_empty(),
+        "the inlet handed the marshal nothing in the catch-up window ({}..={majority_tip}): {f:?}",
+        lag_tip + 1
+    );
+    assert_eq!(
+        f.rotations, 0,
+        "catching up cost the honest upstream a rotation: {f:?}"
+    );
+    assert_eq!(f.defers, 0, "a by-height walk deferred: {f:?}");
     assert_eq!(
         f.carry_forward_fails, 0,
         "a certificate failed BLS verify under a resolvable key: {f:?}"
     );
-
-    // The tee's own `try_send` into the real channel lost nothing, and the actor's
-    // clamp saw at least the certificates the inlet verified. `ingests` is the top
-    // teed height here BECAUSE the twin test pins `tee == (1..=ingests)` on this
-    // fixture; without that this number would mean nothing.
-    assert_eq!(
-        out.metric(3, "dpos_dkg_height_drops_total"),
-        Some(0.0),
-        "the beacon actor's height channel was full — under this wiring that is the \
-         counter's documented meaning and a real finding"
-    );
-    let dkg_clock = out
-        .metric(3, "dpos_dkg_clock_height")
-        .expect("the DkgActor gauges its clock on a Beacon::Live node");
-    assert!(
-        dkg_clock >= f.ingests as f64,
-        "the DkgActor's clock ({dkg_clock}) never reached the {} certificates the \
-         inlet verified",
-        f.ingests
-    );
-
     assert_eq!(out.diverged, None);
     assert!(out.halted.is_empty(), "{:?}", out.halted);
     out.assert_lockstep_except(&[]);
     assert!(out.errors().is_empty(), "{:?}", out.errors());
-    only_these_ran_inlets(&out, &[3]);
+    only_these_ran_inlets(&out, &[LAGGARD]);
     eprintln!(
-        "(5.0а/production tee) heights={:?} ingests={} tee_heights={} \
-         dkg_clock={dkg_clock} virtual={:?}",
+        "(5.4-А/catch-up dealer) heights={:?} heal=[lag {lag_tip} vs majority {majority_tip}] \
+         seat={seat} pinned={pinned_seats:?} in_window={}..={} ({} certs) ingests={} \
+         ordering={ordering} dkg_clock={dkg_clock} virtual={:?}",
         out.heights,
+        in_window.first().copied().unwrap_or(0),
+        in_window.last().copied().unwrap_or(0),
+        in_window.len(),
         f.ingests,
-        f.tee_heights.len(),
         out.virtual_elapsed
     );
-}
-
-/// (5.0а, A-08 — the configuration that would turn a counter into a liar) A
-/// cert-inlet asked for on a node whose beacon never DRAINS the DKG height
-/// channel is refused at the fixture, loudly.
-///
-/// The tee's `try_send` into a channel whose receiver was dropped answers
-/// `Err(Closed)`, and `LiveFrontierTee` counts every failed send as
-/// `dpos_dkg_height_drops_total` — whose documented meaning is the other one
-/// ("the channel was FULL"). Two stand configurations drop that receiver:
-/// `Beacon::Static` (it is never handed to anyone) and `Role::AbsentBeacon`
-/// (`absent()` takes no inputs). On either, EVERY clean ingest would tick the
-/// counter, so the number every other test in this file reads as "nothing was
-/// lost on the forward" would mean nothing at all. The refusal is at the node
-/// build, because a fixture mistake has to be reported where it was made.
-///
-/// Falsifier: a run that reaches the assertion inside the stand instead of
-/// panicking at the build (then the combination is live and the drop counter is
-/// no longer a witness anywhere).
-#[test]
-#[should_panic(expected = "never drains the DKG height channel")]
-fn a_cert_inlet_is_refused_on_a_node_whose_beacon_drops_the_height_channel() {
-    let mut cfg = StandConfig::honest(4, 1);
-    cfg.epoch_len = EPOCH_LEN;
-    cfg.cert_inlet = Some(CertInletCfg {
-        nodes: vec![3],
-        source: CertInletSource::NextAboveTier,
-        tee: TeeWiring::Observed,
-    });
-    Stand::new(cfg).run_until(reached(4), Duration::from_secs(60));
 }

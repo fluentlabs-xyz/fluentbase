@@ -206,8 +206,8 @@ pub(super) struct StandConfig {
     pub cert_inlet: Option<CertInletCfg>,
 }
 
-/// Which nodes stand up a cert-inlet, WHICH shape of the one production input
-/// they are fed, and WHERE the tee's tick goes.
+/// Which nodes stand up a cert-inlet and WHICH shape of the one production input
+/// they are fed.
 ///
 /// Two of the three sources feed off the node's OWN frontier plane
 /// ([`CountingUpstream`] over the production `PlaneUpstreamHandle`), which
@@ -228,58 +228,6 @@ pub(super) struct CertInletCfg {
     /// this type and not beside it in [`StandConfig`]: it is a property of the
     /// inlet, and the config gains exactly one field either way.
     pub source: CertInletSource,
-    /// WHERE the tee's tick goes, and therefore what the run can say about it —
-    /// see [`TeeWiring`]. Every test states it explicitly: the two wirings
-    /// answer different questions, and picking one by default is how a run ends
-    /// up asserting the wrong one.
-    pub tee: TeeWiring,
-}
-
-/// Where the inlet's live-frontier tee ticks, and therefore WHICH of the two
-/// questions a run can answer: the ORDER of the tick against the marshal, or the
-/// LIST of teed heights. Not both — see below.
-///
-/// The production tee is a `try_send` into the node's REAL DKG-clock channel,
-/// and it stands on the last clean-path lines of `CertInlet::ingest`
-/// (`cert_inlet.rs:712-717`) BEFORE the marshal calls (`:736`/`:741`,
-/// `:744`/`:745`): the height is queued for the beacon actor while
-/// `verify_block` / `report_finalization` have not run yet. That order is
-/// exactly what Э5 §0.7(а) is about — "the tee fires before
-/// `store_finalization`, the marshal's Tip after" — and it is why 5.4 can
-/// compare the two feeders at all.
-///
-/// A stand channel plus a drain CANNOT reproduce it, and the reason is
-/// structural rather than a matter of how the drain is written (a `select!` over
-/// the stand channel and the `ingest` future included): between the tee and the
-/// first marshal call `ingest` has NO await point, so no other future in the
-/// inlet's task can be polled in between. The first await after the tee is
-/// `verify_block`, whose body for the real mailbox is
-/// `marshal::core::Mailbox::verified` → `send_lossy`
-/// (CW `utils/src/channel/fallible.rs:156-158`) → a `tokio::sync::mpsc` `send`
-/// (CW `utils/src/channel/mod.rs:7` re-exports tokio's) that completes WITHOUT
-/// yielding whenever the mailbox has capacity. A drain therefore observes the
-/// tick after the marshal already holds the certificate.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) enum TeeWiring {
-    /// The stand's own channel into [`crate::cert_inlet::LiveFrontierTee`],
-    /// drained by the inlet task after `ingest` returns and forwarded into the
-    /// real `dkg_height_tx` with the same lossy `try_send` + drop count the
-    /// inlet itself uses: the LIST of teed heights
-    /// ([`CertInletFacts::tee_heights`]) is observable, and the clean-path,
-    /// fault-arithmetic and window-bound assertions all rest on it. The price is
-    /// the ORDER: the forward lands after the marshal calls, so a run on this
-    /// wiring must not be read as evidence about when the DKG clock moved
-    /// relative to the marshal's Tip.
-    #[default]
-    Observed,
-    /// The node's REAL `dkg_height_tx`, handed straight to the tee — production's
-    /// own wiring, so the tick enters the beacon actor's height channel at the
-    /// tee line itself and the order against the marshal is production's BY
-    /// CONSTRUCTION. [`CertInletFacts::tee_heights`] is then EMPTY (a
-    /// `tokio::sync::mpsc` channel has one receiver, and the beacon actor owns
-    /// it), and the tick is observable only through `dpos_dkg_clock_height` and
-    /// `dpos_dkg_height_drops_total`.
-    Production,
 }
 
 /// The three shapes of the one stream a production inlet consumes.
@@ -346,19 +294,14 @@ struct CertInletObs {
     /// (`cert_inlet.rs:758-772`). The inlet's `consecutive_faults` is private, so
     /// this count over a known number of bad certs is what pins it.
     rotations: Arc<AtomicU64>,
-    /// Every height the inlet pushed through the live-frontier tee, in order. The
-    /// tee fires ONLY on a clean ingest (`cert_inlet.rs:712-717`, after
-    /// `observe_certificate`), so this is also the list of
-    /// certificates that passed the verify gate.
-    ///
-    /// EMPTY under [`TeeWiring::Production`], where the tee's only receiver is
-    /// the beacon actor's — see [`TeeWiring`] for why the two cannot be had at
-    /// once.
-    tee_heights: Arc<Mutex<Vec<u64>>>,
-    /// Which wiring produced (or did not produce) [`Self::tee_heights`], carried
-    /// into the snapshot so every `{facts:?}` in a failure message says which of
-    /// the two questions this run could answer.
-    tee: TeeWiring,
+    /// Every height the inlet handed its marshal, in order — recorded by
+    /// [`RecordingSink`] at `MarshalSink::verify_block`, the first of the two
+    /// marshal calls on the clean path of `CertInlet::ingest` and a line no
+    /// fault or deferral arm reaches. So this is the list of certificates that
+    /// passed the verify gate, observed at the marshal seam the inlet exists to
+    /// drive rather than through the beacon-clock tee 5.4-А removed (the tee
+    /// stood one statement above the same call and fired on the same set).
+    delivered: Arc<Mutex<Vec<u64>>>,
     /// The inlet's own `dpos_cert_inlet_committee_read_deferred_total` family,
     /// held here rather than registered: the counter is shared with the inlet
     /// through `with_committee_read_deferred_metric` (the follower launch wires
@@ -383,8 +326,7 @@ impl CertInletObs {
         CertInletFacts {
             ingests: self.ingests.load(Ordering::SeqCst),
             rotations: self.rotations.load(Ordering::SeqCst),
-            tee_heights: self.tee_heights.lock().unwrap().clone(),
-            tee: self.tee,
+            delivered: self.delivered.lock().unwrap().clone(),
             defers: self
                 .defers
                 .get_or_create(&crate::cert_inlet::CommitteeReadDeferLabels {
@@ -402,10 +344,37 @@ impl CertInletObs {
 pub(super) struct CertInletFacts {
     pub ingests: u64,
     pub rotations: u64,
-    pub tee_heights: Vec<u64>,
-    pub tee: TeeWiring,
+    pub delivered: Vec<u64>,
     pub defers: u64,
     pub carry_forward_fails: u64,
+}
+
+/// The inlet's marshal, with the heights it is handed recorded: the production
+/// `MarshalMailbox` behind the same `MarshalSink` seam the inlet's own unit
+/// tests use for their `FakeMarshal`, so nothing the inlet does changes — every
+/// call is forwarded — and the list of verified heights is read where the
+/// inlet writes it.
+#[derive(Clone)]
+struct RecordingSink {
+    inner: MarshalMailbox,
+    delivered: Arc<Mutex<Vec<u64>>>,
+}
+
+impl crate::cert_inlet::MarshalSink for RecordingSink {
+    async fn verify_block(&mut self, round: commonware_consensus::types::Round, block: OrderBlock) {
+        self.delivered.lock().unwrap().push(block.height);
+        self.inner.verify_block(round, block).await
+    }
+
+    async fn report_finalization(
+        &mut self,
+        finalization: commonware_consensus::simplex::types::Finalization<
+            fluentbase_bls::Scheme,
+            crate::digest::Digest,
+        >,
+    ) {
+        self.inner.report_finalization(finalization).await
+    }
 }
 
 /// The [`OuterBuilder::blocker`] slot. ONE label for two consumers, because the
@@ -2805,7 +2774,15 @@ async fn build_node(
     // BEACON_RESOLVER channels and the same four mux brokers, with the schedule
     // standing in for the staking reads. Built BEFORE the `OuterBuilder`, which
     // takes its randomness (the agreement instances stay the beacon's own).
-    let (dkg_height_tx, dkg_height_rx) = mpsc::channel::<u64>(256);
+    //
+    // The beacon plane's tip watch, exactly as `node/src/dpos.rs` makes it: the
+    // beacon actor's clock is a receiver taken HERE, before the app exists, and
+    // the sender goes into the `OuterBuilder` so `FluentApp::report` publishes
+    // the marshal's tip on it in the same statement that publishes the epoch
+    // manager's. Its own channel, with the actor as the ONE parked receiver —
+    // `FluentApp::beacon_tip` says why a second subscription to the app's own
+    // channel would make this run process-random.
+    let beacon_tip = Arc::new(tokio::sync::watch::Sender::new(0u64));
 
     let (randomness, artifacts) = match (cfg.beacon, role) {
         (Beacon::Static, _) => (
@@ -2934,7 +2911,7 @@ async fn build_node(
                     resolver_mux: res_mux.clone(),
                     bodies_mux: bcast_mux.clone(),
                     committees,
-                    heights: dkg_height_rx,
+                    clock: beacon_tip.subscribe(),
                     plane_clock: plane_clock.clone(),
                     safety_halt: halt.clone(),
                     geometry: tokio::sync::watch::channel(et.lock().await.frozen_geometry()).1,
@@ -2969,41 +2946,15 @@ async fn build_node(
     // into the builders below, captured here and only on the nodes that run one:
     // the node's ONE beacon (a second provider would file the inlet's σ into an
     // index nobody derives from and would never see the key this plane's DKG
-    // publishes — `node/src/cert_inlet.rs`), the node's ONE
-    // `PlaneClock`, and the REAL `dkg_height_tx` the beacon actor's `heights`
-    // receiver drains (`ValidatorInputs::heights` above).
+    // publishes — `node/src/cert_inlet.rs`).
     let inlet_inputs = cfg
         .cert_inlet
         .as_ref()
         .filter(|c| c.nodes.contains(&i))
-        .map(|c| {
-            // LOUD REFUSAL rather than a silent inlet on a node whose beacon
-            // never drains `dkg_height_rx`. On both such configurations —
-            // `Beacon::Static` (the receiver is never handed to anyone, the arm
-            // below) and `Role::AbsentBeacon` (`absent()` takes no inputs) — the
-            // receiver is DROPPED, so every clean ingest's tee `try_send` answers
-            // `Err(Closed)` and ticks `dpos_dkg_height_drops_total`, whose
-            // documented meaning is the opposite one ("the channel was FULL",
-            // `sync_metrics.rs`). A counter that counts a by-design closure as a
-            // full channel is a false witness for every later row that reads it,
-            // and a fixture that asked for an inlet has to be told so at the
-            // fixture, not debugged from a drop count.
-            assert!(
-                matches!(cfg.beacon, Beacon::Live) && !matches!(role, Role::AbsentBeacon),
-                "node {i} asks for a cert-inlet under {:?}/{role:?}: that node's beacon never \
-                 drains the DKG height channel, so every tee tick would count as a dropped \
-                 height — give it `Beacon::Live` and a beacon-bearing role",
-                cfg.beacon
-            );
-            (
-                c.source,
-                c.tee,
-                randomness.clone(),
-                plane_clock.clone(),
-                dkg_height_tx.clone(),
-            )
-        });
-    let dkg_height_tx = matches!(cfg.beacon, Beacon::Live).then_some(dkg_height_tx);
+        .map(|c| (c.source, randomness.clone()));
+    // Under `Beacon::Static` no actor holds a receiver, so the app keeps the
+    // watch `FluentApp::new` makes — the follower launch's shape.
+    let beacon_tip = matches!(cfg.beacon, Beacon::Live).then_some(beacon_tip);
     // The committee module's verifier can build now — every epoch it reads from
     // here on gets its scheme bound to THIS node's beacon oracle.
     crate::committee::fill_beacon_slot(&beacon_slot, &randomness);
@@ -3025,7 +2976,7 @@ async fn build_node(
         safety_halt: halt.clone(),
         tombstones: tombstones.clone(),
         plane_clock,
-        dkg_height_tx,
+        beacon_tip,
         timeouts: ConsensusTimeouts::fluent_1s(),
         mailbox_size: 256,
         // The stand is the model, so it carries the production number
@@ -3082,12 +3033,9 @@ async fn build_node(
     // clones of it off the built engine (`consensus/src/dpos.rs`). The one
     // handle that IS waited for is the DONOR's, on the `PeerArchive` source —
     // that node may still be unbuilt, so the task binds its slot late.
-    let cert_inlet = inlet_inputs.map(|(source, tee_wiring, beacon, clock, dkg_height_tx)| {
-        use crate::cert_inlet::{CertInlet, LiveFrontierTee, RotateUpstream};
-        let obs = CertInletObs {
-            tee: tee_wiring,
-            ..CertInletObs::default()
-        };
+    let cert_inlet = inlet_inputs.map(|(source, beacon)| {
+        use crate::cert_inlet::{CertInlet, RotateUpstream};
+        let obs = CertInletObs::default();
         // The rotation trigger, counted. `CertUpstream::rotate_callback` is the
         // production default and this is that closure with a counter in front of
         // it: the inlet's `consecutive_faults` is private, so the count of
@@ -3105,22 +3053,12 @@ async fn build_node(
                 }) as futures::future::BoxFuture<'static, ()>
             })
         };
-        // WHERE THE TEE TICKS — the whole of [`TeeWiring`], in two lines. Under
-        // `Observed` the stand owns the channel and the inlet TASK drains it
-        // after `ingest` (never a relay task: a relay is one more scheduler turn
-        // on the deterministic runner, and Э5 5.4 compares "with the tee"
-        // against "without it" and must not be measuring a relay). Under
-        // `Production` the tee gets the node's REAL `dkg_height_tx` and there is
-        // nothing to drain — which is the only wiring whose ORDER against the
-        // marshal is production's.
-        let (tee_tx, mut tee_rx) = match tee_wiring {
-            TeeWiring::Observed => {
-                let (tx, rx) = mpsc::channel::<u64>(256);
-                (tx, Some(rx))
-            }
-            TeeWiring::Production => (dkg_height_tx.clone(), None),
+        // The inlet's marshal is the node's real one behind [`RecordingSink`],
+        // so the verified heights are read at the seam the inlet drives.
+        let marshal = RecordingSink {
+            inner: outer.marshal_mailbox(),
+            delivered: obs.delivered.clone(),
         };
-        let marshal = outer.marshal_mailbox();
         // Every node's marshal slot, for `CertInletSource::PeerArchive`: the
         // donor's may still be empty when this task starts (nodes are built in
         // index order), so the task binds it late — see the feeder.
@@ -3131,9 +3069,8 @@ async fn build_node(
             chain.clone(),
             obs.clone(),
         );
-        let drop_clock = clock.clone();
         ctx_i.with_label("cert_inlet").spawn(move |c| async move {
-            // The validator shape of `node/src/cert_inlet.rs`: tee, rotate,
+            // The validator shape of `node/src/cert_inlet.rs`: rotate and
             // the node's own beacon. No `with_epoch_math` (the validator
             // inlet leaves the height↔epoch bind a no-op — its consensus
             // plane re-derives and cross-checks instead), no `with_window`
@@ -3147,10 +3084,6 @@ async fn build_node(
             // "the key was held at verify time". The follower launch wires
             // both the same way.
             let mut inlet = CertInlet::new(marshal, committee_inlet, c.clone())
-                .with_tee(LiveFrontierTee {
-                    dkg_height_tx: tee_tx,
-                    plane_clock: clock,
-                })
                 .with_rotate(rotate)
                 .with_randomness(beacon)
                 .with_committee_read_deferred_metric(obs_task.defers.clone())
@@ -3237,25 +3170,6 @@ async fn build_node(
                 };
                 obs_task.ingests.fetch_add(1, Ordering::SeqCst);
                 inlet.ingest(uf).await;
-                // `TeeWiring::Observed` only: the tee tick, drained on the
-                // spot. `ingest` fires it synchronously on a clean ingest and
-                // nowhere else, so everything in the channel now belongs to the
-                // certificate we just handed in. Recorded, then forwarded into
-                // the REAL `dkg_height_tx` — the channel whose receiver is the
-                // beacon actor's `heights` — with the same lossy `try_send` +
-                // drop-count accounting the inlet itself uses. The forward lands
-                // AFTER the marshal calls of this same `ingest`; that is the
-                // documented price of this wiring, not an oversight (see
-                // [`TeeWiring`]). Under `Production` there is no receiver here
-                // at all: the inlet already sent into `dkg_height_tx` itself.
-                if let Some(tee_rx) = &mut tee_rx {
-                    while let Ok(h) = tee_rx.try_recv() {
-                        obs_task.tee_heights.lock().unwrap().push(h);
-                        if dkg_height_tx.try_send(h).is_err() {
-                            drop_clock.note_height_drop();
-                        }
-                    }
-                }
             }
         });
         obs

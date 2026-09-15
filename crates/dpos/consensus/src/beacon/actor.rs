@@ -150,8 +150,7 @@ pub(crate) const BEACON_CHANNEL_LABEL: &str = "beacon";
 /// WHY 2 AND NOT 3 (R-126, closed by this record). The two epochs above `now` are
 /// the ceremony this actor may still start (`now + 1`, `recover`) and the one
 /// a peer ONE epoch ahead of it is already dealing for (`now + 2`). A peer two
-/// epochs ahead would mean this actor's clock — the max over its three feeders,
-/// `fin + K`, the upstream cert frontier and the marshal's ordering tip
+/// epochs ahead would mean this actor's clock — the marshal's ordering tip
 /// (`on_height`) — lags the network by two whole epochs, which is the
 /// frozen-tip / cold-start case, not a steady-state race; and nothing that a
 /// frame for `now + 3` carries is lost by refusing it: a dealing is re-sent every
@@ -761,8 +760,7 @@ pub struct Wiring<R> {
     /// `node/dpos.rs::build_beacon_plane`), reloaded once at plane startup.
     pub share_dir: PathBuf,
     /// The registered clock pair whose DKG half this actor publishes, off the
-    /// monotone clamp in [`DkgActor::on_height`] — the single point every feeder's
-    /// height lands at.
+    /// monotone clamp in [`DkgActor::on_height`].
     pub plane_clock: PlaneClock,
     /// READ handle for the agreed artifact's payload (a pull, not a push channel),
     /// the artifact input of [`DkgActor::recover`] and of every tick's
@@ -804,7 +802,7 @@ pub struct Wiring<R> {
     /// has to run the agreement for the epoch. `dealing_closed()` covers both.
     pub agreement_tx: tokio::sync::mpsc::Sender<u64>,
     /// The actor's epoch clock as the agreement launcher sees it: the epoch the
-    /// merged height feeder is in (`epoch_of(height)`, AFTER the monotone clamp)
+    /// height clock is in (`epoch_of(height)`, AFTER the monotone clamp)
     /// — the launcher's CUTOFF, below which an instance is aborted and the
     /// journal-partition band is swept (`dkg_engine::prune_agreements`).
     /// Published from every height tick but only ON CHANGE (`send_if_modified`):
@@ -1227,20 +1225,28 @@ where
         share_state::evict_conflict(&self.share_dir, epoch);
     }
 
-    /// Run until both the height-event stream and the network receiver close.
-    /// `heights` carries every finalized block height (tapped from the boundary
-    /// hook); the actor derives epoch transitions + the seal deadline from it.
+    /// Run until the clock's sender or the network receiver closes. `clock` is
+    /// the marshal's ordering tip (`ValidatorInputs::clock`); the actor derives
+    /// epoch transitions + the seal deadline from it.
     pub async fn run(
         mut self,
-        mut heights: tokio::sync::mpsc::Receiver<u64>,
+        mut clock: tokio::sync::watch::Receiver<u64>,
         mut rng: impl CryptoRngCore,
     ) {
         tracing::info!(epocher = ?self.epocher, "live DKG: actor started");
         loop {
             tokio::select! {
-                maybe_h = heights.recv() => match maybe_h {
-                    Some(height) => self.on_height(height, &mut rng).await,
-                    None => break,
+                // A watch, not a stream: `changed()` wakes once per publish that
+                // this arm has not yet seen — a tip published before the actor
+                // started (it waits for the frozen geometry first) is seen on the
+                // first pass — and `borrow_and_update` takes the NEWEST value, so
+                // a burst of tips costs one `on_height` at the highest of them.
+                changed = clock.changed() => match changed {
+                    Ok(()) => {
+                        let height = *clock.borrow_and_update();
+                        self.on_height(height, &mut rng).await
+                    }
+                    Err(_) => break,
                 },
                 msg = self.receiver.recv() => match msg {
                     Ok((from, buf)) => self.on_message(from, buf.as_ref(), &mut rng).await,
@@ -2209,19 +2215,16 @@ where
     }
 
     async fn on_height(&mut self, height: u64, rng: &mut impl CryptoRngCore) {
-        // Three feeders drive this clock: the local finalized-height poller
-        // (`fin + K`), the LIVE upstream cert frontier (so a still-catching-up
-        // newcomer deals its first epoch on the live deadline), and marshal's
-        // ordering tip off `FluentApp::report` (the only one still moving once
-        // execution stalls). Take the max so an interleaved lagging tick can never
-        // pull the deal/seal clock backward; process at the monotone height.
+        // One feeder drives this clock — the marshal's ordering tip, which only
+        // ever rises — so the clamp below is a guard and not a merge: it keeps the
+        // deal/seal clock monotone whatever a caller (the tests drive this method
+        // by hand) hands in, and it costs nothing.
         let height = self.height_now().max(height);
         self.last_height = Some(height);
-        // Gauged HERE, at the single point where every feeder's height lands,
-        // rather than by each feeder. The poller gauged itself and the cert inlet
-        // did not, so on a validator with an upstream the gauge reported `fin + K`
-        // while the actor's real clock was `max(fin + K, upstream_frontier)` — the
-        // entire reported lag was spurious.
+        // Gauged HERE, off the clamp, rather than by the writer of the watch: the
+        // gauge is the clock the ceremony geometry runs on, and a node whose actor
+        // has stopped draining shows it as the ordering gauge pulling away from
+        // this one.
         self.plane_clock.record_dkg_clock(height);
         let now = self.epoch_of(height);
 
@@ -4464,7 +4467,7 @@ mod clock_tests {
         store: CeremonyStore,
         share_notify: Arc<tokio::sync::Notify>,
         interval: u64,
-    ) -> tokio::sync::mpsc::Sender<u64> {
+    ) -> tokio::sync::watch::Sender<u64> {
         spawn_dealer_at_sender(
             ctx,
             oracle,
@@ -4597,7 +4600,7 @@ mod clock_tests {
         share_dir: Option<PathBuf>,
         rng_seed: u64,
         recorded: DkgLogIndex,
-    ) -> tokio::sync::mpsc::Sender<u64> {
+    ) -> tokio::sync::watch::Sender<u64> {
         spawn_dealer_at(
             ctx,
             oracle,
@@ -4627,7 +4630,7 @@ mod clock_tests {
         rng_seed: u64,
         recorded: DkgLogIndex,
     ) -> (
-        tokio::sync::mpsc::Sender<u64>,
+        tokio::sync::watch::Sender<u64>,
         Arc<RwLock<BTreeMap<u64, CeremonyOutput>>>,
         ConfirmPool,
     ) {
@@ -4680,7 +4683,7 @@ mod clock_tests {
         // The OUTPUT of whatever this dealer adopts, for the assertions that need the
         // ceremony's own `Output` — see `DkgActor::adopted_outcomes`.
         let adopted = actor.adopted_outcomes.clone();
-        let (height_tx, height_rx) = tokio::sync::mpsc::channel::<u64>(256);
+        let (height_tx, height_rx) = tokio::sync::watch::channel(0u64);
         let rng = StdRng::seed_from_u64(rng_seed);
         drop(
             ctx.with_label("dealer")
@@ -4707,7 +4710,7 @@ mod clock_tests {
         share_dir: Option<PathBuf>,
         rng_seed: u64,
         certified: Certified,
-    ) -> tokio::sync::mpsc::Sender<u64> {
+    ) -> tokio::sync::watch::Sender<u64> {
         let pk = me.public_key();
         let (sender, receiver) = oracle
             .control(pk.clone())
@@ -4790,7 +4793,7 @@ mod clock_tests {
                 wiring
             },
         );
-        let (height_tx, height_rx) = tokio::sync::mpsc::channel::<u64>(256);
+        let (height_tx, height_rx) = tokio::sync::watch::channel(0u64);
         let rng = StdRng::seed_from_u64(rng_seed);
         drop(
             ctx.with_label("dealer_resolved")
@@ -4900,7 +4903,7 @@ mod clock_tests {
                 // Past `freeze_at` we stop feeding (the boundary-stall freeze) but keep
                 // ticking, so the sim delivers in-flight Reveals.
                 if node_h <= freeze_at {
-                    let _ = s.send(node_h.saturating_sub(lag)).await;
+                    s.send_replace(node_h.saturating_sub(lag));
                 }
             }
             ctx.sleep(Duration::from_millis(50)).await;
@@ -5308,7 +5311,7 @@ mod clock_tests {
             for h in 0..=RESTART_AT {
                 let (h0, h3) = feed_round(h);
                 for (i, s) in sinks.iter().enumerate() {
-                    let _ = s.send(if i == 3 { h3 } else { h0 }).await;
+                    s.send_replace(if i == 3 { h3 } else { h0 });
                 }
                 ctx.sleep(Duration::from_millis(50)).await;
             }
@@ -5340,7 +5343,7 @@ mod clock_tests {
             for h in (RESTART_AT + 1)..=FEED_TO {
                 let (h0, h3) = feed_round(h);
                 for (i, s) in sinks.iter().enumerate() {
-                    let _ = s.send(if i == 3 { h3 } else { h0 }).await;
+                    s.send_replace(if i == 3 { h3 } else { h0 });
                 }
                 ctx.sleep(Duration::from_millis(50)).await;
             }
@@ -6075,7 +6078,7 @@ mod clock_tests {
             // Feed up to just before the boundary so node-0 finalizes but is NOT swept.
             for h in 0..=(BOUNDARY - 1) {
                 for s in &sinks {
-                    let _ = s.send(h).await;
+                    s.send_replace(h);
                 }
                 ctx.sleep(Duration::from_millis(50)).await;
             }
@@ -7461,7 +7464,7 @@ mod clock_tests {
                     wiring
                 },
             );
-            let (height_tx, height_rx) = tokio::sync::mpsc::channel::<u64>(4);
+            let (height_tx, height_rx) = tokio::sync::watch::channel(0u64);
             let run = ctx.with_label("actor").spawn(move |_| async move {
                 actor.run(height_rx, StdRng::seed_from_u64(0x5306)).await
             });
@@ -7481,17 +7484,18 @@ mod clock_tests {
         });
     }
 
-    /// `dpos_dkg_clock_height` is the actor's clamp, not any one feeder's write.
+    /// `dpos_dkg_clock_height` is the actor's clamp, not the last height handed
+    /// in.
     ///
-    /// The inlet-fed shape is the one that used to lie: the cert inlet pushed the
-    /// verified upstream frontier into the height channel and gauged nothing,
-    /// while the finalized poller gauged its own lagging `fin + K`. The published
-    /// clock then sat below the clock the ceremony geometry actually ran on and
-    /// the whole reported lag was spurious. Feeding the LOW value last is what
-    /// distinguishes "the gauge is the max" from "the gauge is whoever wrote
+    /// The clock has one feeder now (the marshal's ordering tip, which only
+    /// rises), so the clamp is a guard on `on_height`'s argument rather than a
+    /// merge — but the gauge still has to be the clamped value, or a caller
+    /// handing in a lower height (the tests do) would publish a clock below the
+    /// one the ceremony geometry runs on. Feeding the LOW value last is what
+    /// distinguishes "the gauge is the clamp" from "the gauge is whoever wrote
     /// last".
     #[test]
-    fn the_dkg_clock_gauge_is_the_actors_max_over_every_feeder() {
+    fn the_dkg_clock_gauge_is_the_actors_clamp_not_the_last_height_handed_in() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             let oracle: Oracle<PeerPubkey, SimContext> = {
@@ -7520,12 +7524,11 @@ mod clock_tests {
 
             assert_eq!(clock.snapshot().2, -1, "no half has reported yet");
 
-            // The upstream cert frontier, well ahead of local execution.
             actor.on_height(1000, &mut arng).await;
             assert_eq!(clock.snapshot().1, 1000);
 
-            // The finalized poller's `fin + K`, still catching up. The clock does
-            // not rewind and neither does the gauge.
+            // A lower height handed in afterwards: the clock does not rewind and
+            // neither does the gauge.
             actor.on_height(303, &mut arng).await;
             assert_eq!(actor.last_height, Some(1000));
             assert_eq!(clock.snapshot().1, 1000);
@@ -8574,7 +8577,7 @@ mod clock_tests {
         // Feed up to the victim's seal so it journals its (partial) ceremony progress.
         for h in 0..=RESTART_AT {
             for s in &sinks {
-                let _ = s.send(h).await;
+                s.send_replace(h);
             }
             ctx.sleep(Duration::from_millis(50)).await;
         }
@@ -8638,13 +8641,13 @@ mod clock_tests {
         // `drive_finalization` — giving the resolver wall-time to converge.
         for h in (RESTART_AT + 1)..=FEED_TO {
             for s in &sinks {
-                let _ = s.send(h).await;
+                s.send_replace(h);
             }
             ctx.sleep(Duration::from_millis(100)).await;
         }
         for _ in 0..20 {
             for s in &sinks {
-                let _ = s.send(FEED_TO).await;
+                s.send_replace(FEED_TO);
             }
             ctx.sleep(Duration::from_millis(100)).await;
         }
@@ -10966,7 +10969,7 @@ mod clock_tests {
         let victim_confirms = victim_confirms.expect("node 0 was spawned");
         for h in 0..=(BOUNDARY - 1) {
             for s in &sinks {
-                let _ = s.send(h).await;
+                s.send_replace(h);
             }
             ctx.sleep(Duration::from_millis(50)).await;
         }

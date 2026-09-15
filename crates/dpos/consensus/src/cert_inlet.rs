@@ -251,37 +251,6 @@ impl MarshalSink for crate::MarshalMailbox {
     }
 }
 
-/// The live-frontier tee: the beacon-plane clock a validator's cert-inlet
-/// advances from each live upstream cert it ingests. Re-homed here from the
-/// (deleted) unified supervisor that used to feed it off the window stream.
-///
-/// ONE cursor left. `dkg_height` is the `beacon::actor::DkgActor` deal clock:
-/// dealing at the live frontier lets a still-catching-up early-joiner deal its
-/// first epoch's DKG share before the deal deadline (the vrf-rotation early-join
-/// fix) instead of K blocks late. It stays until Э5 5.4 replaces it.
-///
-/// The other two went in 4.2 (§5.2 "Тип и единственный писатель"):
-/// `upstream_frontier` fed the re-jump trigger a height nobody had authenticated,
-/// and the trigger now reads the marshal tip alone; `live_height` was the
-/// follower's committee-read cursor (`committee[E]` at `max(EL-finalized, live)`)
-/// and 4.1 took every committee read onto the module's own
-/// ordering-finalized anchor, leaving it with a writer and no reader.
-///
-/// A validator-with-upstream and a FOLLOWER both wire the tee; the follower's
-/// `dkg_height_tx` receiver is dropped (it has no beacon plane), so every
-/// `try_send` there is a by-design `Closed`. A no-upstream validator has no inlet
-/// at all.
-pub struct LiveFrontierTee {
-    /// DkgActor deal clock; its `on_height` clamps to its own running max, so a
-    /// stale `try_send` never pulls the clock backward.
-    pub dkg_height_tx: tokio::sync::mpsc::Sender<u64>,
-    /// Where a dropped `dkg_height_tx` send is counted. The inlet does NOT write
-    /// the height gauge — the `DkgActor` does, at the clamp where all three
-    /// feeders meet — but a full channel is the one way this feeder can silently
-    /// leave the clock behind, so it has to be visible from here.
-    pub plane_clock: crate::sync_metrics::PlaneClock,
-}
-
 /// One of two producers into the singleton marshal (the other is the local BFT
 /// engine). BLS-verifies each upstream cert against the on-chain committee,
 /// makes the body local via [`MarshalSink::verify_block`], then reports the cert.
@@ -298,11 +267,6 @@ pub struct CertInlet<E, M> {
     /// different retention. Nothing here can be stale: an entry is write-once
     /// inside the module's window, and outside it there is no entry at all.
     committee: Arc<dyn crate::committee::Committee>,
-    /// The live-frontier tee — see [`LiveFrontierTee`]. `Some` on a
-    /// validator-with-upstream (the production-path / early-join fix) AND on a
-    /// follower (its frontier-aware committee read, with a no-op dkg clock);
-    /// `None` only in unit tests that do not exercise the frontier read.
-    tee: Option<LiveFrontierTee>,
     /// B3 — the SECOND sink: each VERIFIED pair is also forwarded to the node's
     /// `consensus`-RPC serving window (the D4 `verified_tx` stream). A TIER-2
     /// follower aligns by reading THIS node's window WS, not its marshal archive,
@@ -424,7 +388,6 @@ where
         Self {
             marshal,
             committee,
-            tee: None,
             window_tx: None,
             randomness: crate::beacon::absent_unregistered(),
             ctx,
@@ -516,15 +479,6 @@ where
         window_tx: tokio::sync::mpsc::UnboundedSender<UpstreamFinalized>,
     ) -> Self {
         self.window_tx = Some(window_tx);
-        self
-    }
-
-    /// Attach the live-frontier tee (see [`LiveFrontierTee`]). Builder-style: a
-    /// validator-with-upstream wires this from its beacon plane so committee
-    /// resolution + DKG dealing track the LIVE cert frontier; a follower (no
-    /// beacon plane) and unit tests leave it `None`.
-    pub fn with_tee(mut self, tee: LiveFrontierTee) -> Self {
-        self.tee = Some(tee);
         self
     }
 
@@ -772,17 +726,14 @@ where
         // the call that stood here was dead code with a misleading comment on it.
         // The METHOD survives on the trait alone, for a holder outside this row's
         // file list (`testbed/byzantine_roles.rs`), and 5.4 removes it.
-        // Re-homed live-frontier tee: advance the beacon-plane DKG deal clock off
-        // the VERIFIED live upstream tip (skipped/tampered certs above never reach
-        // here), so the DkgActor deals at the live frontier instead of this node's
-        // lagging EL-finalized state. The feeder is monotone (the DkgActor's
-        // `on_height` clamps to its running max), so a stale tee can never rewind
-        // the clock. `Some` only on a node with an inlet.
-        if let Some(tee) = &self.tee {
-            if tee.dkg_height_tx.try_send(uf.block.height).is_err() {
-                tee.plane_clock.note_height_drop();
-            }
-        }
+        //
+        // No beacon-clock tee here any more (5.4-А): the marshal call two lines
+        // down stores this very finalization and reports `Update::Tip` for it
+        // when it is the highest one held (CW `marshal/core/actor.rs:1454-1458`),
+        // and THAT tip — `FluentApp::report` → the ordering-tip watch — is the
+        // `DkgActor`'s one clock. A still-catching-up validator therefore deals
+        // on the live frontier its inlet hands the marshal, with no second
+        // channel and nothing to drop.
         // Make the body local so the marshal resolves it without a peer, THEN
         // report the cert to drive storage + the executor — in that order. Plus
         // (B3) feed the serving window so a tier-2 follower can align via THIS
@@ -1169,13 +1120,13 @@ mod tests {
     /// second assertion — that a DEFERRED cert still advances
     /// `LiveFrontierTee::upstream_frontier`, so a frozen marshal tip could not
     /// freeze the re-jump trigger. That atomic is gone (§5.2): the trigger reads
-    /// the marshal tip alone, and the frozen tip is unfrozen by the ladder step the
-    /// probe puts on every frozen tick, not by a second height channel. The
-    /// deferring half of the property is what survives, and it is what this test
-    /// keeps — now with the POSITIVE CONTROL it needs (review B1-14): the same
-    /// cert through an inlet whose module CAN read epoch 1 DOES tick the clock,
-    /// so `dkg_rx.is_empty()` above is a statement about the defer and not about
-    /// a channel nothing ever writes.
+    /// the marshal tip alone. Its successor — that a deferred cert does not tick
+    /// the beacon clock through the tee — went with the tee itself (5.4-А): the
+    /// beacon clock is the marshal's tip, and "no marshal drive" IS "no clock
+    /// tick". The deferring half is what survives, with the POSITIVE CONTROL it
+    /// needs (review B1-14): the same cert through an inlet whose module CAN
+    /// read epoch 1 DOES drive the marshal, so the empty call list above is a
+    /// statement about the defer and not about a marshal nothing ever drives.
     #[test]
     fn boundary_cert_defers_when_the_committee_is_unreadable() {
         let runtime = deterministic::Runner::default();
@@ -1192,22 +1143,11 @@ mod tests {
                     })
                 })
             };
-            let (dkg_tx, mut dkg_rx) = tokio::sync::mpsc::channel::<u64>(2);
             // Built BEFORE the deferring inlet shadows the `inlet` helper: same
-            // committee, same tee channel, a module that CAN read epoch 1 — the
-            // positive control at the bottom of this test.
-            let control = {
-                let (control, _marshal, _reads) = inlet(ctx.clone(), &c);
-                control.with_tee(super::LiveFrontierTee {
-                    dkg_height_tx: dkg_tx.clone(),
-                    plane_clock: crate::sync_metrics::PlaneClock::default(),
-                })
-            };
-            let mut inlet = CertInlet::new(marshal.clone(), committee_module, ctx.clone())
-                .with_tee(super::LiveFrontierTee {
-                    dkg_height_tx: dkg_tx,
-                    plane_clock: crate::sync_metrics::PlaneClock::default(),
-                });
+            // committee, a module that CAN read epoch 1 — the positive control at
+            // the bottom of this test.
+            let (control, control_marshal, _reads) = inlet(ctx.clone(), &c);
+            let mut inlet = CertInlet::new(marshal.clone(), committee_module, ctx.clone());
             inlet
                 .ingest(certify(
                     &c,
@@ -1219,18 +1159,11 @@ mod tests {
                 marshal.calls.lock().unwrap().is_empty(),
                 "a boundary cert whose committee is unreadable drives the marshal with ZERO calls"
             );
-            // ...and it advances NOTHING else either: the tee's one surviving
-            // cursor is fed past the verify gate, not before it.
-            assert!(
-                dkg_rx.is_empty(),
-                "a deferred cert fed the DKG deal clock — the tee is above the verify gate"
-            );
-            // THE POSITIVE CONTROL (review B1-14). `dkg_rx.is_empty()` on its own
-            // is nearly contentless: the tee sits above the verify gate, so it is
-            // true of any cert that did not verify, and it was true before this
-            // pass too. What makes it an assertion about the DEFER is the same
-            // cert, the same tee and the same channel driven through an inlet whose
-            // module CAN read epoch 1 — there the clock ticks.
+            // THE POSITIVE CONTROL (review B1-14). An empty call list on its own
+            // is nearly contentless: it is true of any cert that did not verify.
+            // What makes it an assertion about the DEFER is the same cert driven
+            // through an inlet whose module CAN read epoch 1 — there the marshal
+            // is driven, verify then report.
             let mut control = control;
             control
                 .ingest(certify(
@@ -1240,9 +1173,9 @@ mod tests {
                 ))
                 .await;
             assert_eq!(
-                dkg_rx.try_recv(),
-                Ok(96),
-                "the control cert did not feed the clock either — then the assertion above \
+                *control_marshal.calls.lock().unwrap(),
+                vec!["verified", "report"],
+                "the control cert did not drive the marshal either — then the assertion above \
                  says nothing about the DEFER"
             );
         });
@@ -1541,47 +1474,6 @@ mod tests {
             assert!(
                 window_rx.try_recv().is_err(),
                 "a rejected cert must NOT enter the serving window"
-            );
-        });
-    }
-
-    #[test]
-    fn verified_cert_advances_the_dkg_deal_clock_tee() {
-        // Re-homed tee: a VERIFIED cert feeds the DkgActor deal clock from
-        // `uf.block.height` (the live upstream frontier); a rejected cert feeds
-        // nothing.
-        //
-        // WHAT THIS TEST USED TO ALSO PROVE. It pinned the same three things for
-        // `LiveFrontierTee::live_height` — advance, no-advance-on-reject, and
-        // `fetch_max` monotonicity. That cursor is gone (§5.2): every committee
-        // read goes through the module at this node's ordering-finalized anchor
-        // (4.1), which left it with a writer and no reader. Only the clock half
-        // survives, and only until Э5 5.4 replaces it.
-        let runtime = deterministic::Runner::default();
-        runtime.start(|ctx| async move {
-            let c = committee(1);
-            let (inlet, _marshal, _) = inlet(ctx, &c);
-            let (dkg_tx, mut dkg_rx) = tokio::sync::mpsc::channel::<u64>(8);
-            let mut inlet = inlet.with_tee(super::LiveFrontierTee {
-                dkg_height_tx: dkg_tx,
-                plane_clock: crate::sync_metrics::PlaneClock::default(),
-            });
-
-            let block = sample_order(Digest(B256::repeat_byte(0xaa)), 65);
-            inlet.ingest(certify(&c, 0, &block)).await;
-            assert_eq!(
-                dkg_rx.try_recv(),
-                Ok(65),
-                "dkg clock fed the verified height"
-            );
-
-            // A wrong-committee cert at a higher height must NOT feed it.
-            let theirs = committee(2);
-            let higher = sample_order(Digest(B256::repeat_byte(0xbb)), 99);
-            inlet.ingest(certify(&theirs, 0, &higher)).await;
-            assert!(
-                dkg_rx.try_recv().is_err(),
-                "a rejected cert feeds no dkg tick"
             );
         });
     }
@@ -2132,7 +2024,7 @@ mod tests {
     /// forged passes a verifier built without the epoch's oracle, so the inlet's own
     /// `verify` says nothing about σ — and the beacon's verdict is then the only gate
     /// left. `Refused` must SKIP the certificate (never hand it to the marshal, never
-    /// tee it) and count a data fault, so three of them rotate away from the upstream
+    /// serve it) and count a data fault, so three of them rotate away from the upstream
     /// that served them.
     ///
     /// The forgery is a genuine σ of a foreign round: a decodable curve point that

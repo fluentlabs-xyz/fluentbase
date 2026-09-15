@@ -17,8 +17,7 @@
 
 use commonware_runtime::{tokio::Context, Handle, Metrics as _, Spawner as _};
 use fluentbase_consensus::{
-    cert_inlet::LiveFrontierTee, CertInlet, CertUpstream as _, Committee, MarshalMailbox,
-    RotateUpstream,
+    CertInlet, CertUpstream as _, Committee, MarshalMailbox, RotateUpstream,
 };
 use std::sync::Arc;
 use tracing::{error, info};
@@ -27,12 +26,13 @@ use tracing::{error, info};
 /// live `(Finalization, OrderBlock)` through [`CertInlet::ingest`] into the same
 /// marshal the local engine drives.
 ///
-/// `tee` re-homes the DkgActor deal clock — the ONE cursor it still carries —
-/// off the verified upstream tip, present on a validator (it owns the beacon
-/// plane), so the DKG deals at the LIVE frontier rather than at this node's
-/// lagging EL-finalized state. The committee cursor that sat beside it
-/// (`live_height`) is gone: every committee read goes through the module at this
-/// node's ordering-finalized anchor.
+/// It tees nothing (5.4-А). The DkgActor's deal clock is the marshal's ordering
+/// tip, and this inlet drives that tip by handing the marshal every certificate
+/// it verifies — so the DKG still deals at the LIVE frontier rather than at this
+/// node's lagging EL-finalized state, one marshal call later and without a second
+/// height channel to drop from. The committee cursor that sat beside the clock
+/// (`live_height`) went in 4.2: every committee read goes through the module at
+/// this node's ordering-finalized anchor.
 ///
 /// There is no `walk` parameter and no epoch geometry here: the ladder's
 /// boundary-walk rung was deleted 2026-08-19 with the agreement plane, and pin
@@ -59,7 +59,6 @@ pub(crate) fn spawn_cert_inlet(
     marshal: MarshalMailbox,
     committee: Arc<dyn Committee>,
     urls: Vec<String>,
-    tee: LiveFrontierTee,
     beacon: Arc<dyn fluentbase_consensus::beacon::Beacon>,
 ) -> Handle<()> {
     ctx.with_label("cert_inlet").spawn(move |c| async move {
@@ -81,7 +80,6 @@ pub(crate) fn spawn_cert_inlet(
         // connection (#7) so a connection-level auto-rotation does not carry one
         // upstream's faults into the next URL's rotation budget.
         let mut inlet = CertInlet::new(marshal, committee, c)
-            .with_tee(tee)
             .with_rotate(rotate)
             .with_randomness(beacon)
             .with_connection_token(conn_gen);

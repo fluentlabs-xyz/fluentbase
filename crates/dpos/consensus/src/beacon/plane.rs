@@ -48,9 +48,9 @@ use crate::{
         outcome::group_public_key,
         share_state::{self, ShareState},
         surface::{LiveBeacon, LiveBeaconConfig},
-        Beacon, BeaconEvent,
+        Beacon, BeaconEvent, ARTIFACT_JOURNAL_PARTITION, MINT_MEMO_PARTITION,
+        SEED_JOURNAL_PARTITION,
     },
-    dpos::{ARTIFACT_JOURNAL_PARTITION, MINT_MEMO_PARTITION, SEED_JOURNAL_PARTITION},
     outer::SharedMux,
 };
 
@@ -524,14 +524,32 @@ where
     pub bodies_mux: SharedMux<HS, HR>,
     /// Every staking read the beacon takes, on ONE cursor.
     pub committees: Arc<dyn CommitteeReads>,
-    /// The ORDERING-finalized height clock the ceremony's deal/seal geometry runs
-    /// on. Ticks buffered here before the actor starts are drained by `on_height`'s
-    /// monotone-max clamp.
-    pub heights: mpsc::Receiver<u64>,
+    /// THE clock the ceremony's deal/seal geometry runs on: the marshal's
+    /// ordering tip — the height of the highest finalization this node has
+    /// VERIFIED and stored — as `FluentApp::report(Update::Tip)` publishes it
+    /// (`application.rs`, the one writer). The node and the testbed create the
+    /// watch BEFORE [`build`] and hand its sender to the app
+    /// (`FluentApp::with_beacon_tip`), so the epoch manager
+    /// (`app.ordering_tip()`) and this actor read ONE VALUE published by one
+    /// writer — each on its own channel, with exactly one parked receiver, which
+    /// is what keeps the wake order code rather than process-random RNG (see
+    /// `FluentApp::beacon_tip`).
+    ///
+    /// One feeder, and it is the one that used to be the third of three: the
+    /// local finalized poller's `fin + K` never exceeds the tip (`fin` is
+    /// `ordering − K` by the executor's rule), and the cert inlet's frontier tee
+    /// is the same height the inlet hands the marshal one call later
+    /// (`CertInlet::ingest` → `report_finalization` → `store_finalization` →
+    /// `Update::Tip`, CW `marshal/core/actor.rs:1454-1458`). A watch, so a
+    /// consumer that starts late — the actor waits for the frozen geometry
+    /// first — reads the newest tip rather than a buffered backlog, and nothing
+    /// is ever dropped; after a restart the marshal reports its highest stored
+    /// finalization at startup (`:397-402`), so the clock needs no seed.
+    pub clock: watch::Receiver<u64>,
     /// The registered clock pair. The `DkgActor` publishes its half off the
-    /// monotone clamp that merges every feeder in `heights`, so the gauge reports
-    /// the clock the ceremony geometry runs on rather than whichever feeder wrote
-    /// last. Arrives from the node crate, where the registry lives.
+    /// monotone clamp `on_height` keeps over `clock`, so the gauge reports the
+    /// clock the ceremony geometry runs on. Arrives from the node crate, where
+    /// the registry lives.
     pub plane_clock: crate::sync_metrics::PlaneClock,
     /// The node's fork-safety latch — THE one instance the executor and the epoch
     /// manager share, arriving from the node crate for the same reason
@@ -554,7 +572,7 @@ where
     pub geometry: watch::Receiver<Option<(u64, u64)>>,
     /// Prefix of every storage partition the plane opens: the epoch-key
     /// agreement journals (`{prefix}dkg_epoch_{E}`, see
-    /// [`crate::dpos::AGREEMENT_JOURNAL_PARTITION_PREFIX`]) and the key / seed / artifact
+    /// [`super::AGREEMENT_JOURNAL_PARTITION_PREFIX`]) and the key / seed / artifact
     /// journals (`{prefix}` ‖ [`MINT_MEMO_PARTITION`] etc., see
     /// [`journal_partition`]). Production passes `""`; the in-crate testbed a
     /// per-node prefix, so N planes on one in-memory `Storage` do not write one
@@ -573,8 +591,8 @@ pub(crate) fn journal_partition(prefix: &str, base: &str) -> String {
 /// One call, one `Arc<dyn Beacon>` and one [`Tasks`]: the ceremony store, the
 /// dealer-log index, the artifact store, the confirmation pool, the resolver
 /// seam and the agreement launcher are all created here and none of them crosses
-/// back out. The node keeps the network, the mux brokers, the finalized-height
-/// poller and the staking reads — everything whose dependency runs the other way.
+/// back out. The node keeps the network, the mux brokers, the ordering-tip watch
+/// and the staking reads — everything whose dependency runs the other way.
 pub async fn build<E, P, Se, Re, XS, XR, HS, HR>(
     context: &E,
     cfg: ValidatorInputs<P, Se, Re, XS, XR, HS, HR>,
@@ -603,7 +621,7 @@ where
         resolver_mux,
         bodies_mux,
         committees,
-        heights,
+        clock,
         plane_clock,
         safety_halt,
         geometry,
@@ -823,10 +841,9 @@ where
     // The persistent `DkgActor` — spawned ONCE, runs for the whole process. It is
     // constructed AFTER the plane has frozen the geometry, so it takes plain
     // `(activation, interval)` from the single in-plane source and never re-reads
-    // the chain. Height ticks accumulate in `heights` meanwhile (bounded buffer)
-    // and are drained by `on_height`'s monotone-max clamp once the actor runs — the
-    // first epoch boundary is one interval away (≫ the freeze latency), so no
-    // deal/seal is missed.
+    // the chain. The clock watch keeps the newest tip meanwhile, and the actor's
+    // first `changed()` hands it over — the first epoch boundary is one interval
+    // away (≫ the freeze latency), so no deal/seal is missed.
     let dkg_handle = {
         let (sender, receiver) = beacon_channel;
         let committee_for = committee_for.clone();
@@ -841,8 +858,7 @@ where
             // start then. The predecessor awaited a one-shot `Notify` and read the
             // geometry once — so a wake-up that raced the freeze read `None`,
             // logged, and returned, leaving the node with no `DkgActor` for the
-            // life of the process. Height ticks accumulate in `heights` meanwhile
-            // (bounded buffer) and are drained by `on_height`'s monotone-max clamp.
+            // life of the process. The clock watch keeps the newest tip meanwhile.
             let mut geometry = geometry;
             let (activation, interval) = loop {
                 if let Some(frozen) = *geometry.borrow_and_update() {
@@ -886,7 +902,7 @@ where
                     fixture: None,
                 },
             );
-            actor.run(heights, c).await
+            actor.run(clock, c).await
         })
     };
 

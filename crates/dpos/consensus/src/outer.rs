@@ -442,10 +442,14 @@ pub struct OuterBuilder<B, P, BE, D, XC, A> {
     /// ordering half off marshal's tip — the ONE observer of finalization that
     /// survives a `SafetyHalt` park and every engine abort.
     pub plane_clock: crate::sync_metrics::PlaneClock,
-    /// The beacon plane's height channel. `FluentApp` feeds marshal's ordering tip
-    /// into it — the plane's third clock feeder, and the one that survives an
-    /// execution stall. `None` where no beacon plane runs (a follower, a test).
-    pub dkg_height_tx: Option<tokio::sync::mpsc::Sender<u64>>,
+    /// The beacon plane's tip watch, when the plane made it: the plane's
+    /// `DkgActor` holds a receiver of this sender, and `FluentApp` publishes
+    /// marshal's tip on it (`with_beacon_tip`) in the same statement that
+    /// publishes its own, so the actor's clock and the epoch manager's tip carry
+    /// one value on two channels — one parked receiver each, see
+    /// `FluentApp::beacon_tip`. `None` where no beacon plane runs (a follower, a
+    /// test) — the app then writes only its own.
+    pub beacon_tip: Option<Arc<tokio::sync::watch::Sender<u64>>>,
     pub timeouts: ConsensusTimeouts,
     pub mailbox_size: usize,
     pub deque_size: usize,
@@ -995,8 +999,8 @@ where
             self.tombstones,
         )
         .with_plane_clock(self.plane_clock);
-        let app = match self.dkg_height_tx {
-            Some(tx) => app.with_dkg_heights(tx),
+        let app = match self.beacon_tip {
+            Some(tip) => app.with_beacon_tip(tip),
             None => app,
         };
         let marshal_reporter_app = app.clone();

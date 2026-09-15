@@ -762,23 +762,20 @@ where
     let _ = plane.marshal_slot.set(handle.cert_mailbox.clone());
 
     // Spawn the cert-inlet against the SAME marshal the local engine drives
-    // (`handle.cert_mailbox`). `None` when no upstreams are configured. The inlet
-    // tees the LIVE upstream cert frontier into the DkgActor deal clock (re-homed
-    // from the deleted unified supervisor) — so a still-catching-up validator
-    // deals its DKG share at the live tip rather than K blocks late. That clock is
-    // the ONLY thing it tees: 4.2 removed the committee-read cursor (`live_height`,
-    // superseded by the module's ordering-finalized anchor) and the re-jump
-    // frontier (`upstream_frontier`, superseded by the marshal tip).
+    // (`handle.cert_mailbox`). `None` when no upstreams are configured. It tees
+    // nothing any more (5.4-А): the beacon's deal clock is the marshal's ordering
+    // tip, which this inlet drives by handing its verified certificates to that
+    // same marshal — so a still-catching-up validator still deals at the live
+    // frontier, one marshal call later and with no second channel. The two
+    // cursors that stood beside the clock went in 4.2 (`live_height`, superseded
+    // by the module's ordering-finalized anchor; `upstream_frontier`, superseded
+    // by the marshal tip).
     let inlet_handle = inlet_setup.map(|(inlet_ctx, urls)| {
         crate::cert_inlet::spawn_cert_inlet(
             inlet_ctx,
             handle.cert_mailbox.clone(),
             plane.committee.clone(),
             urls,
-            fluentbase_consensus::cert_inlet::LiveFrontierTee {
-                dkg_height_tx: plane.dkg_height_tx.clone(),
-                plane_clock: plane.shared.plane_clock.clone(),
-            },
             // The SAME provider the consensus layer holds, not a second one over
             // a private store: `observe_cert` prunes what the key ladder reads, and a
             // split store would make the pruning a silent no-op.
@@ -931,12 +928,15 @@ pub(crate) struct BeaconPlane<Provider, EvmConfig> {
     /// write-back and the wake-up bridge, behind ONE handle. Resolving means one
     /// of them died; aborting it aborts all of them.
     pub beacon_supervised: Handle<()>,
-    /// The finalized-height poller driving the plane's ET + `dkg_height` clock.
-    /// The poller owns its own `dkg_height_tx` clone (feeding the LOCAL
-    /// ordering-finalized height `fin + K`); the live-cert-frontier tee is
-    /// re-homed onto the cert-inlet (`dkg_height_tx` — its ONE remaining cursor
-    /// since `live_height` went with the frontier step), fed only on an
-    /// upstream-configured node.
+    /// The finalized-height poller. Since 5.4-А it feeds no clock: the beacon's
+    /// clock is the marshal's ordering tip, published by `FluentApp::report` on
+    /// the beacon plane's own tip watch. What the poller still OWNS, and what keeps it a
+    /// task rather than a deleted feeder, is the pair of jobs nothing else in
+    /// this process does before the layer launches — the EpochTransition's
+    /// GEOMETRY FREEZE together with the publication that starts the `DkgActor`
+    /// (`geometry_tx`, the only `send_replace` on that watch), and the FIRST
+    /// peer-set registration the cold-start jump loop cannot leave without —
+    /// plus the tombstone watch it drives off the same finalized cursor.
     pub poller_handle: Handle<()>,
     /// The plane-native `CertUpstream` frontier resolver engine
     /// (`commonware_resolver::p2p`) on FRONTIER_CHANNEL — aborted ONLY at process
@@ -1001,12 +1001,6 @@ pub(crate) struct BeaconPlane<Provider, EvmConfig> {
     /// boundary-bridge forwarder — the one place that sees exactly the epochs the
     /// transition tracked. `u64::MAX` is the "nothing tracked yet" sentinel.
     pub tracked_epoch: Arc<std::sync::atomic::AtomicU64>,
-    /// The DkgActor deal clock. The inlet ALSO tees the live frontier here so a
-    /// still-catching-up early-joiner deals its first epoch's DKG share at the
-    /// live tip (the vrf-rotation early-join fix), not K blocks late. The
-    /// finalized poller feeds it `fin + K`; the DkgActor `on_height` clamps both
-    /// feeders to its running max (never rewound).
-    pub dkg_height_tx: mpsc::Sender<u64>,
     /// Deferred marshal READ handle for the plane-native frontier resolver, which
     /// serves peers this node's LOCAL marshal tip/archive. Created EMPTY here (the
     /// marshal mailbox does not exist until the later layer launch);
@@ -1292,9 +1286,9 @@ where
     // DkgActor's default `active_committee_for` covers the `cur` side of the
     // change-test against the same committed slot.
 
-    // The `dkg_height` clock and the epoch-geometry freeze, both fed by a persistent
-    // finalized-height poller (reth `finalized_block_number`) — a source that exists
-    // in BOTH the follower and signer phases, unlike the per-engine boundary hook.
+    // The epoch-geometry freeze, driven by a persistent finalized-height poller
+    // (reth `finalized_block_number`) — a source that exists in BOTH the follower
+    // and signer phases, unlike the per-engine boundary hook.
     // The Oracle peer set is NOT fed from here any more: `oracle.track` has exactly
     // one production caller (`EpochTransition::track_and_trigger`), reached from the
     // bootstrap the layer's cold start owns and from the boundary walk the delivery
@@ -1318,7 +1312,15 @@ where
             move |peer: &fluentbase_bls::PeerPubkey| tombstones.contains(peer),
         ))
     };
-    let (dkg_height_tx, dkg_height_rx) = mpsc::channel::<u64>(256);
+    // THE clock of the process, created here and NOT inside `FluentApp::new`:
+    // the `DkgActor`'s receiver is taken below, before `beacon::build`, while the
+    // app that publishes on it is built per promotion inside the layer. The
+    // beacon's OWN channel (`OuterBuilder::beacon_tip` →
+    // `FluentApp::with_beacon_tip`), written by the same `Update::Tip` statement
+    // that writes the epoch manager's — one value, two channels, one parked
+    // receiver each. `FluentApp::beacon_tip` says why the actor must not simply
+    // subscribe to the app's own channel.
+    let beacon_tip = Arc::new(tokio::sync::watch::Sender::new(0u64));
     let et_reader = RethStakingStateReader::new(
         node.provider.clone(),
         node.evm_config.clone(),
@@ -1345,20 +1347,14 @@ where
         Arc::new(move |n| fluentbase_consensus::executed_state_hash(&provider_for_et, n)),
         fluentbase_consensus::K,
     );
-    // Seed only the height-clock cursor — NO synchronous initial `cold_start`. At
-    // process start reth may not have surfaced its persisted finalized marker yet
-    // (`finalized_block_num_hash` then falls back to GENESIS, where a runtime-deployed
-    // ChainConfig is still codeless ⇒ the geometry read reverts), so a cold-start
-    // HERE would race that fallback. The plane is uniformly POLLER-driven: the 500ms
-    // poller below runs the first `cold_start` off the LIVE finalized cursor — by its
-    // first tick reth has surfaced the marker, so the geometry freezes from a readable
-    // block (and `apply_at` stays codeless-tolerant for the rare slow tick).
-    let cs_fin_num = node
-        .provider
-        .finalized_block_number()
-        .ok()
-        .flatten()
-        .unwrap_or(0);
+    // NO synchronous initial geometry freeze here. At process start reth may not
+    // have surfaced its persisted finalized marker yet (`finalized_block_num_hash`
+    // then falls back to GENESIS, where a runtime-deployed ChainConfig is still
+    // codeless ⇒ the geometry read reverts), so a freeze HERE would race that
+    // fallback. The freeze is POLLER-driven: the task below resolves it off the
+    // LIVE finalized cursor — by its first tick reth has surfaced the marker, so
+    // the geometry freezes from a readable block (and `apply_at` stays
+    // codeless-tolerant for the rare slow tick).
     let et_arc = Arc::new(Mutex::new(epoch_transition));
     // The plane's frozen `(dpos_activation, epoch_interval)`, published by the
     // poller the instant the ET freezes it — the EpochTransition is the single
@@ -1413,19 +1409,21 @@ where
         fluentbase_consensus::CommitteeReadsFacade::new(committee.clone()),
     );
 
-    // Finalized-height poller. It feeds the `dkg_height` clock `fin + K`
-    // (ORDERING-finalized): the executor sets the EL-finalized height =
-    // `result_final_height(tip, floor) = ordering_finalized − K`
-    // (`order_block.rs::result_final_height`, `K = fluentbase_consensus::K`), so
-    // `fin + K` is the ordering-finalized height that produced `fin`. The DkgActor's
-    // seal deadline + `epoch_start` geometry are ORDERING-chain quantities; feeding it
-    // the raw EL-finalized `fin` would silently shorten the `DKG_MARGIN_BLOCKS` window
-    // by K (the epoch-2 boundary wedge). For every epoch ≥ 1 the cold-start floor
-    // clamp is inactive, so `fin + K` == the ordering tip exactly.
+    // Finalized-height poller. It feeds NO clock (5.4-А removed the `fin + K`
+    // feeder: the beacon reads the marshal's ordering tip, and `fin + K` never
+    // exceeded it — the executor sets the EL-finalized height =
+    // `result_final_height(tip, floor) = ordering_finalized − K`,
+    // `order_block.rs::result_final_height`, so `fin + K ≤ tip` always and, once
+    // the cold-start floor clamp goes inactive, `fin + K == tip` exactly).
     //
-    // It also drives the transition's GEOMETRY FREEZE until it takes — and nothing
-    // after that, and nothing else ever: the epoch bootstrap (the starting epoch on
-    // the bridge, the read floor) belongs to the layer's cold start, which owns an
+    // What it DRIVES, and the reason the task is here at all, is the transition's
+    // GEOMETRY FREEZE together with the publication that starts the `DkgActor`
+    // (`geometry_tx.send_replace` below is the ONE writer of that watch, and the
+    // actor parks on the first `Some`), plus the FIRST peer-set registration the
+    // layer's cold-start jump loop cannot leave without, plus the tombstone watch.
+    // Nothing after the freeze and nothing else ever: the epoch bootstrap (the
+    // starting epoch on the bridge, the read floor) belongs to the layer's cold
+    // start, which owns an
     // ordering-scale post-jump anchor. It may not drive boundaries: `borrow_and_update` below takes
     // the newest finalized height and drops the ones in between, while boundary
     // detection is pointwise (`is_epoch_boundary(number)`), so a coalesced step over a
@@ -1438,10 +1436,11 @@ where
     // and in the ordering scale the transition's `read_height_for` expects.
     //
     // The clock pair is REGISTERED here, where the registry is, but neither gauge
-    // is written here any more: the `DkgActor` publishes the DKG half off the
-    // clamp that merges this feeder with the cert inlet's frontier and marshal's
-    // ordering tip, and `FluentApp` publishes the ordering half off that same tip.
-    // This task keeps only the drop counter for the sends it fails to place.
+    // is written here: the `DkgActor` publishes the DKG half off the clamp over
+    // the tips it takes from the watch, and `FluentApp` publishes the ordering
+    // half off the same tip as it reports it. Two gauges over one value — a
+    // growing lag under a moving ordering half is an actor that has stopped
+    // taking the tip.
     let plane_clock = fluentbase_consensus::sync_metrics::PlaneClock::default();
     plane_clock.register(ctx);
     // The self-heal stuck-detector family, registered ONCE here (it used to be
@@ -1466,8 +1465,6 @@ where
     let poller_handle = {
         let provider = node.provider.clone();
         let et = et_arc.clone();
-        let dkg_tx = dkg_height_tx.clone();
-        let plane_clock = plane_clock.clone();
         let geometry_tx = geometry_tx.clone();
         // The committee module, for ONE call: the freeze below is the second of
         // the two events `Committee::subscribe` promises (the other being the
@@ -1490,15 +1487,12 @@ where
                 // `changed()` at the bottom waits for the NEXT change instead of
                 // returning immediately and re-processing the same height. Taking
                 // the value here rather than awaiting a change first also keeps the
-                // persisted-marker-surfacing race closed (see the `cs_fin_num` seed
-                // below): if reth has already surfaced the marker we act on it now.
+                // persisted-marker-surfacing race closed: if reth has already
+                // surfaced the marker we act on it now, which is what lets the
+                // geometry freeze below happen on the first pass.
                 //
-                // The gauge is NOT written here. The DkgActor writes it off the
-                // clamp where all three feeders meet, so a node whose cert inlet or
-                // ordering tip runs ahead of `fin + K` no longer publishes a clock
-                // lower than the one it runs on.
+                // Neither gauge is written here — see the registration above.
                 let mut finalized_rx = provider.canonical_state().subscribe_finalized_block();
-                let mut sent = cs_fin_num;
                 // Publish-once latch for the frozen geometry. Separate from "did I
                 // freeze it", because the freeze has two possible authors and the
                 // publication has exactly one.
@@ -1507,7 +1501,6 @@ where
                 // success is the whole contract: from there the epoch machine owns
                 // every later registration, at the boundaries.
                 let mut peers_tracked = false;
-                let _ = dkg_tx.try_send(cs_fin_num + fluentbase_consensus::K);
                 loop {
                     // Bound out of the `match` scrutinee so the watch guard is
                     // dropped before the `changed()` await below — a `watch::Ref`
@@ -1523,26 +1516,6 @@ where
                             continue;
                         }
                     };
-                    // Coalesced: ONE message carrying the newest height, not one per
-                    // missed height. `on_height` clamps to a running max at entry
-                    // (`beacon/actor.rs`), so every intermediate tick is discarded by
-                    // the consumer anyway — sending them made a catch-up run the whole
-                    // `on_height` body hundreds of times, each with uncached committee
-                    // reads, and overflowed this 256-slot channel (measured: an EL jump
-                    // of 338 blocks dropped 85 ticks in one burst).
-                    //
-                    // The cursor advances ONLY on a successful send. Advancing it on a
-                    // drop is what made the old shape lose a height permanently: on a
-                    // restart with a gap wider than the buffer the newest value is the
-                    // one that does not fit, and nothing ever re-sent it — convergence
-                    // rested on the chain continuing to produce.
-                    if sent < fin {
-                        if dkg_tx.try_send(fin + fluentbase_consensus::K).is_ok() {
-                            sent = fin;
-                        } else {
-                            plane_clock.note_height_drop();
-                        }
-                    }
                     // Geometry drive (event-driven on THIS existing poll, no second
                     // timer): until the geometry is frozen, resolve it off the LIVE
                     // finalized cursor — freezing the instant that cursor names a
@@ -1884,10 +1857,12 @@ where
     // The actor waits for the poller to publish a frozen `(activation, interval)`
     // on `geometry_rx` and takes it from there — the EpochTransition stays the
     // single in-plane source and the actor never re-reads the chain, so there is no
-    // codeless/genesis-fallback race in this path. Height ticks accumulate in
-    // `dkg_height_rx` meanwhile (bounded buffer) and are drained by `on_height`'s
-    // monotone-max clamp once the actor runs; the first epoch boundary is one
-    // interval away (≫ the ~one-tick freeze latency), so no deal/seal is missed.
+    // codeless/genesis-fallback race in this path. Its clock watch holds the newest
+    // tip meanwhile and hands it over on the actor's first `changed()`; the first
+    // epoch boundary is one interval away (≫ the ~one-tick freeze latency), so no
+    // deal/seal is missed. After a restart the tip comes from the marshal itself,
+    // which reports its highest stored finalization at startup (CW
+    // `marshal/core/actor.rs:397-402`) — the clock needs no seed of its own.
     let (beacon, beacon_tasks) = fluentbase_consensus::beacon::build(
         ctx,
         fluentbase_consensus::beacon::ValidatorInputs {
@@ -1921,7 +1896,7 @@ where
             resolver_mux: resolver_mux.clone(),
             bodies_mux: broadcast_mux.clone(),
             committees,
-            heights: dkg_height_rx,
+            clock: beacon_tip.subscribe(),
             plane_clock: plane_clock.clone(),
             safety_halt: safety_halt.clone(),
             geometry: geometry_rx,
@@ -1980,7 +1955,11 @@ where
             marshal_mux,
             tombstones,
             plane_clock,
-            dkg_height_tx: dkg_height_tx.clone(),
+            // The beacon's half of THE clock, created before `beacon::build`
+            // above so the `DkgActor` could take its receiver: it travels down
+            // with the plane, and the engine's `FluentApp` — built far later, per
+            // promotion — publishes marshal's tip on it beside its own.
+            beacon_tip,
             sync_metrics,
             safety_halt,
         },
@@ -1988,7 +1967,6 @@ where
         finalized_cursor,
         committee,
         tracked_epoch,
-        dkg_height_tx,
         marshal_slot,
         epoch_transition: fluentbase_consensus::dpos::PlaneEpochTransition {
             transition: et_arc,

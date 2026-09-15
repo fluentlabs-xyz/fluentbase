@@ -261,11 +261,12 @@ impl SyncMetrics {
 
 /// The two clocks the DPoS node runs on, published side by side.
 ///
-/// The DKG half has three feeders — the finalized poller's `fin + K`, the cert
-/// inlet's verified upstream frontier, and marshal's ordering tip off
-/// `FluentApp::report` — and the `DkgActor`'s monotone clamp turns them into one
-/// running max. The gauge is written by that clamp, not by any feeder, so the
-/// published number is the clock the ceremony geometry actually runs on.
+/// Both halves are the SAME tip — marshal's ordering tip off
+/// `FluentApp::report`, which writes the ordering half and publishes the
+/// process-wide watch the `DkgActor` reads; the actor writes the DKG half off
+/// its monotone clamp when it has taken the tip. Two gauges over one value are
+/// the visibility of an actor that has stopped taking it: a growing lag with a
+/// moving ordering half is a beacon actor that is not running.
 ///
 /// The ordering half is BFT-attested, but it is NOT independent of execution,
 /// and the pair must not be read as if it were. Measured on a 4-validator stand
@@ -276,7 +277,7 @@ impl SyncMetrics {
 /// EL state, so a halted node can only see two epochs past the committees it
 /// already read. Warning time is that window, not unbounded (FLU-1173).
 ///
-/// Registered by the plane builder (the node crate, where the poller lives),
+/// Registered by the plane builder (the node crate, where the registry lives),
 /// mirroring [`SyncMetrics`]'s clone-shares-one-gauge topology.
 #[derive(Clone, Debug)]
 pub struct PlaneClock {
@@ -286,7 +287,6 @@ pub struct PlaneClock {
     /// Bit 0 = the ordering half has been written, bit 1 = the DKG half has.
     /// Until both are set the two gauges are not comparable and the lag is `-1`.
     seen: Arc<AtomicU8>,
-    drops: Counter,
 }
 
 impl Default for PlaneClock {
@@ -301,7 +301,6 @@ impl Default for PlaneClock {
             dkg: Gauge::default(),
             lag,
             seen: Arc::default(),
-            drops: Counter::default(),
         }
     }
 }
@@ -319,10 +318,10 @@ impl PlaneClock {
         );
         ctx.register(
             "dpos_dkg_clock_height",
-            "The ordering height the beacon plane's clock has reached — the DkgActor's monotone \
-             max over its three feeders (the EL finalized block number plus K, the verified \
-             upstream cert frontier, marshal's ordering tip). Frozen ⇒ no DKG ceremony progress \
-             and no epoch boundary detection, whatever the ordering plane does.",
+            "The ordering height the beacon plane's clock has reached — marshal's ordering tip \
+             as the DkgActor last took it off the process-wide watch. Frozen while \
+             dpos_ordering_finalized_height moves ⇒ the actor has stopped taking the tip: no \
+             DKG ceremony progress and no epoch boundary detection.",
             self.dkg.clone(),
         );
         ctx.register(
@@ -333,16 +332,6 @@ impl PlaneClock {
              has never reported, so the two are not yet comparable.",
             self.lag.clone(),
         );
-        ctx.register(
-            "dpos_dkg_height_drops_total",
-            "Height ticks dropped because the beacon plane's height channel was full. Lossy BY \
-             DESIGN: the consumer clamps to a running max, so a dropped tick is harmless as \
-             long as some feeder ticks later. The cert inlet sends one per certificate and \
-             the ordering tip one per block, so bursts during a catch-up are expected. What \
-             is NOT expected is a count that keeps climbing while the actor is alive — that \
-             means the actor has stopped draining.",
-            self.drops.clone(),
-        );
     }
 
     /// Marshal reported a new BFT-attested ordering finalization tip.
@@ -352,19 +341,12 @@ impl PlaneClock {
         self.refresh_lag();
     }
 
-    /// The `DkgActor` clamped a feeder's tick into its running max. The ONE
-    /// writer: gauging each feeder separately reported whichever one happened to
-    /// write last rather than the clock the actor runs on.
+    /// The `DkgActor` took a tip off the watch and clamped it into its running
+    /// max. The ONE writer of this half.
     pub fn record_dkg_clock(&self, height: u64) {
         self.dkg.set(height as i64);
         self.seen.fetch_or(0b10, Ordering::Relaxed);
         self.refresh_lag();
-    }
-
-    /// A height tick could not be handed to the beacon plane because the channel
-    /// was full.
-    pub fn note_height_drop(&self) {
-        self.drops.inc();
     }
 
     /// Floored at 0 because the two gauges are written by different tasks: the
@@ -375,7 +357,7 @@ impl PlaneClock {
         if self.seen.load(Ordering::Relaxed) != 0b11 {
             // Never written on one side: a fail-soft node with no DkgActor
             // (`beacon/plane.rs`'s unfrozen-geometry branch) and the post-restart
-            // window before the actor drains its buffer would otherwise report the
+            // window before the actor takes its first tip would otherwise report the
             // whole chain height as lag. -1 is out of the domain of a real lag and
             // says "not yet comparable" instead of "healthy".
             self.lag.set(-1);
@@ -387,11 +369,6 @@ impl PlaneClock {
     /// Current `(ordering, dkg, lag)` — test/assert helper.
     pub fn snapshot(&self) -> (i64, i64, i64) {
         (self.ordering.get(), self.dkg.get(), self.lag.get())
-    }
-
-    /// Current `dpos_dkg_height_drops_total` — test/assert helper.
-    pub fn drops(&self) -> u64 {
-        self.drops.get()
     }
 }
 
@@ -661,7 +638,7 @@ mod tests {
     // Zero is a healthy lag, so a half that has NEVER reported must not be
     // allowed to render as one. Two shapes reach here: a fail-soft node that
     // starts no DkgActor at all, and the window after a restart before the actor
-    // drains its buffered heights — in both, `ordering − 0` is the whole chain
+    // takes its first tip off the watch — in both, `ordering − 0` is the whole chain
     // height, which reads as a catastrophic lag on one side and as perfect health
     // on the other, and neither is true.
     #[test]
@@ -678,15 +655,6 @@ mod tests {
 
         clock.record_dkg_clock(897);
         assert_eq!(clock.snapshot(), (900, 897, 3), "now comparable");
-    }
-
-    #[test]
-    fn dropped_height_ticks_are_counted() {
-        let clock = PlaneClock::default();
-        assert_eq!(clock.drops(), 0);
-        clock.note_height_drop();
-        clock.note_height_drop();
-        assert_eq!(clock.drops(), 2);
     }
 
     #[test]

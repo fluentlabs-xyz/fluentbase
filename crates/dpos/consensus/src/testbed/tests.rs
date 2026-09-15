@@ -6,7 +6,7 @@ use super::{
     fakes::{ElEvent, UpstreamCounters, DPOS_ACTIVATION_BLOCK},
     stand::{
         CertInletCfg, CertInletSource, Committees, Divergence, Outcome, PeerSet, Progress, Role,
-        Stand, StandConfig, TeeWiring, CHAIN_ID,
+        Stand, StandConfig, CHAIN_ID,
     },
 };
 use crate::beacon::{
@@ -2388,7 +2388,6 @@ fn a_zero_overlap_boundary_is_crossed_by_acquiring_the_other_halfs_key() {
     cfg.cert_inlet = Some(CertInletCfg {
         nodes: vec![0, 1, 2, 3],
         source: CertInletSource::NextAboveTier,
-        tee: TeeWiring::Observed,
     });
     let out = Stand::new(cfg).run_until(reached(3 * EPOCH_LEN + 4), Duration::from_secs(400));
     // Printed BEFORE the first assertion on purpose: the height vector alone cannot

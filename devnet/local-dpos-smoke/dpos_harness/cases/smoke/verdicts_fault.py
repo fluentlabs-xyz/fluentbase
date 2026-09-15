@@ -621,8 +621,9 @@ def dkg_margin_blocks(env=None) -> int:
         return DKG_MARGIN_BLOCKS
 
 
-#: The finalized-height LEAD the beacon's clock runs at. `dkg_height = finalized + K`
-#: (`crates/node/src/dpos.rs`, the finalized-height poller; `K = 3`, `order_block.rs`), and the
+#: The finalized-height LEAD the beacon's clock runs at. The clock is the marshal's ordering
+#: tip (`FluentApp::report(Update::Tip)`, `crates/dpos/consensus/src/application.rs`), which
+#: runs `K` ahead of the finalized height (`K = 3`, `order_block.rs`), and the
 #: ceremony's phases are keyed on THAT clock, so every window edge below is an actor-clock edge
 #: converted back into a finalized height by subtracting this.
 DKG_CLOCK_LEAD = RESULT_LAG_K

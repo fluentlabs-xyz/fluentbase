@@ -136,6 +136,59 @@ mod wire;
 /// ONE window with the scheme registry's, and the comment above says why.
 const JOURNAL_RETENTION_EPOCHS: u64 = crate::SCHEME_RETENTION_EPOCHS as u64;
 
+// The four on-disk names the plane opens (E5-40). They live HERE, in the module
+// that opens them, and nowhere else: no file outside `beacon/` reads any of them
+// (`git grep` on each name is empty outside this directory), so none is
+// re-exported. Every one is `{partition_prefix}` ‖ name — production passes the
+// empty prefix (`plane::journal_partition`).
+
+/// Partition for the durable `Round → σ` store behind the
+/// [`seed_index::SeedIndex`]. Deliberately NOT under the marshal's partition
+/// prefix (`consensus_marshal`): this is a Fluent-side store beside the marshal's,
+/// not part of it, and it must stay independently prunable.
+///
+/// Renamed from `beacon-seed-journal` when the backing primitive moved from
+/// `journal::segmented::fixed` to `ordinal::Ordinal`: the two on-disk formats are
+/// incompatible, and pointing at a fresh name lets the retention window simply
+/// refill.
+///
+/// That refill is no longer free. No block body couriers σ any more — the live
+/// derive and the crash-survivor replay both key on the block's own round — so a
+/// cold store costs the replay its first source and pushes it onto the local
+/// certificate, then the upstream, then a defer. **A further format change needs
+/// a real migration, not a rename.**
+const SEED_JOURNAL_PARTITION: &str = "beacon-seed-ordinal";
+
+/// Partition of the durable mint memo (`epoch → the epoch that MINTED the key in
+/// force at it`, [`artifact::MintIndex`]). Empty would mean RAM-only.
+///
+/// NOT the old `beacon-key-ordinal`, and the rename is not cosmetic: that name
+/// belonged to the deleted `epoch → PK_epoch` key journal, whose backing primitive
+/// was `ordinal::Ordinal`, while this is a `Metadata` store of a different record.
+/// A `Metadata` opened over a partition holding another codec's blobs PANICS at
+/// init (`.claude/COMMONWARE_INTERNALS.md`, "wrong codec on an existing
+/// partition"), and "every net relaunches from a fresh genesis" is a deployment
+/// policy, not a property of this code — so the two formats get two names.
+const MINT_MEMO_PARTITION: &str = "beacon-mint-metadata";
+
+/// Partition of the durable `epoch → agreement artifact` store
+/// ([`artifact::ArtifactStore`]), opened once per process by [`build`] — a second
+/// handle over this partition would be a dual-writer.
+const ARTIFACT_JOURNAL_PARTITION: &str = "beacon-artifact-metadata";
+
+/// Base name of the epoch-key agreement instance's journal partition:
+/// `{partition_prefix}dkg_epoch_{target_epoch}` (`dkg_engine`, the private
+/// `agreement_partition`). One per target epoch, holding the simplex voter's
+/// journal for the life of the instance.
+///
+/// OWNED by the beacon's agreement launcher, which is also what SWEEPS it: the
+/// instance destroys its own partition after it delivers, and every partition an
+/// abort left behind is reclaimed by the launcher's band sweep — the
+/// `SCHEME_RETENTION_EPOCHS` targets below the actor's epoch clock, by epoch
+/// number, on the edge the clock moves (`dkg_engine::prune_agreements`). Nothing
+/// outside the beacon opens, names or removes one.
+const AGREEMENT_JOURNAL_PARTITION_PREFIX: &str = "dkg_epoch_";
+
 pub use plane::{build, CommitteeReads, Tasks, ValidatorInputs};
 pub use plane::{build_follower, ArtifactFetch, FollowerInputs};
 pub use seed::{constant_fallback_seed, prev_randao_from_seed, witness_fallback_seed, Seed};
@@ -171,6 +224,10 @@ pub(crate) mod testing {
     /// third round).
     pub(crate) use super::actor::BEACON_CHANNEL_LABEL;
     pub(crate) use super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH;
+    /// The seal margin, so the stand's catch-up dealer test
+    /// (`testbed::cert_inlet_tests`) can name the deal window in the actor's
+    /// own terms rather than as a number that happens to agree with it.
+    pub(crate) use super::actor::DKG_MARGIN_BLOCKS;
     pub(crate) use super::artifact::{
         artifact_with_key, decode_artifact, AcquireArtifact, AcquireMint, ArtifactStore,
         MintFixture,
