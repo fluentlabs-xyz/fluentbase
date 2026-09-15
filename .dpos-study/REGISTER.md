@@ -400,6 +400,7 @@
 - Ход по плану 09-04 (INDEX): Э7 / П — sweep `consensus_epoch_{e}` в окне `AGREEMENT_SWEEP_SPAN` (`epoch_manager.rs`)
 - Связано: R-025 (единая политика retention).
 - **Статус 2026-09-09:** не пересматривалась после 09-04; по плану — Э7 (sweep `consensus_epoch_{e}` в окне `AGREEMENT_SWEEP_SPAN`); после Э0.4 (атрибут `epoch`) больше не задаёт долю потерь метрик. _Источник:_ history/PLAN.md §2 Э7; history/E0-LOG.md 0.4
+- **Статус 2026-09-15:** якорь переехал — `prune_agreements` и `AGREEMENT_SWEEP_SPAN` теперь в `beacon/dkg_engine.rs` (Э5 5.4-Б), подметает по-прежнему только `dkg_epoch_*` с лаунчера бикона; `consensus_epoch_{E}` — без изменений, Э7. _Источник:_ history/E5-4-B.md §0.2
 
 ### R-042 · MODERATE · Follower: `sync_to` при известной геометрии фатален на любой `SyncFailure`
 - Последствие: перезапуск-шторм follower'ов при проблемах devp2p.
