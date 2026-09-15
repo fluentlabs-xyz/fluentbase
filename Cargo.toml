@@ -413,6 +413,14 @@ rand_chacha.opt-level = 3
 rand_xorshift.opt-level = 3
 unarray.opt-level = 3
 
+# Tests: dependencies optimized, workspace crates stay unoptimized (debug
+# assertions and fast incremental rebuilds of our own code are unaffected).
+# The consensus testbed spends its time in dependencies: the byzantine stand
+# went from 222 s to 51 s with this, unchanged with only the crypto crates
+# optimized. The specific entries above take precedence over `"*"`.
+[profile.test.package."*"]
+opt-level = 1
+
 # Meant for testing - all optimizations, but with debug assertions and overflow checks.
 [profile.hivetests]
 inherits = "test"
