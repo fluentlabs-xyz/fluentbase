@@ -788,16 +788,6 @@ pub(crate) fn reconcile_journals(dir: &Path, now: u64) {
     }
 }
 
-/// Every epoch whose ceremony journal is still on disk under `dir`.
-///
-/// A journal is the only thing `DkgActor::recover` can resume a ceremony from, so this
-/// is also the set of epochs an agreed artifact can still be finalized over —
-/// which is what makes it the bound on the startup artifact replay
-/// ([`crate::beacon::artifact::restart_replay`]).
-pub(crate) fn journal_epochs(dir: &Path) -> Vec<u64> {
-    scan_beacon_dir(dir).0
-}
-
 /// `(journal epochs, share epochs, conflict-marker epochs)` parsed out of ONE
 /// directory scan. A missing dir yields three empty sets; malformed / foreign
 /// filenames are ignored.

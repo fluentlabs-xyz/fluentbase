@@ -47,9 +47,9 @@
 //!   finalized loses the artifact entirely, because no live sender re-broadcasts
 //!   a decided proposal (`dkg_agree_body_lost_total` counts it). The durable half
 //!   is written on the same edge the artifact is produced, so recovering it after
-//!   a restart is a read, not a re-agreement — [`restart_replay`] is the half of
-//!   that which the `DkgActor` needs, since its own intake only ever hears from a
-//!   live instance.
+//!   a restart is a read, not a re-agreement — and the `DkgActor` READS it
+//!   (`recover` on the tick an epoch is decided, `reconcile_with_store` on every
+//!   tick after); its channel intake is the fast path, never the only one.
 //! - **The pull seam** ([`ArtifactBridge`] serving, [`ArtifactPull`] fetching)
 //!   rides the DKG-log resolver's key space
 //!   ([`BeaconFetchKey`](crate::beacon::log_resolver::BeaconFetchKey)), i.e. the
@@ -64,9 +64,9 @@
 //! and neither of those reaches
 //! [`DkgActor::on_artifact`](crate::beacon::actor::DkgActor::on_artifact) — that is
 //! fed by the agreement write-back alone. So on a FIRST insert the seam hands the
-//! artifact to the same write-back channel a live instance and [`restart_replay`]
-//! enter on, and the actor's existing adoption, first-wins and retention-hold rules
-//! run over it unchanged. Without that hop the member whose own instance died
+//! artifact to the same write-back channel a live instance enters on, and the
+//! actor's existing adoption, first-wins and retention-hold rules run over it
+//! unchanged. Without that hop the member whose own instance died
 //! mid-agreement — its peers decided without it and their launchers hold the target
 //! in `started`, so no re-agreement is coming — can verify the epoch key it pulled
 //! and still be permanently shareless for the epoch it was elected to sign in.
@@ -122,9 +122,11 @@ use fluentbase_p2p::constants::MAX_COMMITTEE_SIZE;
 #[cfg(test)]
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use rand_core::{CryptoRngCore, OsRng};
+#[cfg(test)]
+use std::collections::BTreeSet;
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
-    path::{Path, PathBuf},
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
     sync::{Arc, Mutex, RwLock},
     time::{Duration, SystemTime},
 };
@@ -663,7 +665,9 @@ impl ArtifactStore {
         self.lock().contains_key(&epoch)
     }
 
-    /// Every epoch this store can serve, ascending.
+    /// Every epoch this store can serve, ascending. TEST SUPPORT: production reads
+    /// the store by epoch (`view`, `get`, `has`), never as a list.
+    #[cfg(test)]
     pub fn epochs(&self) -> Vec<u64> {
         self.lock().keys().copied().collect()
     }
@@ -1435,44 +1439,6 @@ where
     ))
 }
 
-/// The stored artifacts a restarting node pushes back through the write-back.
-///
-/// The `DkgActor` takes a pinned dealer-log set from TWO places: the artifacts
-/// channel (a LIVE instance, the pull seam's hand-off, this replay) and its own
-/// per-tick READ of this store (`DkgActor::recover` on the tick an epoch is
-/// decided, `DkgActor::reconcile_with_store` on every tick after) — the store
-/// owns the fact, the channel is the fast path. So a member of `committee[E+1]`
-/// that restarts after adopting an artifact but before `finalize_over_pinned`
-/// completes is served by the read alone; this replay only spares it the wait
-/// for its first height tick, and is otherwise the same value arriving twice
-/// (first-wins at the actor, by VALUE).
-///
-/// SELECTED, never replayed wholesale: the store has no eviction policy, so most
-/// of what it holds is history. An artifact is replayed only where BOTH hold:
-///
-/// - this node has no share for the epoch — with a share the actor's own read
-///   keys the epoch on its first tick (`recover`: share held, artifact held), and
-///   a push adds nothing;
-/// - the epoch's ceremony journal is still on disk — without it `DkgActor::recover`
-///   has nothing to resume, so there is no ceremony for the pinned set to be
-///   finalized over.
-///
-/// The journal is window-scoped scratch that `reconcile_journals` prunes, so the
-/// selection is a handful of records however old the store gets.
-pub fn restart_replay(
-    store: &ArtifactStore,
-    share_dir: &Path,
-    held_shares: &BTreeSet<u64>,
-) -> Vec<AgreedArtifact> {
-    let journaled: BTreeSet<u64> = share_state::journal_epochs(share_dir).into_iter().collect();
-    store
-        .epochs()
-        .into_iter()
-        .filter(|epoch| !held_shares.contains(epoch) && journaled.contains(epoch))
-        .filter_map(|epoch| store.get(epoch).map(|a| (*a).clone()))
-        .collect()
-}
-
 /// Failures of the durable artifact store.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum StoreError {
@@ -1650,9 +1616,9 @@ pub struct ArtifactBridge {
 
 impl ArtifactBridge {
     /// `adopt_tx` is the agreement write-back's own inbound channel — the one a live
-    /// instance sends its artifact on, and the one [`restart_replay`] is pushed
-    /// back through. It is a REQUIRED constructor argument rather than an optional
-    /// one because a bridge wired without it is precisely the defect this seam had:
+    /// instance sends its artifact on. It is a REQUIRED constructor argument rather
+    /// than an optional one because a bridge wired without it is precisely the
+    /// defect this seam had:
     /// a pulled artifact that answers every key question and never reaches
     /// [`crate::beacon::actor::DkgActor::on_artifact`].
     pub fn new(
@@ -1816,8 +1782,7 @@ impl ArtifactBridge {
     /// quorum-certified payload for an epoch already held — the actor's `Conflict`
     /// input). A repeat delivery of the held value has nothing new to adopt, and
     /// re-adopting a settled epoch takes a ceremony-retention hold that nothing
-    /// releases until the next height tick — the same reason [`restart_replay`]
-    /// selects rather than replays wholesale. That bound also makes the channel's
+    /// releases until the next height tick. That bound also makes the channel's
     /// depth a non-issue: at most one send per target epoch and value, into a loop
     /// that only forwards.
     ///

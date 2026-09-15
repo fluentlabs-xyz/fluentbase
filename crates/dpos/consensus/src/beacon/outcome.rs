@@ -96,13 +96,24 @@ pub fn group_public_key(outcome: &DkgOutcome) -> &GroupPublic {
 ///
 /// Observers (no share) cannot run this — the caller must WITHHOLD the qualifying
 /// vote for them, never accept on shape alone.
+///
+/// THE INDEX IS `me`'s SEAT, not the share's word for it: a share is checked at
+/// the point `my_share.index` names, so a share of ANOTHER member — its own
+/// point, on this very polynomial — passes the point check at that member's
+/// index. It is a share this node cannot sign with (every partial it makes is
+/// attributed to `committee.position(me)` and verified there), so the seat is
+/// bound here: `my_share.index` must be `me`'s position in `committee`.
 pub(crate) fn validate_share_on_poly(
     outcome: &DkgOutcome,
     committee: &Set<PeerPubkey>,
+    me: &PeerPubkey,
     my_share: &Share,
 ) -> bool {
     if outcome.players() != committee || outcome.public().total().get() as usize != committee.len()
     {
+        return false;
+    }
+    if committee.position(me) != Some(usize::from(my_share.index)) {
         return false;
     }
     match outcome.public().partial_public(my_share.index) {
@@ -184,12 +195,12 @@ mod tests {
         for pk in committee.iter() {
             let mine = shares_a.get(pk).expect("share a");
             assert!(
-                validate_share_on_poly(&out_a, &committee, mine),
+                validate_share_on_poly(&out_a, &committee, pk, mine),
                 "own share must lie on the asserted poly"
             );
             let forged = shares_b.get(pk).expect("share b");
             assert!(
-                !validate_share_on_poly(&out_a, &committee, forged),
+                !validate_share_on_poly(&out_a, &committee, pk, forged),
                 "a share from a different ceremony must NOT lie on this poly"
             );
         }
@@ -197,8 +208,46 @@ mod tests {
         // Outcome asserted for a DIFFERENT committee -> reject (players mismatch).
         let other: Set<PeerPubkey> =
             Set::from_iter_dedup((0..5).map(|_| Ed25519PrivateKey::random(&mut rng).public_key()));
-        let any = shares_a.values().next().expect("a share");
-        assert!(!validate_share_on_poly(&out_a, &other, any));
+        let (any_pk, any) = shares_a.iter().next().expect("a share");
+        assert!(!validate_share_on_poly(&out_a, &other, any_pk, any));
+    }
+
+    /// Another member's share — its own point, on this very polynomial, at that
+    /// member's index — is refused for `me`: the point check alone would pass
+    /// it, the seat binding does not. Falsifier: `validate_share_on_poly`
+    /// without the `committee.position(me) == my_share.index` check (M4).
+    #[test]
+    fn share_on_poly_refuses_another_members_share_at_that_members_index() {
+        use crate::beacon::dkg_oracle::run_local_dkg;
+        let mut rng = StdRng::seed_from_u64(17);
+        let keys: Vec<Ed25519PrivateKey> = (0..5)
+            .map(|_| Ed25519PrivateKey::random(&mut rng))
+            .collect();
+        let committee: Set<PeerPubkey> = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+        let (out, shares) = run_local_dkg(&mut rng, b"ns", 0, &keys, &keys).expect("dkg");
+        let mut members = committee.iter();
+        let (me, other) = (members.next().expect("me"), members.next().expect("other"));
+        let others_share = shares.get(other).expect("other's share");
+        // Self-verification of the fixture: the share IS on the polynomial at its
+        // own index — the point check has nothing to refuse.
+        assert_eq!(
+            out.public()
+                .partial_public(others_share.index)
+                .expect("point"),
+            others_share.public::<MinSig>()
+        );
+        assert_ne!(
+            committee.position(me),
+            Some(usize::from(others_share.index))
+        );
+        assert!(
+            validate_share_on_poly(&out, &committee, other, others_share),
+            "the share is valid for its owner"
+        );
+        assert!(
+            !validate_share_on_poly(&out, &committee, me, others_share),
+            "another member's share, on the polynomial at THAT member's index, is refused for me"
+        );
     }
 
     /// P3 3a (FORK-SAFETY): a CORRUPT recompute (a share from a DIFFERENT ceremony over
@@ -231,11 +280,11 @@ mod tests {
             let corrupt_share = bad_shares.get(pk).expect("corrupt share");
             // (i) the local self-check adopts the real share, rejects the corrupt one.
             assert!(
-                validate_share_on_poly(&outcome, &committee, real_share),
+                validate_share_on_poly(&outcome, &committee, pk, real_share),
                 "the correct recomputed share self-verifies (adopted)"
             );
             assert!(
-                !validate_share_on_poly(&outcome, &committee, corrupt_share),
+                !validate_share_on_poly(&outcome, &committee, pk, corrupt_share),
                 "a corrupt recomputed share FAILS the self-check → never adopted (no fork)"
             );
             // (ii) per-partial belt: a partial under the corrupt share is rejected.
@@ -292,7 +341,7 @@ mod tests {
         for pk in committee.iter() {
             let honest_share = real_shares.get(pk).expect("real share");
             assert!(
-                !validate_share_on_poly(&forged, &committee, honest_share),
+                !validate_share_on_poly(&forged, &committee, pk, honest_share),
                 "an honest share must NOT lie on the forged polynomial"
             );
         }

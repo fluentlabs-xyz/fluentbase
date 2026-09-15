@@ -2400,7 +2400,7 @@ mod tests {
             "recompute derives the identical PK_E"
         );
         assert!(
-            validate_share_on_poly(&outcome, &committee, &recomputed_share),
+            validate_share_on_poly(&outcome, &committee, &key0.public_key(), &recomputed_share),
             "the recomputed share self-verifies against the pinned Output"
         );
 

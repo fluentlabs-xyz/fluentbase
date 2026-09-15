@@ -196,9 +196,7 @@ pub struct StoredArtifact {
 /// actor as a READ handle (NOT a cross-actor push channel). Returns `Some` only
 /// where an artifact for that exact epoch is held — i.e. a CHANGE epoch whose
 /// agreement this node has the certified result of; `None` for a carry-forward
-/// epoch (no fresh DKG) OR a store miss (retry next tick). `None` (no reader
-/// wired, the in-process/test default) makes every restart branch of
-/// [`DkgActor::recover`] read "no artifact" — the live artifact intake still runs.
+/// epoch (no fresh DKG) OR a store miss (retry next tick).
 ///
 /// THE STORE IS THE OWNER of "the epoch's artifact" (§5.3): the actor reads it on
 /// every height tick for every decided epoch ([`DkgActor::reconcile_with_store`]),
@@ -212,9 +210,8 @@ pub struct StoredArtifact {
 /// certified before `E` starts, dissolves that.
 pub type AgreedOutcomeAt = Arc<dyn Fn(u64) -> Option<StoredArtifact> + Send + Sync>;
 
-/// Fire-and-forget request for the agreed artifact of an epoch this node is a
-/// member of and holds no share for. `None` ⇒ no artifact rung wired
-/// (in-process/test default) ⇒ the branch is inert.
+/// Fire-and-forget request for the agreed artifact of an epoch this node needs
+/// and does not hold.
 ///
 /// Deliberately NOT a resolver: this actor's resolver is narrowed to [`DkgLogKey`]
 /// by `LogFetcher` on purpose, and an artifact key has no business in that key
@@ -355,9 +352,16 @@ enum EpochState {
     /// this actor (`held` first). ≥ 2q−n Byzantine signers — the epoch's signing
     /// is stopped here (the share leaves `store` AND its file, and the verdict is
     /// on disk: `share_state::persist_conflict`, read back by `recover`).
+    /// `key` is the artifact the STORE holds for the epoch, if any — a node in
+    /// `Conflict` still verifies the epoch's certificates and needs `PK_E` for
+    /// that (I4), so a `Conflict` the store holds no artifact for (the marker
+    /// landed, the artifact's write-behind did not, then a death — F-01)
+    /// acquires one from peers like every other keyless terminal; the signing
+    /// stays stopped whatever arrives.
     Conflict {
         held: B256,
         second: B256,
+        key: Option<B256>,
     },
 }
 
@@ -428,6 +432,7 @@ impl EpochState {
                     | Acquire::ArtifactForKey
             ) | Self::SatOut { key: None }
                 | Self::Unrecoverable { key: None }
+                | Self::Conflict { key: None, .. }
         )
     }
 }
@@ -444,6 +449,13 @@ struct EpochSlot {
     stalled: BTreeSet<StallReason>,
     evidence: BTreeMap<PeerPubkey, DealerEquivocation>,
     announced: bool,
+    /// The instance's body-lost signal arrived while this node was still
+    /// `Dealing` (its clock lags the network: the instance certified before the
+    /// local seal). Nothing can act on it before the seal — there is no sealed
+    /// ceremony to acquire for — so it is kept here and applied AT the seal:
+    /// `Dealing{agreed: None}` seals into `Acquiring(ArtifactForCeremony)` and
+    /// pulls at once, instead of `Sealed` waiting for the boundary (F-02).
+    body_lost: bool,
 }
 
 impl EpochSlot {
@@ -453,6 +465,7 @@ impl EpochSlot {
             stalled: BTreeSet::new(),
             evidence: BTreeMap::new(),
             announced: false,
+            body_lost: false,
         }
     }
 }
@@ -633,12 +646,15 @@ fn acked_dealers(step: &Step) -> Vec<PeerPubkey> {
         .collect()
 }
 
-/// `recv()` on an optional mpsc receiver, or park forever when it is `None` — so the
-/// resolver and agreement branches of the actor's `select!` are inert on a node with
-/// neither wired (in-process / test default) without a second loop shape.
-async fn recv_or_never<T>(rx: Option<&mut tokio::sync::mpsc::Receiver<T>>) -> Option<T> {
-    match rx {
-        Some(rx) => rx.recv().await,
+/// `recv()` on a plane edge, PARKING on a closed channel instead of answering
+/// `None` on every poll: every sender of these edges is a supervised task of the
+/// plane (an agreement instance, the write-back, the launcher), so a closed edge
+/// is that task gone — a state the loop has nothing to do about, not an event to
+/// spin on. The next iteration re-creates the future, sees the closed channel
+/// again at once and parks again: one poll per loop turn, no wake-up.
+async fn recv_or_park<T>(rx: &mut tokio::sync::mpsc::Receiver<T>) -> T {
+    match rx.recv().await {
+        Some(v) => v,
         None => std::future::pending().await,
     }
 }
@@ -710,6 +726,132 @@ struct PendingDealings {
     share: Option<DkgBody>,
 }
 
+/// The actor's EDGES — every channel, handle and directory the beacon plane
+/// connects a [`DkgActor`] by, all of them REQUIRED. There is no `None` and no
+/// inert branch: the actor's behaviour is a function of its inputs, never of
+/// which edges happened to be wired (E5-23 — the `DKG_SETTLE_BLOCKS` lesson, a
+/// second time). Production builds the whole of it in `plane.rs`; the crate's
+/// tests build it from `Wiring::standalone()` — parked receivers, a no-op pull,
+/// a reader over an empty store, a scratch directory — so a test exercises the
+/// same loop shape production runs.
+pub struct Wiring<R> {
+    /// Mailbox to the beacon-plane DKG-log recovery resolver — a shorthanded
+    /// ceremony `fetch_targeted`s its missing dealer logs through it (replacing the
+    /// former best-effort `BEACON_CHANNEL` `LogRequest` gossip pull).
+    pub resolver: R,
+    /// Inbound `Produce`/`Deliver` requests from the resolver engine
+    /// (`log_resolver::LogHandler`), served against the live ceremonies + persisted
+    /// journal in the single-threaded run loop. CLOSED is the resolver engine's
+    /// death, and [`DkgActor::run`] stops on it (the engine is a supervised
+    /// sibling; see the arm).
+    pub resolver_rx: tokio::sync::mpsc::Receiver<LogMessage>,
+    /// The chain's frozen `changed` bit, the ONE input of the ceremony-start
+    /// decision (Д-7, `.dpos-study/DECISIONS.md`). It replaced the roster
+    /// COMPARISON `recover` used to make (`committee[target] != committee[target−1]`
+    /// through a `CommitteePairFor` reader): the contract writes the bit by that
+    /// exact rule in the same `commitEpochCommittee` call that writes the
+    /// committee, so reading it is reading the contract's own answer — which
+    /// removes a class the comparison could not, two reads a beat apart seeing a
+    /// change the contract never recorded. An unreadable bit (`None` from the
+    /// read) leaves the epoch undecided for the tick, which is the honest answer;
+    /// an actor without a chain reader does not exist.
+    pub changed: ChangedAt,
+    /// Directory for on-disk persistence of the live-DKG per-epoch shares, journals
+    /// and conflict markers — the always-on plane passes `<datadir>/beacon/` (see
+    /// `node/dpos.rs::build_beacon_plane`), reloaded once at plane startup.
+    pub share_dir: PathBuf,
+    /// The registered clock pair whose DKG half this actor publishes, off the
+    /// monotone clamp in [`DkgActor::on_height`] — the single point every feeder's
+    /// height lands at.
+    pub plane_clock: PlaneClock,
+    /// READ handle for the agreed artifact's payload (a pull, not a push channel),
+    /// the artifact input of [`DkgActor::recover`] and of every tick's
+    /// `reconcile_with_store`.
+    pub outcome_at: AgreedOutcomeAt,
+    /// Asks a peer for the agreed artifact of an epoch this node needs and does not
+    /// hold. See [`PullArtifact`]. Driven by every `needs_artifact()` slot on each
+    /// height tick ([`DkgActor::drive_acquisition`]) — the member without a share
+    /// (body lost, or past the boundary), the member with a share and no artifact,
+    /// the non-member that needs `PK_E` to verify, and a `Conflict` that has no
+    /// artifact in the store — and for the LIVE epoch nothing else ever asks (the
+    /// epoch-manager's repair sweep excludes `epoch >= frontier` by design).
+    pub pull_artifact: PullArtifact,
+    /// The shared `epoch -> idx -> keccak256(SignedDealerLog)` index this actor
+    /// PUBLISHES for the agreement plane to propose over and for
+    /// share-confirmations to state (it used to feed the consensus propose path,
+    /// which carried the set in `OrderBlock.dkg_logs`; the block no longer carries
+    /// it and every reader is local). The SAME handle on both sides: this actor
+    /// writes it (`publish_recorded_logs`, which owns the per-`(dealer, hash)`
+    /// durability gate) and [`Confirmations`] reads it — and the SAME index the
+    /// confirmations are minted from, so a confirmation can never name a set the
+    /// proposal path would not.
+    pub recorded_dkg_logs: DkgLogIndex,
+    /// The share-confirmation pool the epoch-key agreement's entry bar counts. It
+    /// carries the signing namespace, so the actor and the agreement instances
+    /// cannot disagree about it — hand BOTH the same pool.
+    pub confirms: ConfirmPool,
+    /// Inbound pinned-set questions from the epoch-key agreement instances
+    /// ([`PinnedMailbox`]).
+    pub pinned_rx: tokio::sync::mpsc::Receiver<PinnedRequest>,
+    /// Announcement sink for the epoch-key agreement plane's spawn edge: a target
+    /// epoch whose ceremony has CLOSED ITS DEALING here, which is the earliest
+    /// point at which this node has a dealer-log set worth agreeing. The plane
+    /// (node crate) owns the sub-channel registration and the instance itself;
+    /// this actor owns the only state that knows when the edge happened.
+    ///
+    /// Not the `seal_dealings` call specifically: a node that restarted at or
+    /// after the seal deadline resumes PLAYER-ONLY and never seals, and it still
+    /// has to run the agreement for the epoch. `dealing_closed()` covers both.
+    pub agreement_tx: tokio::sync::mpsc::Sender<u64>,
+    /// Agreed artifacts arriving from the plane — this node's own instance, or a
+    /// peer's artifact that already verified against `committee[epoch]`.
+    ///
+    /// PRECONDITION: every artifact on this channel has been checked against the
+    /// target epoch's committee. Both producers do it (the instance only ever
+    /// delivers a value its own quorum certified; the pull seam verifies before
+    /// it stores), and this actor cannot re-check it — it reads peer identities,
+    /// never the BLS committee the certificate is verified under.
+    pub artifacts_rx: tokio::sync::mpsc::Receiver<AgreedArtifact>,
+    /// Target epochs whose agreement instance certified a payload it could not
+    /// resolve the body of (`dkg_engine`, `dkg_agree_body_lost`): a `Sealed` epoch
+    /// moves to `Acquiring(ArtifactForCeremony)` on it and asks peers at once
+    /// (R-026); a still-`Dealing` epoch remembers it for its seal.
+    pub body_lost_rx: tokio::sync::mpsc::Receiver<u64>,
+    /// TEST ONLY: what a fixture-built wiring owns besides its edges — the far
+    /// ends of its parked channels and its scratch directory — carried into the
+    /// actor so they live exactly as long as it does. `None` from production
+    /// (`plane.rs`), always `Some` from [`Wiring::inert`].
+    #[cfg(test)]
+    pub fixture: Option<Fixture>,
+}
+
+/// TEST ONLY: the half of a fixture wiring that is not an edge of the actor but
+/// must outlive its construction — held IN the actor ([`DkgActor::new`] moves it
+/// there), so nothing is leaked and nothing is closed early:
+/// - the senders of the parked plane channels and the receiver of the
+///   announcement channel: a `run` that sees a plane that never speaks, not one
+///   that died (a closed `resolver_rx` stops the actor; a closed plane channel
+///   parks its arm — `recv_or_park`);
+/// - the scratch `share_dir` [`Wiring::inert`] made, removed when the actor
+///   goes (a test that names its own directory is unaffected: this removes
+///   only the directory it created).
+#[cfg(test)]
+pub struct Fixture {
+    scratch: PathBuf,
+    _resolver_tx: tokio::sync::mpsc::Sender<LogMessage>,
+    _pinned_tx: tokio::sync::mpsc::Sender<PinnedRequest>,
+    _artifacts_tx: tokio::sync::mpsc::Sender<AgreedArtifact>,
+    _body_lost_tx: tokio::sync::mpsc::Sender<u64>,
+    _agreement_rx: tokio::sync::mpsc::Receiver<u64>,
+}
+
+#[cfg(test)]
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.scratch);
+    }
+}
+
 /// The networked DKG actor. Generic over the p2p sender/receiver (the spawn site
 /// passes the `BEACON_CHANNEL` halves) and over the DKG-log recovery resolver `R`
 /// (the `commonware_resolver::p2p::Mailbox` in production; a no-op in unit tests).
@@ -719,28 +861,18 @@ pub struct DkgActor<Se, Re, R> {
     me_key: Ed25519PrivateKey,
     sender: Se,
     receiver: Re,
-    /// Mailbox to the beacon-plane DKG-log recovery resolver — a shorthanded
-    /// ceremony `fetch_targeted`s its missing dealer logs through it (replacing the
-    /// former best-effort `BEACON_CHANNEL` `LogRequest` gossip pull). `None` ⇒ no
-    /// resolver wired (in-process/test default) ⇒ recovery is gossip-only.
-    resolver: Option<R>,
-    /// Inbound `Produce`/`Deliver` requests from the resolver engine
-    /// (`log_resolver::LogHandler`), served against the live ceremonies + persisted
-    /// journal in the single-threaded run loop. `Some` and then CLOSED is the
-    /// resolver engine's death, and [`Self::run`] stops on it (the engine is a
-    /// supervised sibling; see the arm); `None` from birth parks the branch.
-    resolver_rx: Option<tokio::sync::mpsc::Receiver<LogMessage>>,
+    /// [`Wiring::resolver`].
+    resolver: R,
+    /// [`Wiring::resolver_rx`].
+    resolver_rx: tokio::sync::mpsc::Receiver<LogMessage>,
     /// The DEALING/QUAL/SERVE roster reader — resolves `committee[epoch]` as the
     /// CEREMONY participants (in production the committed-slot reader, since under the
     /// 2-epoch warm-up `committee[epoch]` is frozen a full epoch before its DKG runs):
     /// who deals, whose qual partials are roster-bound, whose logs are served/
     /// recomputed, and the `next` committee in `recover`.
     committee_for: CommitteeFor,
-    /// The chain's `changed` bit, the ONE input of the ceremony-start decision
-    /// (Д-7). `None` ⇒ the decision cannot be taken and nothing is started, which is
-    /// the honest answer for an actor built without a chain reader (tests that drive
-    /// `finalize` directly).
-    changed: Option<ChangedAt>,
+    /// [`Wiring::changed`].
+    changed: ChangedAt,
     store: CeremonyStore,
     /// Edge-trigger fired (`notify_one`) the instant a share lands in `store`, so a
     /// racing `epoch_manager::enter` wakes immediately instead of polling. The SAME
@@ -756,12 +888,8 @@ pub struct DkgActor<Se, Re, R> {
     /// schedule cannot drift from every other epoch→height computation.
     epocher: OriginEpocher,
     metrics: crate::beacon::metrics::BeaconMetrics,
-    /// Directory for on-disk persistence of the live-DKG per-epoch shares this
-    /// actor memoizes into [`CeremonyStore`] — the always-on plane passes
-    /// `<datadir>/beacon/` (see `node/dpos.rs::build_beacon_plane`), reloaded once
-    /// at plane startup. `None` ⇒ no persistence dir (in-process/test default) ⇒
-    /// memoized shares stay in-memory only (lost on restart).
-    share_dir: Option<PathBuf>,
+    /// [`Wiring::share_dir`].
+    share_dir: PathBuf,
     /// At-rest framing for the persisted shares: [`ShareState::Encrypted`] (the
     /// HKDF-derived seal key) on a keystore-mode validator, [`ShareState::Plaintext`]
     /// otherwise. Built from the `Option<ShareSealKey>` the plane derives at launch
@@ -823,62 +951,37 @@ pub struct DkgActor<Se, Re, R> {
     /// memory (not re-fetched: the bytes are already here) on every publish edge,
     /// and cleared on success.
     nondurable_logs: BTreeMap<u64, BTreeSet<LogId>>,
-    /// The registered clock pair whose DKG half this actor publishes, off the
-    /// monotone clamp in [`Self::on_height`] — the single point every feeder's
-    /// height lands at. `None` in tests and on any node that registers no clock.
-    plane_clock: Option<PlaneClock>,
-    /// READ handle for the agreed artifact's payload (a pull, not a push channel),
-    /// the artifact input of [`Self::recover`]. `None` ⇒ no reader wired
-    /// (in-process/test default) ⇒ a restart reads "no artifact held".
-    outcome_at: Option<AgreedOutcomeAt>,
-    /// Asks a peer for the agreed artifact of an epoch this node needs and does not
-    /// hold. See [`PullArtifact`]. Driven by every `Acquiring(Artifact*)` slot on
-    /// each height tick ([`Self::drive_acquisition`]) — the member without a
-    /// share (body lost, or past the boundary), the member with a share and no
-    /// artifact, and the non-member that needs `PK_E` to verify — and for the LIVE
-    /// epoch nothing else ever asks (the epoch-manager's repair sweep excludes
-    /// `epoch >= frontier` by design).
-    pull_artifact: Option<PullArtifact>,
-    /// The dealer-log hash index this actor PUBLISHES (idx→hash of each recorded
-    /// log) for the agreement plane to propose over and for share-confirmations to
-    /// state. `None` ⇒ unwired (in-process/test default). Wired at the beacon-plane
-    /// spawn site alongside the shared `CeremonyStore`.
-    recorded_dkg_logs: Option<DkgLogIndex>,
+    /// `ReceivedDealing` records whose journal write failed, per target epoch
+    /// (DB-08). Their ack was withheld on the same edge (step 1f) and stays
+    /// withheld; what the retry buys is the RESUME — a restart rebuilds
+    /// `Player.view` from the journal, and a dealing that never landed there is
+    /// recovered only through the dealer's reveal. Retried on the same edge as
+    /// [`Self::nondurable_logs`] (`retry_nondurable_journals`), from the record
+    /// itself: unlike a log, a dealing is not re-derivable from the ceremony.
+    nondurable_dealings: BTreeMap<u64, Vec<JournalRecord>>,
+    /// [`Wiring::plane_clock`].
+    plane_clock: PlaneClock,
+    /// [`Wiring::outcome_at`].
+    outcome_at: AgreedOutcomeAt,
+    /// [`Wiring::pull_artifact`].
+    pull_artifact: PullArtifact,
+    /// [`Wiring::recorded_dkg_logs`].
+    recorded_dkg_logs: DkgLogIndex,
     /// This node's share-confirmation accounting: the pool the epoch-key agreement's
     /// entry bar counts, and the memory of what width this node has already put on
     /// the wire per target epoch. Ceremony-free by construction — it reads the shared
     /// `recorded_dkg_logs` index, never the epoch slots — so the whole
-    /// claimed-width policy lives in [`Confirmations`]. Inert until its pool and
-    /// index are wired at the beacon-plane spawn site.
+    /// claimed-width policy lives in [`Confirmations`]. Its pool and index are
+    /// [`Wiring::confirms`] and [`Wiring::recorded_dkg_logs`].
     confirmations: Confirmations,
-    /// Inbound pinned-set questions from the epoch-key agreement instances
-    /// ([`PinnedMailbox`]). `None` ⇒ no agreement plane wired (in-process/test
-    /// default) ⇒ the branch parks forever and nothing asks.
-    pinned_rx: Option<tokio::sync::mpsc::Receiver<PinnedRequest>>,
-    /// Announcement sink for the epoch-key agreement plane's spawn edge: a target
-    /// epoch whose ceremony has CLOSED ITS DEALING here, which is the earliest
-    /// point at which this node has a dealer-log set worth agreeing. The plane
-    /// (node crate) owns the sub-channel registration and the instance itself;
-    /// this actor owns the only state that knows when the edge happened.
-    ///
-    /// Not the `seal_dealings` call specifically: a node that restarted at or
-    /// after the seal deadline resumes PLAYER-ONLY and never seals, and it still
-    /// has to run the agreement for the epoch. `dealing_closed()` covers both.
-    agreement_tx: Option<tokio::sync::mpsc::Sender<u64>>,
-    /// Agreed artifacts arriving from the plane — this node's own instance, or a
-    /// peer's artifact that already verified against `committee[epoch]`.
-    ///
-    /// PRECONDITION: every artifact on this channel has been checked against the
-    /// target epoch's committee. Both producers do it (the instance only ever
-    /// delivers a value its own quorum certified; the pull seam verifies before
-    /// it stores), and this actor cannot re-check it — it reads peer identities,
-    /// never the BLS committee the certificate is verified under.
-    artifacts_rx: Option<tokio::sync::mpsc::Receiver<AgreedArtifact>>,
-    /// Target epochs whose agreement instance certified a payload it could not
-    /// resolve the body of (`dkg_engine`, `dkg_agree_body_lost`): a `Sealed` epoch
-    /// moves to `Acquiring(ArtifactForCeremony)` on it and asks peers at once
-    /// (R-026). `None` ⇒ unwired (in-process/test default) ⇒ the branch parks.
-    body_lost_rx: Option<tokio::sync::mpsc::Receiver<u64>>,
+    /// [`Wiring::pinned_rx`].
+    pinned_rx: tokio::sync::mpsc::Receiver<PinnedRequest>,
+    /// [`Wiring::agreement_tx`].
+    agreement_tx: tokio::sync::mpsc::Sender<u64>,
+    /// [`Wiring::artifacts_rx`].
+    artifacts_rx: tokio::sync::mpsc::Receiver<AgreedArtifact>,
+    /// [`Wiring::body_lost_rx`].
+    body_lost_rx: tokio::sync::mpsc::Receiver<u64>,
     /// The `Output` of every share this actor adopted, for TESTS ONLY.
     ///
     /// It exists because the shared store no longer holds one: after П-3 the
@@ -896,6 +999,9 @@ pub struct DkgActor<Se, Re, R> {
     /// return right after the marker; the test then "restarts" over the directory.
     #[cfg(test)]
     die_between_verdict_and_eviction: bool,
+    /// TEST ONLY: [`Wiring::fixture`], kept for the actor's life.
+    #[cfg(test)]
+    _fixture: Option<Fixture>,
 }
 
 impl<Se, Re, R> DkgActor<Se, Re, R>
@@ -904,34 +1010,55 @@ where
     Re: Receiver<PublicKey = PeerPubkey>,
     R: Resolver<Key = DkgLogKey, PublicKey = PeerPubkey>,
 {
+    /// The actor's own state is built here; its every edge is `wiring`, whole.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         namespace: Vec<u8>,
         me_key: Ed25519PrivateKey,
         sender: Se,
         receiver: Re,
-        resolver: Option<R>,
-        resolver_rx: Option<tokio::sync::mpsc::Receiver<LogMessage>>,
         committee_for: CommitteeFor,
         store: CeremonyStore,
         share_notify: Arc<tokio::sync::Notify>,
         dpos_activation: u64,
         epoch_interval: u64,
         metrics: crate::beacon::metrics::BeaconMetrics,
-        share_dir: Option<PathBuf>,
         share_state: ShareState,
-        outcome_at: Option<AgreedOutcomeAt>,
+        wiring: Wiring<R>,
     ) -> Self {
+        let Wiring {
+            resolver,
+            resolver_rx,
+            changed,
+            share_dir,
+            plane_clock,
+            outcome_at,
+            pull_artifact,
+            recorded_dkg_logs,
+            confirms,
+            pinned_rx,
+            agreement_tx,
+            artifacts_rx,
+            body_lost_rx,
+            #[cfg(test)]
+            fixture,
+        } = wiring;
         // ONE `ShareState`, shared with the serve store: the encrypted arm carries the
         // HKDF-derived seal key, which has no business existing twice.
         let share_state = Arc::new(share_state);
         let log_store = DealerLogStore::new(
             namespace.clone(),
             committee_for.clone(),
-            share_dir.clone(),
+            Some(share_dir.clone()),
             share_state.clone(),
         );
-        let confirmations = Confirmations::new(me_key.clone(), committee_for.clone());
+        // The SAME index handle on both sides: this actor writes it
+        // (`publish_recorded_logs`, which owns the per-`(dealer, hash)` durability
+        // gate) and `Confirmations` reads it; the SAME pool every agreement
+        // instance holds.
+        let mut confirmations = Confirmations::new(me_key.clone(), committee_for.clone());
+        confirmations.set_recorded(recorded_dkg_logs.clone());
+        confirmations.set_pool(confirms);
         Self {
             namespace,
             me_key,
@@ -940,7 +1067,7 @@ where
             resolver,
             resolver_rx,
             committee_for,
-            changed: None,
+            changed,
             store,
             share_notify,
             // Fail LOUD and at construction on a zero interval, which the previous
@@ -959,76 +1086,23 @@ where
             pending: BTreeMap::new(),
             last_height: None,
             nondurable_logs: BTreeMap::new(),
-            plane_clock: None,
+            nondurable_dealings: BTreeMap::new(),
+            plane_clock,
             outcome_at,
-            pull_artifact: None,
-            recorded_dkg_logs: None,
+            pull_artifact,
+            recorded_dkg_logs,
             confirmations,
-            pinned_rx: None,
-            agreement_tx: None,
-            artifacts_rx: None,
-            body_lost_rx: None,
+            pinned_rx,
+            agreement_tx,
+            artifacts_rx,
+            body_lost_rx,
             #[cfg(test)]
             adopted_outcomes: Arc::new(RwLock::new(BTreeMap::new())),
             #[cfg(test)]
             die_between_verdict_and_eviction: false,
+            #[cfg(test)]
+            _fixture: fixture,
         }
-    }
-
-    /// Serve the epoch-key agreement plane's pinned-set questions off this actor's
-    /// ceremony state. Left unset nothing asks and the branch is inert; wired at the
-    /// beacon-plane spawn site with the sending half handed to each agreement
-    /// instance as a [`PinnedMailbox`].
-    ///
-    pub fn with_pinned_requests(
-        mut self,
-        pinned_rx: tokio::sync::mpsc::Receiver<PinnedRequest>,
-    ) -> Self {
-        self.pinned_rx = Some(pinned_rx);
-        self
-    }
-
-    /// Wire the live-epoch artifact pull. See [`PullArtifact`]; left unset the
-    /// branch is inert and the demote-heal behaves exactly as it did before.
-    pub fn with_artifact_pull(mut self, pull: PullArtifact) -> Self {
-        self.pull_artifact = Some(pull);
-        self
-    }
-
-    /// Publish this actor's clock as `dpos_dkg_clock_height`. The actor is the
-    /// writer because it is the only place all three feeders meet; left unset the
-    /// gauge stays silent, which is the honest state for a node that registers no
-    /// clock at all.
-    pub fn with_plane_clock(mut self, clock: PlaneClock) -> Self {
-        self.plane_clock = Some(clock);
-        self
-    }
-
-    /// Join the epoch-key agreement plane: announce every target whose dealing has
-    /// closed on `agreement_tx`, and take agreed artifacts back on `artifacts_rx`.
-    ///
-    /// The two halves arrive together because neither is useful alone. Announcing
-    /// without an intake starts instances whose output nothing consumes; an intake
-    /// without an announcement waits for artifacts no instance was ever started to
-    /// produce. Left unwired both branches are inert and this actor behaves
-    /// exactly as it did before the plane existed.
-    pub fn with_agreement_plane(
-        mut self,
-        agreement_tx: tokio::sync::mpsc::Sender<u64>,
-        artifacts_rx: tokio::sync::mpsc::Receiver<AgreedArtifact>,
-    ) -> Self {
-        self.agreement_tx = Some(agreement_tx);
-        self.artifacts_rx = Some(artifacts_rx);
-        self
-    }
-
-    /// Take the agreement plane's body-lost signal: the target epoch of an
-    /// instance that certified a payload whose body never arrived. See
-    /// [`Self::on_body_lost`]. Left unwired the branch parks and a lost body is
-    /// healed only past the boundary, as before.
-    pub fn with_body_lost(mut self, body_lost_rx: tokio::sync::mpsc::Receiver<u64>) -> Self {
-        self.body_lost_rx = Some(body_lost_rx);
-        self
     }
 
     /// Adopt `epoch`'s recorded dealer-log set as if a certified artifact had named
@@ -1065,53 +1139,6 @@ where
         self.apply_artifact(epoch, &proposal);
     }
 
-    /// Attach the chain's frozen `changed` bit — the ceremony-start decision's ONE
-    /// input (Д-7, `.dpos-study/DECISIONS.md`).
-    ///
-    /// It replaces the roster COMPARISON [`Self::recover`] used to make
-    /// (`committee[target] != committee[target−1]`, through a `CommitteePairFor`
-    /// reader that is deleted with it). The
-    /// contract writes the bit by that exact rule in the same
-    /// `commitEpochCommittee` call that writes the committee, so reading it is
-    /// reading the contract's own answer instead of re-deriving it — which is what
-    /// Д-7 ratified, and it removes a class the comparison could not: two reads a
-    /// beat apart seeing a change the contract never recorded.
-    pub fn with_changed_bit(mut self, changed: ChangedAt) -> Self {
-        self.changed = Some(changed);
-        self
-    }
-
-    /// Attach the shared `epoch -> idx -> keccak256(SignedDealerLog)` index that each
-    /// live ceremony's body-checked dealer-log hashes are published into.
-    ///
-    /// It used to feed the consensus propose path, which carried the set in
-    /// `OrderBlock.dkg_logs`; the block no longer carries it and the index's readers
-    /// are now local — the agreement plane proposes from it, and share-confirmations
-    /// state it. Wired at the beacon-plane spawn site (node crate) alongside the
-    /// shared `CeremonyStore`.
-    pub fn with_recorded_logs(mut self, recorded: DkgLogIndex) -> Self {
-        // The SAME handle on both sides: this actor writes it (`publish_recorded_logs`,
-        // which owns the per-`(dealer, hash)` durability gate) and [`Confirmations`]
-        // reads it.
-        self.confirmations.set_recorded(recorded.clone());
-        self.recorded_dkg_logs = Some(recorded);
-        self
-    }
-
-    /// Enable share-confirmations: this node mints and gossips its own for every
-    /// target epoch whose body-checked dealer-log set grows, and records every peer
-    /// confirmation that verifies against the epoch's committee.
-    ///
-    /// The pool carries the signing namespace, so the actor and the agreement
-    /// instances cannot disagree about it — hand BOTH the same pool. Requires
-    /// [`Self::with_recorded_logs`] to be wired too: the confirmed set is read from
-    /// `recorded_dkg_logs`, which is the same source the agreement proposes from, so
-    /// a confirmation can never name a set the proposal path would not.
-    pub fn with_share_confirms(mut self, confirms: ConfirmPool) -> Self {
-        self.confirmations.set_pool(confirms);
-        self
-    }
-
     /// Pre-activation heights have no relative epoch; they answer 0, as the
     /// previous saturating form did.
     fn epoch_of(&self, height: u64) -> u64 {
@@ -1137,48 +1164,50 @@ where
     /// write-durably-before-ack gate (step 1f) uses this: an `Ack` paired
     /// with a `ReceivedDealing` record is broadcast ONLY when that record is durable, so
     /// a QUAL log can never record an ack this node cannot back with a durable view
-    /// (which recompute would hit as an un-resurrectable `MissingPlayerDealing`). No
-    /// `share_dir` (in-process/test default) ⇒ `true`: there is no on-disk journal and
-    /// thus no cross-restart recompute for this node, so the in-memory view is
-    /// authoritative and acking is safe. A write failure warns and returns `false`.
+    /// (which recompute would hit as an un-resurrectable `MissingPlayerDealing`). A
+    /// write failure warns and returns `false`.
     ///
     /// It does NOT name which record failed, deliberately: the only identity that
     /// matters here is the `(dealer, hash)` a recorded log belongs to, and the ceremony
     /// already authenticated that and hands it back as [`Step::recorded_log`]. The two
-    /// recording call sites attribute from there.
+    /// recording call sites attribute from there. The one record that has no such
+    /// identity and is not re-derivable from the ceremony — a `ReceivedDealing` —
+    /// is handed back by [`Self::journal_failures`] to the site that retries it.
     #[must_use]
     fn append_journal(&self, epoch: u64, records: Vec<JournalRecord>) -> bool {
-        let Some(dir) = &self.share_dir else {
-            return true;
-        };
-        let mut durable = true;
+        self.journal_failures(epoch, records).is_empty()
+    }
+
+    /// [`Self::append_journal`], handing back the records whose write did NOT land
+    /// (in their order) so a caller that can retry them from memory does.
+    #[must_use]
+    fn journal_failures(&self, epoch: u64, records: Vec<JournalRecord>) -> Vec<JournalRecord> {
+        let mut failed = Vec::new();
         for record in records {
-            if let Err(err) = share_state::append_journal(dir, epoch, &record, &self.share_state) {
+            if let Err(err) =
+                share_state::append_journal(&self.share_dir, epoch, &record, &self.share_state)
+            {
                 tracing::warn!(
                     epoch,
                     ?err,
                     "live DKG: failed to journal ceremony record (in-memory ceremony \
                      unaffected; dependent ack withheld — the dealer reveals our point)"
                 );
-                durable = false;
+                failed.push(record);
             }
         }
-        durable
+        failed
     }
 
     /// Delete a finalized/swept epoch's ceremony journal (within-window scratch).
     fn evict_journal(&self, epoch: u64) {
-        if let Some(dir) = &self.share_dir {
-            share_state::evict_journal(dir, epoch);
-        }
+        share_state::evict_journal(&self.share_dir, epoch);
     }
 
     /// Delete a swept epoch's `Conflict` marker: the terminal it records is an
     /// epoch's, and an epoch past the window has no slot to be terminal in.
     fn evict_conflict(&self, epoch: u64) {
-        if let Some(dir) = &self.share_dir {
-            share_state::evict_conflict(dir, epoch);
-        }
+        share_state::evict_conflict(&self.share_dir, epoch);
     }
 
     /// Run until both the height-event stream and the network receiver close.
@@ -1190,16 +1219,6 @@ where
         mut rng: impl CryptoRngCore,
     ) {
         tracing::info!(epocher = ?self.epocher, "live DKG: actor started");
-        // The resolver inbound channel is taken out so the loop can borrow it
-        // alongside `&mut self`; `None` (no resolver wired) parks the branch forever.
-        let mut resolver_rx = self.resolver_rx.take();
-        // Same reason, same shape: taken out so the agreement branch can borrow it
-        // alongside `&mut self`.
-        let mut pinned_rx = self.pinned_rx.take();
-        // Same reason again: the artifact arm borrows the local receiver alongside
-        // `&mut self`.
-        let mut artifacts_rx = self.artifacts_rx.take();
-        let mut body_lost_rx = self.body_lost_rx.take();
         loop {
             tokio::select! {
                 maybe_h = heights.recv() => match maybe_h {
@@ -1211,8 +1230,7 @@ where
                     Err(_) => break,
                 },
                 // Serve / ingest DKG-log recovery requests from the resolver engine.
-                // `recv_or_never` parks forever when no resolver is wired.
-                req = recv_or_never(resolver_rx.as_mut()) => match req {
+                req = self.resolver_rx.recv() => match req {
                     Some(msg) => self.on_resolver_message(msg, &mut rng).await,
                     // The resolver engine exited: the one holder of the sender is the
                     // `LogHandler` the plane hands to the resolver engine
@@ -1238,31 +1256,23 @@ where
                     }
                 },
                 // Answer an epoch-key agreement instance's question about a
-                // candidate pinned set. Parked forever when no agreement plane is
-                // wired; a closed channel means every instance is gone, so the
-                // branch parks rather than spinning on `None`.
-                req = recv_or_never(pinned_rx.as_mut()) => match req {
-                    Some(req) => {
-                        let verdict = self.derive_pinned(&req, &mut rng);
-                        drop(req.response.send(verdict));
-                    }
-                    None => pinned_rx = None,
+                // candidate pinned set. A closed channel means every instance is
+                // gone, so the branch parks (`recv_or_park`) rather than spinning.
+                req = recv_or_park(&mut self.pinned_rx) => {
+                    let verdict = self.derive_pinned(&req, &mut rng);
+                    drop(req.response.send(verdict));
                 },
                 // The write-back edge. It is the ONE arm that does not depend on
                 // the finalized-height stream, which is the whole point: with the
                 // chain halted at `epoch_start(E+1)` the height clock stops, and
                 // the artifact is what starts the epoch's key moving again.
-                artifact = recv_or_never(artifacts_rx.as_mut()) => match artifact {
-                    Some(artifact) => self.on_artifact(artifact, &mut rng).await,
-                    None => artifacts_rx = None,
+                artifact = recv_or_park(&mut self.artifacts_rx) => {
+                    self.on_artifact(artifact, &mut rng).await;
                 },
                 // The instance's other verdict: a certified body it could not
                 // resolve. The heal is a pull from peers, started here and not at
                 // the boundary (R-026).
-                lost = recv_or_never(body_lost_rx.as_mut()) => match lost {
-                    Some(epoch) => self.on_body_lost(epoch),
-                    None => body_lost_rx = None,
-                },
+                epoch = recv_or_park(&mut self.body_lost_rx) => self.on_body_lost(epoch),
             }
         }
     }
@@ -1444,7 +1454,7 @@ where
 
     /// What the artifact store holds for `epoch`, through the read handle.
     fn stored(&self, epoch: u64) -> Option<StoredArtifact> {
-        self.outcome_at.as_ref().and_then(|read| read(epoch))
+        (self.outcome_at)(epoch)
     }
 
     /// Raise `Stalled{reason}` on `epoch` — the event of §5.2/§5.4. LATCHED per
@@ -1480,12 +1490,40 @@ where
         }
     }
 
-    /// The instance for `epoch` certified a payload whose body never arrived. Only
-    /// a `Sealed` epoch has anything to do about it: it keeps its ceremony and
-    /// waits for a PEER's copy of the artifact, asked for at once and on every tick
-    /// (`drive_acquisition`). Every other phase either already holds the artifact
-    /// or never ran a ceremony, so the signal is noted and dropped.
+    /// Drop one latch of `epoch` whose condition passed WITHIN the phase (the
+    /// phase-leaving latches go through `set_state`). One gauge step down; a
+    /// latch that is not raised is a no-op.
+    fn clear_stall(&mut self, epoch: u64, reason: StallReason) {
+        let Some(slot) = self.epochs.get_mut(&epoch) else {
+            return;
+        };
+        if slot.stalled.remove(&reason) {
+            self.metrics.stall_cleared(reason);
+        }
+    }
+
+    /// The instance for `epoch` certified a payload whose body never arrived. A
+    /// `Sealed` epoch keeps its ceremony and waits for a PEER's copy of the
+    /// artifact, asked for at once and on every tick (`drive_acquisition`). A
+    /// still-`Dealing` epoch (this node's clock lags the instance) remembers the
+    /// signal in its slot and acts on it at its seal (F-02). Every other phase
+    /// either already holds the artifact or never ran a ceremony, so the signal is
+    /// noted and dropped.
     fn on_body_lost(&mut self, epoch: u64) {
+        if let Some(EpochSlot {
+            state: EpochState::Dealing { .. },
+            body_lost,
+            ..
+        }) = self.epochs.get_mut(&epoch)
+        {
+            *body_lost = true;
+            tracing::info!(
+                target: "dpos::beacon",
+                epoch,
+                "live DKG: body-lost signal while still dealing — kept for the seal"
+            );
+            return;
+        }
         let Some(EpochState::Sealed { .. }) = self.state(epoch) else {
             tracing::debug!(
                 target: "dpos::beacon",
@@ -1508,9 +1546,7 @@ where
             EpochState::Acquiring(Acquire::ArtifactForCeremony(Box::new(ceremony))),
         );
         self.stall(epoch, StallReason::BodyLost);
-        if let Some(pull) = &self.pull_artifact {
-            pull(epoch);
-        }
+        (self.pull_artifact)(epoch);
         self.debug_assert_settled();
     }
 
@@ -1607,15 +1643,36 @@ where
             return false;
         }
         let digest = value_digest(proposal);
-        if let Some(EpochState::Conflict { held, second }) = self.state(epoch) {
+        if let Some(EpochState::Conflict { held, second, key }) = self.state(epoch) {
+            let (held, second, key) = (*held, *second, *key);
             // Both halves of the conflict are known; a re-delivery of either is
             // not a third value, and a third value changes nothing here.
-            if digest != *held && digest != *second {
+            if digest != held && digest != second {
                 tracing::warn!(
                     target: "dpos::beacon",
                     epoch,
                     third = %digest,
                     "live DKG: a third quorum-certified artifact for a conflicted epoch"
+                );
+            }
+            // A `Conflict` without an artifact in the store takes the first one
+            // that arrives as the key to VERIFY with (F-01): the signing stays
+            // stopped — the phase does not change, only its `key`.
+            if key.is_none() {
+                tracing::info!(
+                    target: "dpos::beacon",
+                    epoch,
+                    key = %digest,
+                    "live DKG: a conflicted epoch acquired an artifact to verify with; \
+                     its signing stays stopped"
+                );
+                self.set_state(
+                    epoch,
+                    EpochState::Conflict {
+                        held,
+                        second,
+                        key: Some(digest),
+                    },
                 );
             }
             return false;
@@ -1766,7 +1823,7 @@ where
         outcome: &DkgOutcome,
         share: &Share,
     ) -> bool {
-        if validate_share_on_poly(outcome, committee, share) {
+        if validate_share_on_poly(outcome, committee, &self.me_key.public_key(), share) {
             return true;
         }
         self.metrics.dkg_share_off_polynomial.inc();
@@ -1796,9 +1853,7 @@ where
         if dropped {
             self.share_notify.notify_one();
         }
-        if let Some(dir) = &self.share_dir {
-            share_state::evict_share(dir, epoch);
-        }
+        share_state::evict_share(&self.share_dir, epoch);
         dropped
     }
 
@@ -1822,7 +1877,19 @@ where
             self.log_store.seed(epoch, logs);
         }
         self.stop_signing(epoch, held, second);
-        self.set_state(epoch, EpochState::Conflict { held, second });
+        // `held` is a value this actor stood on or read from the store, and every
+        // way a value reaches this actor puts it in the store first (the channel's
+        // producers insert before they hand off; `reconcile_with_store` reads it)
+        // — so the store holds a key to verify with. What a restart finds is
+        // `recover`'s question, not this one's.
+        self.set_state(
+            epoch,
+            EpochState::Conflict {
+                held,
+                second,
+                key: Some(held),
+            },
+        );
         self.stall(epoch, StallReason::Conflict);
     }
 
@@ -1841,25 +1908,22 @@ where
     /// process, and a restart re-judges the epoch from the store's witness.
     /// Counted and said (ERROR) once, here.
     fn stop_signing(&mut self, epoch: u64, held: B256, second: B256) {
-        let durable = match &self.share_dir {
-            Some(dir) => match share_state::load_conflict(dir, epoch) {
-                Some(_) => true,
-                None => match share_state::persist_conflict(dir, epoch, &held, &second) {
-                    Ok(()) => true,
-                    Err(err) => {
-                        self.metrics.dkg_conflict_marker_failed.inc();
-                        tracing::error!(
-                            target: "dpos::beacon",
-                            epoch,
-                            ?err,
-                            "live DKG: could not write the conflict marker; the verdict holds \
-                             in this process and a restart re-judges the epoch from the store"
-                        );
-                        false
-                    }
-                },
+        let durable = match share_state::load_conflict(&self.share_dir, epoch) {
+            Some(_) => true,
+            None => match share_state::persist_conflict(&self.share_dir, epoch, &held, &second) {
+                Ok(()) => true,
+                Err(err) => {
+                    self.metrics.dkg_conflict_marker_failed.inc();
+                    tracing::error!(
+                        target: "dpos::beacon",
+                        epoch,
+                        ?err,
+                        "live DKG: could not write the conflict marker; the verdict holds \
+                         in this process and a restart re-judges the epoch from the store"
+                    );
+                    false
+                }
             },
-            None => true,
         };
         #[cfg(test)]
         if self.die_between_verdict_and_eviction {
@@ -1887,9 +1951,6 @@ where
     /// that lost a race — and the target would then never get an instance at all.
     /// The log line is the part that is one-shot.
     async fn announce_agreement_targets(&mut self) {
-        let Some(tx) = self.agreement_tx.as_ref() else {
-            return;
-        };
         let due: Vec<u64> = self
             .epochs
             .iter()
@@ -1902,7 +1963,7 @@ where
             .map(|(e, _)| *e)
             .collect();
         for epoch in due {
-            match tx.try_send(epoch) {
+            match self.agreement_tx.try_send(epoch) {
                 Ok(()) => {
                     let Some(slot) = self.epochs.get_mut(&epoch) else {
                         continue;
@@ -1997,30 +2058,28 @@ where
         if !self.share_on_artifact(epoch, committee, &outcome, &share) {
             return Err(AdoptRefusal::OffPolynomial);
         }
-        if let Some(dir) = &self.share_dir {
-            if let Err(err) = share_state::persist(dir, epoch, &share, &self.share_state) {
-                // REFUSED, not warned-and-continued. §5.4: a share accepted in RAM
-                // whose file was never written means "signing now, mute after a
-                // restart" — the node casts votes carrying seed partials for an
-                // epoch it will come back unable to sign in, and R-021 is that
-                // asymmetry. Verify-only is the recoverable half of the trade.
-                //
-                // THE RETRY IS A TRANSITION, not a new timer: the caller moves the
-                // epoch to `Acquiring(Logs)`, and the next height tick re-derives
-                // the share from the retained journal — which `adopt_share` has not
-                // evicted, precisely because the eviction follows a successful adopt.
-                self.metrics.dkg_share_persist_failed.inc();
-                tracing::error!(
-                    target: "dpos::beacon",
-                    epoch,
-                    ?err,
-                    "live DKG: REFUSING the share because its disk write failed — the \
-                     epoch stays verify-only and the write is retried from the retained \
-                     journal on the next height tick (adopting it would sign now and be \
-                     mute after a restart)"
-                );
-                return Err(AdoptRefusal::PersistFailed);
-            }
+        if let Err(err) = share_state::persist(&self.share_dir, epoch, &share, &self.share_state) {
+            // REFUSED, not warned-and-continued. §5.4: a share accepted in RAM
+            // whose file was never written means "signing now, mute after a
+            // restart" — the node casts votes carrying seed partials for an
+            // epoch it will come back unable to sign in, and R-021 is that
+            // asymmetry. Verify-only is the recoverable half of the trade.
+            //
+            // THE RETRY IS A TRANSITION, not a new timer: the caller moves the
+            // epoch to `Acquiring(Logs)`, and the next height tick re-derives
+            // the share from the retained journal — which `adopt_share` has not
+            // evicted, precisely because the eviction follows a successful adopt.
+            self.metrics.dkg_share_persist_failed.inc();
+            tracing::error!(
+                target: "dpos::beacon",
+                epoch,
+                ?err,
+                "live DKG: REFUSING the share because its disk write failed — the \
+                 epoch stays verify-only and the write is retried from the retained \
+                 journal on the next height tick (adopting it would sign now and be \
+                 mute after a restart)"
+            );
+            return Err(AdoptRefusal::PersistFailed);
         }
         #[cfg(test)]
         if let Ok(mut seen) = self.adopted_outcomes.write() {
@@ -2111,10 +2170,9 @@ where
         // A non-durable log is retryable only while its ceremony holds the bytes, so
         // the set cannot outlive the ceremonies it names.
         self.nondurable_logs.retain(|e, _| retained(*e));
-        if let Some(shared) = self.recorded_dkg_logs.as_ref() {
-            if let Ok(mut m) = shared.write() {
-                m.retain(|e, _| retained(*e));
-            }
+        self.nondurable_dealings.retain(|e, _| retained(*e));
+        if let Ok(mut m) = self.recorded_dkg_logs.write() {
+            m.retain(|e, _| retained(*e));
         }
 
         // Bound the SHARED insert-only CeremonyStore (writes at `store.insert`). Readers
@@ -2146,9 +2204,7 @@ where
         // did not, so on a validator with an upstream the gauge reported `fin + K`
         // while the actor's real clock was `max(fin + K, upstream_frontier)` — the
         // entire reported lag was spurious.
-        if let Some(clock) = &self.plane_clock {
-            clock.record_dkg_clock(height);
-        }
+        self.plane_clock.record_dkg_clock(height);
         let now = self.epoch_of(height);
 
         // First-tick journal reconcile: now that the frozen epoch geometry is finally
@@ -2159,9 +2215,7 @@ where
         // restart-before-boundary (which holds the epoch in NO in-memory map) still
         // reclaims its leaked journal + stale at-rest secrets (R2). One-shot.
         if !self.reconciled_journals {
-            if let Some(dir) = &self.share_dir {
-                share_state::reconcile_journals(dir, now);
-            }
+            share_state::reconcile_journals(&self.share_dir, now);
             self.reconciled_journals = true;
         }
 
@@ -2201,7 +2255,8 @@ where
             // Our OWN seal broadcast is not ack-gated (it carries no ack; the log is
             // re-fetchable via the resolver), so a failed journal only warns.
             let _ = self.append_journal(e, step.journal);
-            let next = match agreed {
+            let body_lost = self.epochs.get(&e).is_some_and(|slot| slot.body_lost);
+            let (next, stalled) = match agreed {
                 Some(set) => {
                     tracing::info!(
                         target: "dpos::beacon",
@@ -2210,11 +2265,21 @@ where
                         height,
                         "live DKG: adopting the agreed dealer-log set as this epoch's pinned set"
                     );
-                    EpochState::Agreed { ceremony, set }
+                    (EpochState::Agreed { ceremony, set }, None)
                 }
-                None => EpochState::Sealed { ceremony },
+                // The body-lost signal that arrived while dealing (F-02): the
+                // sealed ceremony goes straight to acquiring, as it would have on
+                // the signal itself; this tick's `drive_acquisition` pulls for it.
+                None if body_lost => (
+                    EpochState::Acquiring(Acquire::ArtifactForCeremony(Box::new(ceremony))),
+                    Some(StallReason::BodyLost),
+                ),
+                None => (EpochState::Sealed { ceremony }, None),
             };
             self.set_state(e, next);
+            if let Some(reason) = stalled {
+                self.stall(e, reason);
+            }
         }
 
         // 1b. Evict pending dealing buffers for epochs we will never start (the epoch
@@ -2349,6 +2414,18 @@ where
     /// whose ceremony has already been swept has nothing left to re-journal; the
     /// retention sweep drops its epoch's entry.
     fn retry_nondurable_journals(&mut self) {
+        // The dealings first (DB-08): the record is held here, so the retry is one
+        // append per record and the queue keeps what still failed.
+        let dealings = std::mem::take(&mut self.nondurable_dealings);
+        for (epoch, records) in dealings {
+            if self.ceremony(epoch).is_none() {
+                continue;
+            }
+            let failed = self.journal_failures(epoch, records);
+            if !failed.is_empty() {
+                self.nondurable_dealings.insert(epoch, failed);
+            }
+        }
         if self.nondurable_logs.is_empty() {
             return;
         }
@@ -2380,16 +2457,13 @@ where
     /// (`idx→keccak256(SignedDealerLog)`, `idx` = the dealer's position in the agreed
     /// `committee[epoch]`) into the shared `recorded_dkg_logs` — what the agreement
     /// plane proposes from and what a share-confirmation states. Monotone (recorded
-    /// logs only accrue) + idempotent; no-op when unwired. Committee-read per live
-    /// ceremony (`n ≤ 51`, cheap).
+    /// logs only accrue) + idempotent. Committee-read per live ceremony (`n ≤ 51`,
+    /// cheap).
     fn publish_recorded_logs(&mut self) {
         // Give every previously-failed write another chance BEFORE deciding what may
         // be claimed; a log that lands here is publishable on this same edge.
         self.retry_nondurable_journals();
-        let Some(shared) = self.recorded_dkg_logs.as_ref() else {
-            return;
-        };
-        let Ok(mut map) = shared.write() else {
+        let Ok(mut map) = self.recorded_dkg_logs.write() else {
             return;
         };
         let mut grew = false;
@@ -2572,8 +2646,8 @@ where
         // window — before the epoch's boundary block is proposed/verified — so the
         // verify-path C gate can read the share.
         // Deferrals observed this tick, reported after the borrow ends.
-        // `(epoch, reason, unmappable_pinned)`.
-        let mut deferrals: Vec<(u64, StallReason, usize)> = Vec::new();
+        // `(epoch, all_held, unmappable_pinned)`.
+        let mut deferrals: Vec<(u64, bool, usize)> = Vec::new();
         let plans: Vec<(u64, Set<PeerPubkey>)> = self
             .epochs
             .iter()
@@ -2608,21 +2682,31 @@ where
                     // non-zero count means the pinned set and the committee this
                     // node reads disagree.
                     let unmappable = set.pinned.keys().filter(|i| **i as usize >= n).count();
-                    let reason = if all_held {
-                        StallReason::QuorumMissing
-                    } else {
-                        StallReason::BodyMissing
-                    };
-                    deferrals.push((target, reason, unmappable));
+                    deferrals.push((target, all_held, unmappable));
                     return None;
                 }
                 Some((target, committee))
             })
             .collect();
-        for (epoch, reason, unmappable) in deferrals {
+        for (epoch, all_held, unmappable) in deferrals {
             if unmappable > 0 {
                 self.metrics.dkg_pinned_idx_out_of_range.inc();
             }
+            // Two latches, each on its own condition (F-03). `BodyMissing` while a
+            // pinned body is not held; it leaves the tick every body is (the fetch
+            // landed — a held body is never lost, so it leaves once). `QuorumMissing`
+            // is a property of the pinned SET, readable only with every body in
+            // hand: `ready` probes the held bodies, so below `all_held` a `false` says
+            // nothing about the set, and the latch is neither raised nor dropped on
+            // it. Once raised it stands until the phase leaves (`carries`): the set
+            // is agreed and its bodies are all here, so nothing can change the
+            // answer.
+            let reason = if all_held {
+                self.clear_stall(epoch, StallReason::BodyMissing);
+                StallReason::QuorumMissing
+            } else {
+                StallReason::BodyMissing
+            };
             // `Stalled{QuorumMissing}` / `Stalled{BodyMissing}`: one line and one
             // gauge step per (epoch, reason). The deferred counter and the
             // unmappable-set line keep their once-per-(epoch, reason) semantics on
@@ -2845,45 +2929,123 @@ where
         // by the caller, so a dealer that previously got ≤ quorum−1 acks now seals
         // `Ok`, not `TooManyReveals`. The newly-accepted dealings are journaled too.
         if let Some(buffered) = self.pending.remove(&epoch) {
-            // Collect each drained dealing's Step (borrowing the ceremony only for the
-            // replay) so its ack broadcast can be gated on ITS OWN `ReceivedDealing`
-            // write being durable (step 1f), exactly as the on_message path does.
-            let mut steps: Vec<Step> = Vec::new();
             // A buffered dealing was admitted on its epoch, and on its seat only
             // if `committee[target]` was readable when it arrived (`on_message`,
             // the buffer branch); one buffered before that record was readable
-            // was admitted on its epoch alone. The seat is checked (again) HERE,
-            // where the ceremony that consumes it exists — the same `no_seat`
-            // refusal the live dispatch in `on_message` makes.
-            let mut strangers: Vec<PeerPubkey> = Vec::new();
-            {
-                let c = self.ceremony_mut(epoch).expect("just entered Dealing");
-                for (from, dealings) in buffered {
-                    if !c.has_seat(&from) {
-                        strangers.push(from);
-                        continue;
-                    }
-                    // Replay each present half (commitment-then-share). Order-independent
-                    // (`try_ack` fires only once both halves are buffered), so `from` is
-                    // re-used per replay → clone (PeerPubkey is Clone, NOT Copy).
-                    for body in [dealings.commitment, dealings.share].into_iter().flatten() {
-                        steps.push(c.handle(from.clone(), body));
-                    }
+            // was admitted on its epoch alone. The consumer's admission is asked
+            // HERE, where the ceremony that consumes it exists — the SAME
+            // question the live dispatch asks (`ceremony_refusal`: the seat, and
+            // the local ban of a dealer this epoch holds evidence for, which a
+            // journal replay restores before the drain runs). Both halves are
+            // one sender's, so the answer is the sender's, asked once.
+            let mut admitted: Vec<(PeerPubkey, DkgBody)> = Vec::new();
+            for (from, dealings) in buffered {
+                let halves: Vec<DkgBody> = [dealings.commitment, dealings.share]
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                let refusal = halves
+                    .first()
+                    .and_then(|body| self.ceremony_refusal(epoch, &from, body));
+                if let Some(reason) = refusal {
+                    self.refuse(&from, Some(epoch), reason);
+                    continue;
                 }
+                // Replay each present half (commitment-then-share). Order-independent
+                // (`try_ack` fires only once both halves are buffered), so `from` is
+                // re-used per replay → clone (PeerPubkey is Clone, NOT Copy).
+                admitted.extend(halves.into_iter().map(|body| (from.clone(), body)));
             }
-            for from in &strangers {
-                self.refuse(from, Some(epoch), "no_seat");
-            }
+            // Collect each drained dealing's Step (borrowing the ceremony only for the
+            // replay) so its ack broadcast can be gated on ITS OWN `ReceivedDealing`
+            // write being durable (step 1f), exactly as the on_message path does.
+            let steps: Vec<Step> = {
+                let c = self.ceremony_mut(epoch).expect("just entered Dealing");
+                admitted
+                    .into_iter()
+                    .map(|(from, body)| c.handle(from, body))
+                    .collect()
+            };
             for step in steps {
                 let acked = acked_dealers(&step);
-                if self.append_journal(epoch, step.journal) {
+                if self.journal_or_defer(epoch, step.journal, &acked) {
                     out.extend(step.outgoing);
-                } else {
-                    self.withhold_acks(epoch, &acked);
                 }
             }
         }
         true
+    }
+
+    /// The consumer's admission of a ceremony frame from `from` for `epoch`, the
+    /// ONE answer both ingress paths give — the live dispatch (`on_message`) and
+    /// the drain of the start-race buffer (`decide`): `None` admits; `Some` is the
+    /// reason for the shared ingress counter.
+    /// - `no_seat`: a live ceremony consumes a frame keyed by its sender — a
+    ///   dealing is buffered under `from`, an ack prunes `from` from the
+    ///   retransmit set — and commonware's `Player`/`Dealer` answer a stranger
+    ///   with a silent `None` / `UnknownPlayer`. Say it instead, once, on the
+    ///   shared counter.
+    /// - `equivocator`: the local ban of 5.3-Б, extended from logs to DEALINGS
+    ///   (E-10): a dealer this epoch holds equivocation evidence for gets no
+    ///   `Commitment`/`Share`/`Ack` consumed. Without it a player that had not
+    ///   acked yet would take the dealing of the dealer's SECOND polynomial, and
+    ///   its share would then lie off the polynomial the network pinned — a share
+    ///   lost for nothing. The ceremony refuses the dealer's further LOGS by
+    ///   gossip (`handle`); the dealings are refused here, where the sender is
+    ///   bound to its seat. Nothing goes on-chain (Д-6). The evidence is the
+    ///   slot's, so a proven pair outlives the ceremony and a resumed one is
+    ///   banned from the tick it is restored (`enter`).
+    fn ceremony_refusal(
+        &self,
+        epoch: u64,
+        from: &PeerPubkey,
+        body: &DkgBody,
+    ) -> Option<&'static str> {
+        if self.ceremony(epoch).is_some_and(|c| !c.has_seat(from)) {
+            return Some("no_seat");
+        }
+        if matches!(
+            body,
+            DkgBody::Commitment(_) | DkgBody::Share(_) | DkgBody::Ack(_)
+        ) && self
+            .epochs
+            .get(&epoch)
+            .is_some_and(|slot| slot.evidence.contains_key(from))
+        {
+            return Some("equivocator");
+        }
+        None
+    }
+
+    /// Step 1f's write, the ONE form both ingress paths use: journal a step's
+    /// `records`; when any did not land, withhold the step's acks (`acked`) and
+    /// queue every `ReceivedDealing` among them for the retry from the record
+    /// (DB-08, `retry_nondurable_journals`). Returns whether the write was durable —
+    /// the caller broadcasts the step's outgoing only then. A log that did not land
+    /// is the caller's to name (by the id the ceremony authenticated, not by the
+    /// record), and an ack record is re-made by the next retransmit.
+    fn journal_or_defer(
+        &mut self,
+        epoch: u64,
+        records: Vec<JournalRecord>,
+        acked: &[PeerPubkey],
+    ) -> bool {
+        let failed = self.journal_failures(epoch, records);
+        if failed.is_empty() {
+            return true;
+        }
+        let dealings: Vec<JournalRecord> = failed
+            .into_iter()
+            .filter(|r| matches!(r, JournalRecord::ReceivedDealing(..)))
+            .collect();
+        if !dealings.is_empty() {
+            self.nondurable_dealings
+                .entry(epoch)
+                .or_default()
+                .extend(dealings);
+        }
+        self.withhold_acks(epoch, acked);
+        false
     }
 
     /// Step 1f, the withheld half: the acks of a step whose journal write failed are
@@ -2940,11 +3102,8 @@ where
         epoch: u64,
     ) -> Option<(EpochState, Vec<Outgoing>, Option<StallReason>)> {
         let quiet = |state: EpochState| Some((state, Vec::new(), None));
-        if let Some(marker) = self
-            .share_dir
-            .as_ref()
-            .and_then(|dir| share_state::load_conflict(dir, epoch))
-        {
+        let stored = self.stored(epoch);
+        if let Some(marker) = share_state::load_conflict(&self.share_dir, epoch) {
             // The terminal outlives the process. A share file the eviction missed
             // (or a death between the marker and the eviction) is not re-keyed:
             // it leaves `store` and its file here as it left on the verdict.
@@ -2963,9 +3122,12 @@ where
                     (B256::ZERO, B256::ZERO)
                 }
             };
-            return quiet(EpochState::Conflict { held, second });
+            // The key to verify with is whatever the store holds (F-01): the
+            // marker is fsync'd before the artifact's write-behind, so a death in
+            // between restarts with the verdict and no artifact — acquired then.
+            let key = stored.as_ref().map(|s| value_digest(&s.held));
+            return quiet(EpochState::Conflict { held, second, key });
         }
-        let stored = self.stored(epoch);
         if let Some((held, divergent)) = stored
             .as_ref()
             .and_then(|s| Some((value_digest(&s.held), s.divergent?)))
@@ -2977,6 +3139,7 @@ where
             return quiet(EpochState::Conflict {
                 held,
                 second: divergent,
+                key: Some(held),
             });
         }
         let artifact = stored.map(|s| s.held);
@@ -3090,17 +3253,13 @@ where
         Some((state, outgoing, None))
     }
 
-    /// Load the per-epoch ceremony journal for `target` ([`JournalLoad::NoFile`]
-    /// without a `share_dir`, the in-process/test default). The tri-state lets
+    /// Load the per-epoch ceremony journal for `target`. The tri-state lets
     /// [`Self::recover`] tell a genuine first run (deal) from a present-but-damaged
     /// journal.
     fn load_journal(&self, target: u64) -> JournalLoad {
-        let Some(dir) = &self.share_dir else {
-            return JournalLoad::NoFile;
-        };
         let max = NonZeroU32::new(fluentbase_p2p::constants::MAX_COMMITTEE_SIZE as u32)
             .expect("MAX_COMMITTEE_SIZE > 0");
-        share_state::load_journal(dir, target, &self.share_state, max)
+        share_state::load_journal(&self.share_dir, target, &self.share_state, max)
     }
 
     /// Start a fresh ceremony for `target`, journaling its initial records. Returns
@@ -3360,13 +3519,11 @@ where
         // a re-sealed Reveal re-arrives once we are live via the long window). DKG-log
         // RECOVERY is no longer a gossip body — it rides the `commonware_resolver::p2p`
         // engine (see `on_resolver_message` / `fetch_missing_logs`).
-        // The consumer's seat check: a live ceremony consumes a frame keyed by its
-        // sender — a dealing is buffered under `from`, an ack prunes `from` from
-        // the retransmit set — and commonware's `Player`/`Dealer` answer a
-        // stranger with a silent `None` / `UnknownPlayer`. Say it instead, once,
-        // on the shared counter.
-        if self.ceremony(epoch).is_some_and(|c| !c.has_seat(&from)) {
-            self.refuse(&from, Some(epoch), "no_seat");
+        // The consumer's admission — the seat, and the local ban of a proven
+        // equivocator (E-10) — the same question the start-race drain asks
+        // (`ceremony_refusal`), counted like every other ingress refusal.
+        if let Some(reason) = self.ceremony_refusal(epoch, &from, &body) {
+            self.refuse(&from, Some(epoch), reason);
             return;
         }
         if let Some(c) = self.ceremony_mut(epoch) {
@@ -3384,9 +3541,12 @@ where
             // An empty journal is durable trivially (the re-emit passes the gate). On a
             // write failure the ack is WITHHELD: the dealer then reveals our point in its
             // own log, which the recompute recovers just as well — safe, no liveness loss.
-            let durable = self.append_journal(epoch, step.journal);
+            // A `ReceivedDealing` that did not land is queued for the retry there
+            // (DB-08, `journal_or_defer`).
+            let durable = self.journal_or_defer(epoch, step.journal, &acked);
             self.note_equivocation(epoch, step.equivocation.as_ref(), durable);
             if !durable {
+                // A log that did not land is retried by its id from the ceremony.
                 // The dealer comes from the ceremony, which `check`ed the signature to
                 // get it — NOT from `from`. A peer may relay another dealer's valid
                 // `Reveal`, and blaming the sender would leave the real dealer's
@@ -3394,7 +3554,6 @@ where
                 if let Some(id) = step.recorded_log {
                     self.nondurable_logs.entry(epoch).or_default().insert(id);
                 }
-                self.withhold_acks(epoch, &acked);
             }
             if durable {
                 self.broadcast_all(step.outgoing).await;
@@ -3469,8 +3628,7 @@ where
     /// ceremony still holding an agreed set never stops asking for the bodies its
     /// finalize needs. The resolver dedupes in-flight keys, so re-issuing the missing
     /// set each tick is idempotent; targeting aims at the known committee roster
-    /// (the log holders, in `latest.primary` via the registry-union tracker). No-op
-    /// without a wired resolver (in-process/test default).
+    /// (the log holders, in `latest.primary` via the registry-union tracker).
     ///
     /// Runs in `on_height` AFTER finalize + the past-boundary sweep, so `self.epochs`
     /// already reflects every drop; it then `retain`s the resolver's in-flight fetches to
@@ -3478,9 +3636,6 @@ where
     /// finalized or was swept, so the resolver stops re-issuing dead keys every
     /// `fetch_retry_timeout` for the life of the process (the slow request leak).
     async fn fetch_missing_logs(&mut self) {
-        if self.resolver.is_none() {
-            return;
-        }
         // Snapshot the (key, targets) requests first — borrowing `self.epochs` and
         // `self.committee_for` immutably — then borrow `self.resolver` (mutably) to
         // issue the fetches, so the two borrows never overlap.
@@ -3566,12 +3721,11 @@ where
         // move a snapshot set in. Re-issued keys are deduped by the resolver (in-flight),
         // so this is purely a prune of the stale tail.
         let wanted: BTreeSet<DkgLogKey> = requests.iter().map(|(k, _)| k.clone()).collect();
-        let resolver = self.resolver.as_mut().expect("checked Some above");
-        resolver
+        self.resolver
             .retain(move |key| wanted.contains(key) || unreadable.contains(&key.epoch))
             .await;
         for (key, targets) in requests {
-            resolver.fetch_targeted(key, targets).await;
+            self.resolver.fetch_targeted(key, targets).await;
         }
     }
 
@@ -3609,8 +3763,6 @@ where
     ///    its change boundary.
     /// 2. `Acquiring(Logs)` — attempt the journal recompute for every heal holding
     ///    all of its pinned bodies ([`Self::try_recompute`]).
-    ///
-    /// Inert where the seams are unwired (the in-process/test default).
     fn drive_acquisition(&mut self, now: u64, rng: &mut impl CryptoRngCore) {
         if self.reconcile_with_store() {
             self.drive_finalization(rng);
@@ -3650,9 +3802,7 @@ where
             if e <= now {
                 self.stall(e, StallReason::NoArtifact);
             }
-            if let Some(pull) = &self.pull_artifact {
-                pull(e);
-            }
+            (self.pull_artifact)(e);
         }
         self.try_recompute(rng);
     }
@@ -3675,7 +3825,7 @@ where
         let decided: Vec<u64> = self
             .epochs
             .iter()
-            .filter(|(_, slot)| !matches!(slot.state, EpochState::Conflict { .. }))
+            .filter(|(_, slot)| !matches!(slot.state, EpochState::Conflict { key: Some(_), .. }))
             .map(|(e, _)| *e)
             .collect();
         let mut finalizable = false;
@@ -3683,6 +3833,13 @@ where
             let Some(stored) = self.stored(e) else {
                 continue;
             };
+            // A `Conflict` without a key takes the store's artifact as its key
+            // (F-01) through the artifact edge, which knows the phase; it is
+            // never compared, its verdict is already final.
+            if matches!(self.state(e), Some(EpochState::Conflict { .. })) {
+                self.apply_artifact(e, &stored.held);
+                continue;
+            }
             let held = value_digest(&stored.held);
             match self.state(e).and_then(EpochState::held_digest) {
                 None => finalizable |= self.apply_artifact(e, &stored.held),
@@ -3708,15 +3865,14 @@ where
     /// disagree about which epochs have an artifact at all.
     ///
     /// The chain's frozen `changed[epoch]` bit, plus the deterministic bootstrap
-    /// exception stated once. `None` where the bit is unreadable, or where no bit
-    /// is wired at all (an actor built without a chain reader, the test default):
-    /// an undecided read is never a mint, and never a carry-forward either — the
-    /// epoch stays undecided and the next tick re-asks.
+    /// exception stated once. `None` where the bit is unreadable: an undecided
+    /// read is never a mint, and never a carry-forward either — the epoch stays
+    /// undecided and the next tick re-asks.
     fn mints_at(&self, epoch: u64) -> Option<bool> {
         if epoch == DETERMINISTIC_BOOTSTRAP_EPOCH {
             return Some(true);
         }
-        self.changed.as_ref().and_then(|changed| changed(epoch))
+        (self.changed)(epoch)
     }
 
     /// Arm or disarm the journal recompute of an `Acquiring(Logs)` epoch
@@ -4135,6 +4291,63 @@ mod clock_tests {
         async fn retain(&mut self, _: impl Fn(&Self::Key) -> bool + Send + 'static) {}
     }
 
+    /// The `changed` bit of a fixture that has no chain: unreadable for every
+    /// epoch. ONE shared closure, so a helper can tell the fixture's default from
+    /// a bit a test set itself (`Arc::ptr_eq`, see `standalone_actor_at`).
+    fn unreadable_bit() -> ChangedAt {
+        static BIT: std::sync::OnceLock<ChangedAt> = std::sync::OnceLock::new();
+        BIT.get_or_init(|| Arc::new(|_epoch: u64| None)).clone()
+    }
+
+    impl<R> Wiring<R> {
+        /// Every edge but the resolver INERT: parked receivers (their senders are
+        /// held in [`Fixture`], so `run` sees a plane that never speaks, not one
+        /// that died), a no-op pull, a reader over an empty store, a scratch
+        /// directory removed with the actor, a `changed` bit that reads as
+        /// unreadable (the fixture has no chain; a test that decides an epoch
+        /// past the bootstrap sets its own rule, as `standalone_actor_at` does),
+        /// an unregistered clock and a pool under a test namespace. A test
+        /// overrides the fields it exercises.
+        fn inert(resolver: R) -> Self {
+            let (resolver_tx, resolver_rx) = tokio::sync::mpsc::channel::<LogMessage>(1);
+            let (pinned_tx, pinned_rx) = tokio::sync::mpsc::channel::<PinnedRequest>(1);
+            let (artifacts_tx, artifacts_rx) = tokio::sync::mpsc::channel::<AgreedArtifact>(1);
+            let (body_lost_tx, body_lost_rx) = tokio::sync::mpsc::channel::<u64>(1);
+            let (agreement_tx, agreement_rx) = tokio::sync::mpsc::channel::<u64>(1);
+            let scratch = fresh_share_dir("standalone");
+            Self {
+                resolver,
+                resolver_rx,
+                changed: unreadable_bit(),
+                share_dir: scratch.clone(),
+                plane_clock: PlaneClock::default(),
+                outcome_at: Arc::new(|_epoch: u64| None),
+                pull_artifact: Arc::new(|_epoch: u64| {}),
+                recorded_dkg_logs: Arc::new(RwLock::new(BTreeMap::new())),
+                confirms: ConfirmPool::new(b"FLUENT_TEST_STANDALONE"),
+                pinned_rx,
+                agreement_tx,
+                artifacts_rx,
+                body_lost_rx,
+                fixture: Some(Fixture {
+                    scratch,
+                    _resolver_tx: resolver_tx,
+                    _pinned_tx: pinned_tx,
+                    _artifacts_tx: artifacts_tx,
+                    _body_lost_tx: body_lost_tx,
+                    _agreement_rx: agreement_rx,
+                }),
+            }
+        }
+    }
+
+    impl Wiring<NoopResolver> {
+        /// [`Wiring::inert`] over the no-op resolver — the standalone default.
+        fn standalone() -> Self {
+            Self::inert(NoopResolver)
+        }
+    }
+
     /// A resolver mock that records its in-flight fetch set so a test can assert
     /// `fetch_missing_logs` CANCELS dead fetches (`retain`) — exercising the [804]
     /// uncancelled-fetch-leak fix. `fetch_targeted` inserts the key; `retain` prunes the
@@ -4379,6 +4592,7 @@ mod clock_tests {
     ) -> (
         tokio::sync::mpsc::Sender<u64>,
         Arc<RwLock<BTreeMap<u64, CeremonyOutput>>>,
+        ConfirmPool,
     ) {
         let pk = me.public_key();
         let (sender, receiver) = oracle
@@ -4395,30 +4609,37 @@ mod clock_tests {
         };
         let (announce_tx, artifact_rx, pinned_rx) =
             spawn_stub_agreement(ctx, recorded.clone(), committee.len(), Certified::default());
+        let mut wiring = Wiring::standalone();
+        if let Some(dir) = share_dir {
+            wiring.share_dir = dir;
+        }
+        wiring.recorded_dkg_logs = recorded;
+        wiring.agreement_tx = announce_tx;
+        wiring.artifacts_rx = artifact_rx;
+        wiring.pinned_rx = pinned_rx;
+        // The contract's rule over this fixture's single committee — see
+        // `standalone_actor_at`. A single committee never changes, so what
+        // starts a ceremony here is the unconditional bootstrap mint, exactly
+        // as on-chain.
+        wiring.changed = Arc::new(|_epoch: u64| Some(false));
+        // The pool this dealer counts peers' `ShareConfirm`s into — a fixture
+        // dealer mints and receives them for real (`Confirmations::mint` over
+        // `recorded`), and one test pins that as a fact (`run_reveal_check`).
+        let confirms = wiring.confirms.clone();
         let actor = DkgActor::new(
             b"FLUENT_DPOS_V1_clocktest".to_vec(),
             me,
             sender,
             receiver,
-            None::<NoopResolver>,
-            None,
             committee_for,
             store,
             share_notify,
             ACTIVATION,
             interval,
             crate::beacon::metrics::BeaconMetrics::default(),
-            share_dir,
             ShareState::Plaintext,
-            None,
-        )
-        .with_recorded_logs(recorded)
-        .with_agreement_plane(announce_tx, artifact_rx)
-        .with_pinned_requests(pinned_rx)
-        // The contract's rule over this fixture's single committee — see
-        // `standalone_actor_cf`. A single committee never changes, so what starts a
-        // ceremony here is the unconditional bootstrap mint, exactly as on-chain.
-        .with_changed_bit(Arc::new(|_epoch: u64| Some(false)));
+            wiring,
+        );
         // The OUTPUT of whatever this dealer adopts, for the assertions that need the
         // ceremony's own `Output` — see `DkgActor::adopted_outcomes`.
         let adopted = actor.adopted_outcomes.clone();
@@ -4428,7 +4649,7 @@ mod clock_tests {
             ctx.with_label("dealer")
                 .spawn(move |_c| async move { actor.run(height_rx, rng).await }),
         );
-        (height_tx, adopted)
+        (height_tx, adopted, confirms)
     }
 
     /// `spawn_dealer_at`, but wires a REAL `commonware_resolver::p2p::Engine` (not the
@@ -4509,25 +4730,29 @@ mod clock_tests {
             me,
             sender,
             receiver,
-            Some(mailbox),
-            Some(log_rx),
             committee_for,
             store,
             share_notify,
             ACTIVATION,
             interval,
             crate::beacon::metrics::BeaconMetrics::default(),
-            share_dir,
             ShareState::Plaintext,
-            None,
-        )
-        .with_recorded_logs(recorded)
-        .with_agreement_plane(announce_tx, artifact_rx)
-        .with_pinned_requests(pinned_rx)
-        // The contract's rule over this fixture's single committee — see
-        // `standalone_actor_cf`. A single committee never changes, so what starts a
-        // ceremony here is the unconditional bootstrap mint, exactly as on-chain.
-        .with_changed_bit(Arc::new(|_epoch: u64| Some(false)));
+            {
+                let mut wiring = Wiring::inert(mailbox);
+                wiring.resolver_rx = log_rx;
+                if let Some(dir) = share_dir {
+                    wiring.share_dir = dir;
+                }
+                wiring.recorded_dkg_logs = recorded;
+                wiring.agreement_tx = announce_tx;
+                wiring.artifacts_rx = artifact_rx;
+                wiring.pinned_rx = pinned_rx;
+                // The contract's rule over this fixture's single committee — see
+                // `standalone_actor_at`.
+                wiring.changed = Arc::new(|_epoch: u64| Some(false));
+                wiring
+            },
+        );
         let (height_tx, height_rx) = tokio::sync::mpsc::channel::<u64>(256);
         let rng = StdRng::seed_from_u64(rng_seed);
         drop(
@@ -4787,17 +5012,14 @@ mod clock_tests {
                 me,
                 sender,
                 receiver,
-                None::<NoopResolver>,
-                None,
                 committee_for,
                 store,
                 Arc::new(tokio::sync::Notify::new()),
                 ACTIVATION,
                 INTERVAL,
                 crate::beacon::metrics::BeaconMetrics::default(),
-                None,
                 ShareState::Plaintext,
-                None,
+                Wiring::standalone(),
             );
             let mut arng = StdRng::seed_from_u64(9);
 
@@ -4882,17 +5104,14 @@ mod clock_tests {
                 me,
                 sender,
                 receiver,
-                None::<NoopResolver>,
-                None,
                 committee_for,
                 store,
                 Arc::new(tokio::sync::Notify::new()),
                 ACTIVATION,
                 INTERVAL,
                 crate::beacon::metrics::BeaconMetrics::default(),
-                None,
                 ShareState::Plaintext,
-                None,
+                Wiring::standalone(),
             );
             let mut arng = StdRng::seed_from_u64(13);
 
@@ -5201,17 +5420,14 @@ mod clock_tests {
                 me,
                 sender,
                 receiver,
-                None,
-                None,
                 committee_for,
                 Arc::new(RwLock::new(BTreeMap::new())),
                 Arc::new(tokio::sync::Notify::new()),
                 ACTIVATION,
                 INTERVAL,
                 crate::beacon::metrics::BeaconMetrics::default(),
-                None,
                 ShareState::Plaintext,
-                None,
+                Wiring::standalone(),
             );
             // Drive node-0 to START its epoch-2 ceremony but NOT seal it (so
             // `drive_finalization`'s `sealed` guard never finalizes+evicts under us —
@@ -5589,17 +5805,14 @@ mod clock_tests {
                 me,
                 sender,
                 receiver,
-                Some(resolver),
-                None,
                 committee_for,
                 Arc::new(RwLock::new(BTreeMap::new())),
                 Arc::new(tokio::sync::Notify::new()),
                 ACTIVATION,
                 INTERVAL,
                 crate::beacon::metrics::BeaconMetrics::default(),
-                None,
                 ShareState::Plaintext,
-                None,
+                Wiring::inert(resolver),
             );
 
             // Inject an OPEN shorthanded ceremony (node-0 started but no peer logs)
@@ -5707,17 +5920,14 @@ mod clock_tests {
                 me,
                 sender,
                 receiver,
-                Some(resolver),
-                None,
                 committee_for,
                 Arc::new(RwLock::new(BTreeMap::new())),
                 Arc::new(tokio::sync::Notify::new()),
                 ACTIVATION,
                 INTERVAL,
                 crate::beacon::metrics::BeaconMetrics::default(),
-                None,
                 ShareState::Plaintext,
-                None,
+                Wiring::inert(resolver),
             );
 
             let (cer, _step) = DkgCeremony::start(
@@ -5907,17 +6117,14 @@ mod clock_tests {
                 me,
                 sender,
                 receiver,
-                None,
-                None,
                 committee_for,
                 Arc::new(RwLock::new(BTreeMap::new())),
                 Arc::new(tokio::sync::Notify::new()),
                 ACTIVATION,
                 INTERVAL,
                 crate::beacon::metrics::BeaconMetrics::default(),
-                None,
                 ShareState::Plaintext,
-                None,
+                Wiring::standalone(),
             );
             // Inject node-0's fully-recorded ceremony (already sealed in the queue
             // drive ⇒ `me ∈ recorded`, so the derived finalize gate passes), then drive
@@ -6115,17 +6322,14 @@ mod clock_tests {
                 keys[0].clone(),
                 sender,
                 receiver,
-                Some(resolver),
-                None,
                 committee_for,
                 Arc::new(RwLock::new(BTreeMap::new())),
                 Arc::new(tokio::sync::Notify::new()),
                 ACTIVATION,
                 INTERVAL,
                 crate::beacon::metrics::BeaconMetrics::default(),
-                None,
                 ShareState::Plaintext,
-                None,
+                Wiring::inert(resolver),
             );
             actor.insert_ceremony(DETERMINISTIC_BOOTSTRAP_EPOCH, cers.remove(&me0).unwrap());
             let mut arng = StdRng::seed_from_u64(9);
@@ -6462,11 +6666,28 @@ mod clock_tests {
         commonware_p2p::simulated::Receiver<PeerPubkey>,
         NoopResolver,
     > {
+        standalone_actor_wired(oracle, me, committee, share_dir, Wiring::standalone()).await
+    }
+
+    /// [`standalone_actor`] over the edges a test wires itself (`wiring`) — the
+    /// pool it reads confirmations from, the agreement halves it plays, the clock
+    /// it gauges.
+    async fn standalone_actor_wired<R: Resolver<Key = DkgLogKey, PublicKey = PeerPubkey>>(
+        oracle: &Oracle<PeerPubkey, SimContext>,
+        me: Ed25519PrivateKey,
+        committee: Set<PeerPubkey>,
+        share_dir: Option<PathBuf>,
+        wiring: Wiring<R>,
+    ) -> DkgActor<
+        commonware_p2p::simulated::Sender<PeerPubkey, SimContext>,
+        commonware_p2p::simulated::Receiver<PeerPubkey>,
+        R,
+    > {
         let committee_for: CommitteeFor = {
             let set = committee.clone();
             Arc::new(move |_e: u64| Some(set.clone()))
         };
-        standalone_actor_cf(oracle, me, committee_for, share_dir).await
+        standalone_actor_at(oracle, me, committee_for, share_dir, INTERVAL, wiring).await
     }
 
     /// Like [`standalone_actor`] but takes an explicit `committee_for` closure, so a test
@@ -6481,22 +6702,35 @@ mod clock_tests {
         commonware_p2p::simulated::Receiver<PeerPubkey>,
         NoopResolver,
     > {
-        standalone_actor_at(oracle, me, cf, share_dir, INTERVAL).await
+        standalone_actor_at(oracle, me, cf, share_dir, INTERVAL, Wiring::standalone()).await
     }
 
-    /// [`standalone_actor_cf`] over an explicit epoch `interval` — the one knob a
-    /// test of the deal-window GEOMETRY turns (`INTERVAL` is this module's, a
-    /// positive window; `DKG_MARGIN_BLOCKS` is a zero-width one).
-    async fn standalone_actor_at(
+    /// THE ONE standalone construction: [`standalone_actor_cf`] over an explicit
+    /// epoch `interval` — the one knob a test of the deal-window GEOMETRY turns
+    /// (`INTERVAL` is this module's, a positive window; `DKG_MARGIN_BLOCKS` is a
+    /// zero-width one) — and the test's own `wiring`. Two of its edges are set
+    /// HERE from the fixture: `share_dir` when the test names one (a restart test
+    /// re-opens the same directory), and `changed` — THE CEREMONY-START
+    /// DECISION'S ONE INPUT (Д-7) — when `wiring` still carries the fixture's
+    /// unreadable default (`unreadable_bit`; a bit the test set on its wiring
+    /// stands), stood in for by the rule the CONTRACT applies: `changed[e] =
+    /// committee[e] != committee[e−1]`, over this fixture's own committee reader.
+    /// Production reads the bit the contract wrote; a fixture that has no
+    /// contract computes what it would have written from the same committees, so
+    /// every test keeps the intent it had when the decision was a roster
+    /// comparison — and the comparison lives in ONE place instead of at the
+    /// decision.
+    async fn standalone_actor_at<R: Resolver<Key = DkgLogKey, PublicKey = PeerPubkey>>(
         oracle: &Oracle<PeerPubkey, SimContext>,
         me: Ed25519PrivateKey,
         cf: CommitteeFor,
         share_dir: Option<PathBuf>,
         interval: u64,
+        mut wiring: Wiring<R>,
     ) -> DkgActor<
         commonware_p2p::simulated::Sender<PeerPubkey, SimContext>,
         commonware_p2p::simulated::Receiver<PeerPubkey>,
-        NoopResolver,
+        R,
     > {
         let (sender, receiver) = oracle
             .control(me.public_key())
@@ -6506,37 +6740,33 @@ mod clock_tests {
             )
             .await
             .expect("register");
+        if let Some(dir) = share_dir {
+            wiring.share_dir = dir;
+        }
+        // The fixture's default bit only: a bit the test wired itself stands.
+        if Arc::ptr_eq(&wiring.changed, &unreadable_bit()) {
+            wiring.changed = {
+                let reads = cf.clone();
+                Arc::new(move |epoch: u64| {
+                    let prev = epoch.checked_sub(1)?;
+                    Some(reads(epoch)? != reads(prev)?)
+                })
+            };
+        }
         DkgActor::new(
             b"FLUENT_DPOS_V1_clocktest".to_vec(),
             me,
             sender,
             receiver,
-            None,
-            None,
-            cf.clone(),
+            cf,
             Arc::new(RwLock::new(BTreeMap::new())),
             Arc::new(tokio::sync::Notify::new()),
             ACTIVATION,
             interval,
             crate::beacon::metrics::BeaconMetrics::default(),
-            share_dir,
             ShareState::Plaintext,
-            None,
+            wiring,
         )
-        // THE CEREMONY-START DECISION'S ONE INPUT (Д-7), stood in for by the rule the
-        // CONTRACT applies: `changed[e] = committee[e] != committee[e−1]`, over this
-        // fixture's own committee reader. Production reads the bit the contract wrote;
-        // a fixture that has no contract computes what it would have written from the
-        // same committees, so every test keeps the intent it had when the decision was
-        // a roster comparison — and the comparison lives in ONE place instead of at
-        // the decision.
-        .with_changed_bit({
-            let reads = cf.clone();
-            Arc::new(move |epoch: u64| {
-                let prev = epoch.checked_sub(1)?;
-                Some(reads(epoch)? != reads(prev)?)
-            })
-        })
     }
 
     /// The refusals the shared ingress counter holds right now for the BEACON
@@ -6624,11 +6854,17 @@ mod clock_tests {
                     })
                 };
                 let pool = crate::beacon::dkg_agree::ConfirmPool::new(b"FLUENT_TEST_INGRESS");
-                let mut actor =
-                    standalone_actor_cf(&oracle, keys[0].clone(), committee_for.clone(), None)
-                        .await
-                        .with_recorded_logs(Arc::new(RwLock::new(BTreeMap::new())))
-                        .with_share_confirms(pool.clone());
+                let mut wiring = Wiring::standalone();
+                wiring.confirms = pool.clone();
+                let mut actor = standalone_actor_at(
+                    &oracle,
+                    keys[0].clone(),
+                    committee_for.clone(),
+                    None,
+                    INTERVAL,
+                    wiring,
+                )
+                .await;
                 let mut arng = StdRng::seed_from_u64(0x4302);
                 // Epoch 5's first height ⇒ `now` = epoch 5; the actionable window is
                 // [5, 7].
@@ -7058,13 +7294,21 @@ mod clock_tests {
                 })
             };
             let pool = crate::beacon::dkg_agree::ConfirmPool::new(b"FLUENT_TEST_WINDOW");
-            let mut actor = standalone_actor_cf(&oracle, keys[0].clone(), committee_for, None)
-                .await
-                .with_share_confirms(pool.clone());
+            let mut wiring = Wiring::standalone();
+            wiring.confirms = pool.clone();
+            let mut actor = standalone_actor_at(
+                &oracle,
+                keys[0].clone(),
+                committee_for,
+                None,
+                INTERVAL,
+                wiring,
+            )
+            .await;
             // The epochs ahead stay UNDECIDED (their `changed` bit unreadable), which
             // is the start-race's own state: a decided epoch is dealing already or
             // will never deal, and neither buffers.
-            actor.changed = Some(Arc::new(|epoch: u64| (epoch <= 5).then_some(false)));
+            actor.changed = Arc::new(|epoch: u64| (epoch <= 5).then_some(false));
             let mut arng = StdRng::seed_from_u64(0x5304);
             actor.on_height(INTERVAL * 5, &mut arng).await;
             assert_eq!(actor.epoch_of(actor.height_now()), 5);
@@ -7167,17 +7411,18 @@ mod clock_tests {
                 me,
                 sender,
                 receiver,
-                Some(NoopResolver),
-                Some(resolver_rx),
                 committee_for,
                 Arc::new(RwLock::new(BTreeMap::new())),
                 Arc::new(tokio::sync::Notify::new()),
                 ACTIVATION,
                 INTERVAL,
                 crate::beacon::metrics::BeaconMetrics::default(),
-                None,
                 ShareState::Plaintext,
-                None,
+                {
+                    let mut wiring = Wiring::inert(NoopResolver);
+                    wiring.resolver_rx = resolver_rx;
+                    wiring
+                },
             );
             let (height_tx, height_rx) = tokio::sync::mpsc::channel::<u64>(4);
             let run = ctx.with_label("actor").spawn(move |_| async move {
@@ -7230,9 +7475,10 @@ mod clock_tests {
                 .collect();
             let committee = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
             let clock = crate::sync_metrics::PlaneClock::default();
-            let mut actor = standalone_actor(&oracle, keys[0].clone(), committee, None)
-                .await
-                .with_plane_clock(clock.clone());
+            let mut wiring = Wiring::standalone();
+            wiring.plane_clock = clock.clone();
+            let mut actor =
+                standalone_actor_wired(&oracle, keys[0].clone(), committee, None, wiring).await;
             let mut arng = StdRng::seed_from_u64(0x1169);
 
             assert_eq!(clock.snapshot().2, -1, "no half has reported yet");
@@ -7301,10 +7547,12 @@ mod clock_tests {
 
             let pool = ConfirmPool::new(b"FLUENT_TEST_TRIGGER");
             let recorded: DkgLogIndex = Arc::new(RwLock::new(BTreeMap::new()));
-            let mut actor = standalone_actor(&oracle, keys[0].clone(), committee.clone(), None)
-                .await
-                .with_recorded_logs(recorded.clone())
-                .with_share_confirms(pool.clone());
+            let mut wiring = Wiring::standalone();
+            wiring.recorded_dkg_logs = recorded.clone();
+            wiring.confirms = pool.clone();
+            let mut actor =
+                standalone_actor_wired(&oracle, keys[0].clone(), committee.clone(), None, wiring)
+                    .await;
             let record = |width: usize| {
                 recorded
                     .write()
@@ -7404,10 +7652,12 @@ mod clock_tests {
 
             let pool = ConfirmPool::new(b"FLUENT_TEST_ACTOR");
             let recorded: DkgLogIndex = Arc::new(RwLock::new(BTreeMap::new()));
-            let mut actor = standalone_actor(&oracle, keys[0].clone(), committee.clone(), None)
-                .await
-                .with_recorded_logs(recorded.clone())
-                .with_share_confirms(pool.clone());
+            let mut wiring = Wiring::standalone();
+            wiring.recorded_dkg_logs = recorded.clone();
+            wiring.confirms = pool.clone();
+            let mut actor =
+                standalone_actor_wired(&oracle, keys[0].clone(), committee.clone(), None, wiring)
+                    .await;
             // Put the actor's epoch clock where TARGET is inside `[now, now + 2]`:
             // since 4.3 `on_confirm` refuses a confirmation outside that window
             // BEFORE resolving its committee, and this test drives `on_confirm`
@@ -7580,10 +7830,11 @@ mod clock_tests {
                 (0..4u8).map(|i| (i, B256::repeat_byte(0x90 + i))).collect();
 
             let pool = ConfirmPool::new(b"FLUENT_TEST_FIRST_TICK");
-            let mut actor = standalone_actor(&oracle, keys[0].clone(), committee.clone(), None)
-                .await
-                .with_recorded_logs(Arc::new(RwLock::new(BTreeMap::new())))
-                .with_share_confirms(pool.clone());
+            let mut wiring = Wiring::standalone();
+            wiring.confirms = pool.clone();
+            let mut actor =
+                standalone_actor_wired(&oracle, keys[0].clone(), committee.clone(), None, wiring)
+                    .await;
             assert_eq!(
                 actor.last_height, None,
                 "the clock must not have started — that IS the case under test"
@@ -7667,9 +7918,17 @@ mod clock_tests {
             });
 
             let (_pinned_tx, pinned_rx) = tokio::sync::mpsc::channel(4);
-            let mut actor = standalone_actor_cf(&oracle, keys[0].clone(), committee_for, None)
-                .await
-                .with_pinned_requests(pinned_rx);
+            let mut wiring = Wiring::standalone();
+            wiring.pinned_rx = pinned_rx;
+            let mut actor = standalone_actor_at(
+                &oracle,
+                keys[0].clone(),
+                committee_for,
+                None,
+                INTERVAL,
+                wiring,
+            )
+            .await;
 
             // The clock is in `TARGET − 1`: the epoch this actor deals for is `now + 1`.
             actor.last_height = Some(INTERVAL * (TARGET - 1));
@@ -8573,15 +8832,17 @@ mod clock_tests {
 
         let recorded: DkgLogIndex = Arc::new(RwLock::new(BTreeMap::new()));
         let pool = ConfirmPool::new(b"FLUENT_TEST_NONDURABLE");
-        let mut actor = standalone_actor(
+        let mut wiring = Wiring::standalone();
+        wiring.recorded_dkg_logs = recorded.clone();
+        wiring.confirms = pool.clone();
+        let mut actor = standalone_actor_wired(
             &oracle,
             keys[0].clone(),
             committee.clone(),
             Some(good_dir.clone()),
+            wiring,
         )
-        .await
-        .with_recorded_logs(recorded.clone())
-        .with_share_confirms(pool.clone());
+        .await;
         let (cer, _step) = DkgCeremony::start(
             b"FLUENT_DPOS_V1_clocktest",
             DETERMINISTIC_BOOTSTRAP_EPOCH,
@@ -8598,7 +8859,7 @@ mod clock_tests {
             .chain(victims_at.iter().copied());
         for i in order {
             if victims_at.contains(&i) {
-                actor.share_dir = Some(bad_dir.clone());
+                actor.share_dir = bad_dir.clone();
             }
             let (dealer, signed) = &logs[i];
             let key = DkgLogKey {
@@ -8758,7 +9019,7 @@ mod clock_tests {
             let victim = f.sole_victim();
             let seats: Vec<u8> = (0..4).collect();
 
-            f.actor.share_dir = Some(f.good_dir.clone());
+            f.actor.share_dir = f.good_dir.clone();
             f.actor.publish_recorded_logs();
 
             assert!(
@@ -8822,10 +9083,12 @@ mod clock_tests {
 
             let recorded: DkgLogIndex = Arc::new(RwLock::new(BTreeMap::new()));
             let pool = ConfirmPool::new(b"FLUENT_TEST_MINT_EDGE");
-            let mut actor = standalone_actor(&oracle, keys[0].clone(), committee.clone(), None)
-                .await
-                .with_recorded_logs(recorded.clone())
-                .with_share_confirms(pool.clone());
+            let mut wiring = Wiring::standalone();
+            wiring.recorded_dkg_logs = recorded.clone();
+            wiring.confirms = pool.clone();
+            let mut actor =
+                standalone_actor_wired(&oracle, keys[0].clone(), committee.clone(), None, wiring)
+                    .await;
             let (cer, _step) = DkgCeremony::start(
                 b"FLUENT_DPOS_V1_clocktest",
                 TARGET,
@@ -9659,17 +9922,14 @@ mod clock_tests {
                 me,
                 sender,
                 receiver,
-                Some(resolver),
-                None,
                 committee_for,
                 Arc::new(RwLock::new(BTreeMap::new())),
                 Arc::new(tokio::sync::Notify::new()),
                 ACTIVATION,
                 INTERVAL,
                 crate::beacon::metrics::BeaconMetrics::default(),
-                None,
                 ShareState::Plaintext,
-                None,
+                Wiring::inert(resolver),
             );
             // A demote-heal already in flight for epoch 2, still wanting `missing`'s
             // pinned body.
@@ -9792,11 +10052,11 @@ mod clock_tests {
                 standalone_actor(&oracle, key0.clone(), committee.clone(), Some(dir.clone())).await;
             // Mock artifact reader: the agreed artifact's payload for epoch 2 (a change
             // epoch), None elsewhere — what `recover(2)` reads on the first tick.
-            actor.outcome_at = Some(artifact_reader(
+            actor.outcome_at = artifact_reader(
                 2,
                 pinned_canon.iter().map(|(i, h)| (*i, *h)).collect(),
                 &outcome_bytes,
-            ));
+            );
             let mut arng = StdRng::seed_from_u64(9);
 
             // now == 2 (height = epoch_start(2)). `recover(2)`: journal present, artifact
@@ -9929,12 +10189,12 @@ mod clock_tests {
             // indistinguishable from a carry-forward epoch, which is exactly why the
             // ask has to be cheap rather than conditional.
             let outcome_at: AgreedOutcomeAt = Arc::new(|_epoch: u64| None);
-            actor.outcome_at = Some(outcome_at);
+            actor.outcome_at = outcome_at;
             let asked: Arc<std::sync::Mutex<Vec<u64>>> = Arc::default();
-            actor.pull_artifact = Some({
+            actor.pull_artifact = {
                 let asked = asked.clone();
                 Arc::new(move |epoch: u64| asked.lock().expect("asked").push(epoch))
-            });
+            };
 
             let mut arng = StdRng::seed_from_u64(9);
             actor.on_height(BOUNDARY, &mut arng).await; // now = 2
@@ -10059,12 +10319,12 @@ mod clock_tests {
                 actor.store.write().expect("store").insert(epoch, share);
             }
             // The production artifact reader, verbatim from `beacon::build`.
-            actor.outcome_at = Some(store_reader(&artifacts));
+            actor.outcome_at = store_reader(&artifacts);
             let asked: Arc<std::sync::Mutex<Vec<u64>>> = Arc::default();
-            actor.pull_artifact = Some({
+            actor.pull_artifact = {
                 let asked = asked.clone();
                 Arc::new(move |epoch: u64| asked.lock().expect("asked").push(epoch))
-            });
+            };
 
             // THE STATE, stated before anything is driven — and the second half is
             // what makes the rest non-vacuous: the key is a projection of the
@@ -10222,28 +10482,29 @@ mod clock_tests {
                 keys[0].clone(),
                 sender,
                 receiver,
-                Some(resolver),
-                None,
                 committee_for,
                 Arc::new(RwLock::new(BTreeMap::new())),
                 Arc::new(tokio::sync::Notify::new()),
                 ACTIVATION,
                 INTERVAL,
                 crate::beacon::metrics::BeaconMetrics::default(),
-                Some(dir.clone()),
                 ShareState::Plaintext,
-                None,
+                {
+                    let mut wiring = Wiring::inert(resolver);
+                    wiring.share_dir = dir.clone();
+                    wiring
+                },
             );
-            actor.outcome_at = Some(artifact_reader(2, vec![(0, missing_hash)], &outcome_bytes));
+            actor.outcome_at = artifact_reader(2, vec![(0, missing_hash)], &outcome_bytes);
             // Every epoch mints, so every in-window epoch this member holds no share
             // for is decided (a stable committee would be carry-forward, which asks
             // for nothing) — what keeps the absence below from passing vacuously.
-            actor.changed = Some(Arc::new(|_epoch: u64| Some(true)));
+            actor.changed = Arc::new(|_epoch: u64| Some(true));
             let asked: Arc<std::sync::Mutex<Vec<u64>>> = Arc::default();
-            actor.pull_artifact = Some({
+            actor.pull_artifact = {
                 let asked = asked.clone();
                 Arc::new(move |epoch: u64| asked.lock().expect("asked").push(epoch))
-            });
+            };
             // A heal already in flight for epoch 2, still short one pinned body.
             actor.enter(
                 2,
@@ -10408,28 +10669,29 @@ mod clock_tests {
                 key0.clone(),
                 sender,
                 receiver,
-                Some(resolver),
-                None,
                 committee_for,
                 Arc::new(RwLock::new(BTreeMap::new())),
                 Arc::new(tokio::sync::Notify::new()),
                 ACTIVATION,
                 INTERVAL,
                 crate::beacon::metrics::BeaconMetrics::default(),
-                Some(dir.clone()),
                 ShareState::Plaintext,
-                None,
+                {
+                    let mut wiring = Wiring::inert(resolver);
+                    wiring.share_dir = dir.clone();
+                    wiring
+                },
             );
-            actor.outcome_at = Some(artifact_reader(
+            actor.outcome_at = artifact_reader(
                 2,
                 pinned_canon.iter().map(|(i, h)| (*i, *h)).collect(),
                 &outcome_bytes,
-            ));
+            );
             let asked: Arc<std::sync::Mutex<Vec<u64>>> = Arc::default();
-            actor.pull_artifact = Some({
+            actor.pull_artifact = {
                 let asked = asked.clone();
                 Arc::new(move |epoch: u64| asked.lock().expect("asked").push(epoch))
-            });
+            };
 
             let mut arng = StdRng::seed_from_u64(9);
             // now = 2: `recover(2)` replays the journal against the held artifact and
@@ -10581,6 +10843,7 @@ mod clock_tests {
         let recorded: DkgLogIndex = Arc::new(RwLock::new(BTreeMap::new()));
         let mut sinks = Vec::new();
         let mut victim_adopted = None;
+        let mut victim_confirms = None;
         for (i, k) in keys.iter().enumerate() {
             let store = if i == 0 {
                 victim_store.clone()
@@ -10588,7 +10851,7 @@ mod clock_tests {
                 Arc::new(RwLock::new(BTreeMap::new()))
             };
             let dir = if i == 0 { victim_dir.clone() } else { None };
-            let (sink, adopted) = spawn_dealer_at(
+            let (sink, adopted, confirms) = spawn_dealer_at(
                 &ctx,
                 &oracle,
                 k.clone(),
@@ -10603,16 +10866,31 @@ mod clock_tests {
             .await;
             if i == 0 {
                 victim_adopted = Some(adopted);
+                victim_confirms = Some(confirms);
             }
             sinks.push(sink);
         }
         let victim_adopted = victim_adopted.expect("node 0 was spawned");
+        let victim_confirms = victim_confirms.expect("node 0 was spawned");
         for h in 0..=(BOUNDARY - 1) {
             for s in &sinks {
                 let _ = s.send(h).await;
             }
             ctx.sleep(Duration::from_millis(50)).await;
         }
+        // The fixture's confirmation traffic is REAL (`Wiring::standalone` wires a
+        // pool and the shared index, so `Confirmations::mint` signs and sends at
+        // the quorum): pinned as a fact, so the fixtures' behaviour is not a silent
+        // property of the wiring — a PEER's `ShareConfirm` for the bootstrap epoch
+        // sits in node-0's pool, counted through `on_confirm`.
+        let me0_seat = committee.position(&me0).expect("node 0 seats") as u8;
+        assert!(
+            victim_confirms
+                .covering(DETERMINISTIC_BOOTSTRAP_EPOCH, &[])
+                .iter()
+                .any(|c| c.idx != me0_seat),
+            "a peer's ShareConfirm reached node-0's pool over the sim network"
+        );
         // The SHARE says it finalized; the OUTPUT says whether the peers revealed this
         // node's point. The two used to be one store entry; after П-3 the share store
         // holds the secret and the ceremony's `Output` is read through the actor's
@@ -10901,11 +11179,6 @@ mod clock_tests {
             actor.share_notify = share_notify.clone();
             // Only a certified set may mint, so an epoch whose artifact has not
             // landed waits instead of finalizing over whatever this node holds.
-            let (agree_tx, _agree_rx) = tokio::sync::mpsc::channel(4);
-            let (_artifacts_tx, artifacts_rx) = tokio::sync::mpsc::channel(4);
-            actor = actor
-                .with_recorded_logs(Arc::new(RwLock::new(BTreeMap::new())))
-                .with_agreement_plane(agree_tx, artifacts_rx);
             actor.insert_ceremony(DETERMINISTIC_BOOTSTRAP_EPOCH, resumed.ceremony);
 
             // The last block of epoch E: every body held, and still nothing to
@@ -11003,11 +11276,6 @@ mod clock_tests {
             let store: CeremonyStore = Arc::new(RwLock::new(BTreeMap::new()));
             let mut actor = standalone_actor(&oracle, key0, committee.clone(), None).await;
             actor.store = store.clone();
-            let (agree_tx, _agree_rx) = tokio::sync::mpsc::channel(4);
-            let (_artifacts_tx, artifacts_rx) = tokio::sync::mpsc::channel(4);
-            actor = actor
-                .with_recorded_logs(Arc::new(RwLock::new(BTreeMap::new())))
-                .with_agreement_plane(agree_tx, artifacts_rx);
             actor.insert_ceremony(DETERMINISTIC_BOOTSTRAP_EPOCH, resumed.ceremony);
 
             let mut rng = StdRng::seed_from_u64(12);
@@ -11135,17 +11403,14 @@ mod clock_tests {
                 key0,
                 sender,
                 receiver,
-                Some(resolver),
-                None,
                 committee_for,
                 store.clone(),
                 Arc::new(tokio::sync::Notify::new()),
                 ACTIVATION,
                 INTERVAL,
                 crate::beacon::metrics::BeaconMetrics::default(),
-                None,
                 ShareState::Plaintext,
-                None,
+                Wiring::inert(resolver),
             );
             actor.insert_ceremony(DETERMINISTIC_BOOTSTRAP_EPOCH, resumed.ceremony);
             // The chain is PAST the target's boundary — where the height-driven
@@ -11285,10 +11550,11 @@ mod clock_tests {
             let committee = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
             oracle.manager().track(0, committee.clone()).await;
             let (requests_tx, mut requests_rx) = tokio::sync::mpsc::channel(4);
-            let (_artifacts_tx, artifacts_rx) = tokio::sync::mpsc::channel(1);
-            let mut actor = standalone_actor(&oracle, keys[0].clone(), committee.clone(), None)
-                .await
-                .with_agreement_plane(requests_tx, artifacts_rx);
+            let mut wiring = Wiring::standalone();
+            wiring.agreement_tx = requests_tx;
+            let mut actor =
+                standalone_actor_wired(&oracle, keys[0].clone(), committee.clone(), None, wiring)
+                    .await;
             let (cer, _step) = DkgCeremony::start(
                 b"FLUENT_DPOS_V1_clocktest",
                 DETERMINISTIC_BOOTSTRAP_EPOCH,
@@ -11320,33 +11586,30 @@ mod clock_tests {
     /// A member of `committee[E+1]` adopts the agreed set, waits on the one pinned
     /// body its fetch has not delivered yet, and goes down. Its own instance wrote
     /// the artifact to the durable store on the edge that produced it, so the value
-    /// is on this node's disk — but the only producer this actor's artifact arm ever
-    /// had is a LIVE instance, and no peer will start a second one (their launchers
-    /// already hold `E+1` in `started`). So the missing body arriving after the
-    /// restart completes nothing: the set to finalize over went down with the
-    /// process. [`restart_replay`] is what puts it back, through the same arm.
+    /// is on this node's disk — and no peer will start a second instance (their
+    /// launchers already hold `E+1` in `started`). THE STORE IS THE OWNER of the
+    /// fact and the actor READS it: `recover(E)` on the restart's first tick resumes
+    /// the journal AND takes the stored artifact, so the epoch stands `Agreed` with
+    /// the ceremony holding every body but one; the missing body arriving then
+    /// finalizes it. There is no replay of the store into the actor's channel any
+    /// more (5.3-А2 deleted `restart_replay`): this read is the whole of it, and
+    /// `reconcile_with_store` re-reads on every later tick. Falsifier: `recover`
+    /// ignoring the stored artifact (the epoch resumes `Sealed`, the body completes
+    /// nothing, the store stays empty).
     #[test]
-    fn a_restart_replays_the_stored_artifact_back_into_the_actor() {
+    fn a_restart_reads_the_stored_artifact_back_into_the_actor() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
-            let oracle: Oracle<PeerPubkey, SimContext> = {
-                let (network, oracle) = Network::new(
-                    ctx.with_label("sim_net"),
-                    SimConfig {
-                        max_size: 1024 * 1024,
-                        disconnect_on_block: false,
-                        tracked_peer_sets: NZUsize!(4),
-                    },
-                );
-                network.start();
-                oracle
-            };
+            let oracle = sim_oracle(&ctx);
             let (committee, key0, journal) = node0_pre_seal_journal_full_sealed(97);
+            // The same fixture again (deterministic), for the key the instance
+            // derived over the FULL pinned set before the crash.
+            let (_c2, _k2, full_journal) = node0_pre_seal_journal_full_sealed(97);
             oracle.manager().track(0, committee.clone()).await;
 
             // The on-disk state a crash leaves behind: the ceremony journal minus the
             // one peer log the recovery fetch had not delivered, and no share file.
-            let dir = fresh_share_dir("artifact-replay");
+            let dir = fresh_share_dir("artifact-read-back");
             std::fs::create_dir_all(&dir).expect("mkdir");
             let mut withheld: Option<DealerReveal> = None;
             for record in journal {
@@ -11365,41 +11628,69 @@ mod clock_tests {
             }
             let withheld = withheld.expect("the sealed journal carries peer logs");
 
+            // The pinned set the instance certified before the crash — every seat,
+            // the withheld body at the missing dealer's — and the key over it, the
+            // way the instance's delivery edge filed it into the durable store.
+            let (pinned, missing_dealer, group_key) = {
+                let full = DkgCeremony::resume(
+                    b"FLUENT_DPOS_V1_clocktest",
+                    DETERMINISTIC_BOOTSTRAP_EPOCH,
+                    committee.clone(),
+                    key0.clone(),
+                    full_journal,
+                    false,
+                    &BTreeMap::new(),
+                )
+                .expect("resume")
+                .ceremony;
+                let withheld_hash = log_hash(&withheld);
+                let mut missing: Option<PeerPubkey> = None;
+                let pinned: Vec<(u8, B256)> = committee
+                    .iter()
+                    .enumerate()
+                    .map(|(i, pk)| {
+                        let hash = full.signed_log_hash(pk).expect("every log is held");
+                        if hash == withheld_hash {
+                            missing = Some(pk.clone());
+                        }
+                        (i as u8, hash)
+                    })
+                    .collect();
+                let mut rng = StdRng::seed_from_u64(0xB007);
+                let key = key_over(&full, &committee, &pinned, &mut rng);
+                (pinned, missing.expect("one peer log was withheld"), key)
+            };
+            let artifacts = crate::beacon::artifact::ArtifactStore::new();
+            assert!(artifacts
+                .insert(
+                    DETERMINISTIC_BOOTSTRAP_EPOCH,
+                    agreed_artifact_keyed(DETERMINISTIC_BOOTSTRAP_EPOCH, pinned, group_key)
+                )
+                .is_ok());
+
+            // The restart proper, over the directory and the store.
             let ceremony_store: CeremonyStore = Arc::new(RwLock::new(BTreeMap::new()));
+            let mut wiring = Wiring::standalone();
+            wiring.outcome_at = store_reader(&artifacts);
             let mut actor =
-                standalone_actor(&oracle, key0, committee.clone(), Some(dir.clone())).await;
+                standalone_actor_wired(&oracle, key0, committee.clone(), Some(dir.clone()), wiring)
+                    .await;
             actor.store = ceremony_store.clone();
-            // Only a certified set may mint, so the restarted node waits on a set it
-            // no longer has instead of settling one of its own.
-            let (agree_tx, _agree_rx) = tokio::sync::mpsc::channel(4);
-            let (_artifacts_tx, artifacts_rx) = tokio::sync::mpsc::channel(4);
-            actor = actor
-                .with_recorded_logs(Arc::new(RwLock::new(BTreeMap::new())))
-                .with_agreement_plane(agree_tx, artifacts_rx);
-
-            // The restart proper: the first height tick resumes the ceremony off the
-            // journal, still inside epoch E (so nothing has swept it).
-            let mut rng = StdRng::seed_from_u64(0xB007);
+            // The first height tick resumes the ceremony off the journal, still
+            // inside epoch E (so nothing has swept it), and READS the artifact.
+            let mut rng = StdRng::seed_from_u64(0xB008);
             actor.on_height(BOUNDARY - 1, &mut rng).await;
-            let resumed = actor
-                .ceremony(DETERMINISTIC_BOOTSTRAP_EPOCH)
-                .expect("the journal resumes the ceremony");
-            let mut missing_dealer: Option<PeerPubkey> = None;
-            let pinned: Vec<(u8, B256)> = committee
-                .iter()
-                .enumerate()
-                .map(|(i, pk)| match resumed.signed_log_hash(pk) {
-                    Some(hash) => (i as u8, hash),
-                    None => {
-                        missing_dealer = Some(pk.clone());
-                        (i as u8, log_hash(&withheld))
-                    }
-                })
-                .collect();
-            let missing_dealer = missing_dealer.expect("one peer log was withheld");
+            assert_eq!(
+                actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH),
+                Some("agreed"),
+                "the stored artifact is the pinned set on the restart's first tick"
+            );
+            assert!(
+                ceremony_store.read().map(|s| s.is_empty()).unwrap_or(false),
+                "one pinned body is still missing, so the finalize waits"
+            );
 
-            // The awaited body lands. Every pinned body is now held — and it mints
-            // nothing, because the pinned set itself did not survive the restart.
+            // The awaited body lands: every pinned body is held, the epoch keys.
             let key = DkgLogKey {
                 epoch: DETERMINISTIC_BOOTSTRAP_EPOCH,
                 dealer: missing_dealer,
@@ -11409,68 +11700,17 @@ mod clock_tests {
                 actor.ingest_log(&key, withheld.encode(), &mut rng).await,
                 "the withheld log is a valid one for the dealer it was fetched from"
             );
-            assert_ne!(
-                actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH),
-                Some("agreed"),
-                "nothing but a live instance ever reaches the artifact arm — the wedge"
-            );
-            assert!(
-                ceremony_store.read().map(|s| s.is_empty()).unwrap_or(false),
-                "with the agreed set gone the finalize waits, holding every body it names"
-            );
-
-            // The artifact this node's own instance certified and stored before the
-            // crash — the key it carries is the one the instance derived over the
-            // pinned set. `insert` is what the instance's delivery edge does.
-            let group_key = key_over(
-                actor
-                    .ceremony(DETERMINISTIC_BOOTSTRAP_EPOCH)
-                    .expect("ceremony"),
-                &committee,
-                &pinned,
-                &mut rng,
-            );
-            let artifacts = crate::beacon::artifact::ArtifactStore::new();
-            assert!(artifacts
-                .insert(
-                    DETERMINISTIC_BOOTSTRAP_EPOCH,
-                    agreed_artifact_keyed(DETERMINISTIC_BOOTSTRAP_EPOCH, pinned, group_key)
-                )
-                .is_ok());
-
-            // The fix: the value on this node's own disk, pushed back through the arm
-            // a live instance feeds.
-            let held: BTreeSet<u64> = ceremony_store
-                .read()
-                .map(|s| s.keys().copied().collect())
-                .unwrap_or_default();
-            let replay = crate::beacon::artifact::restart_replay(&artifacts, &dir, &held);
-            assert_eq!(
-                replay.len(),
-                1,
-                "an epoch with a stored artifact, a resumable journal and no share"
-            );
-            for artifact in replay {
-                actor.on_artifact(artifact, &mut rng).await;
-            }
+            assert_eq!(actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH), Some("keyed"));
             assert!(
                 ceremony_store
                     .read()
                     .map(|s| s.contains_key(&DETERMINISTIC_BOOTSTRAP_EPOCH))
                     .unwrap_or(false),
-                "the replayed artifact is the pinned set; the existing rails do the rest"
+                "the read-back artifact is the pinned set; the existing rails do the rest"
             );
-
-            // And it is a one-shot: the share it produced is what takes the epoch back
-            // out of the selection, so a later restart does not re-adopt a spent set.
-            let held: BTreeSet<u64> = ceremony_store
-                .read()
-                .map(|s| s.keys().copied().collect())
-                .unwrap_or_default();
-            assert!(
-                crate::beacon::artifact::restart_replay(&artifacts, &dir, &held).is_empty(),
-                "a held share takes its epoch out of the replay"
-            );
+            // And the per-tick re-read of the same value changes nothing.
+            actor.on_height(BOUNDARY, &mut rng).await;
+            assert_eq!(actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH), Some("keyed"));
             let _ = std::fs::remove_dir_all(&dir);
         });
     }
@@ -11560,10 +11800,10 @@ mod clock_tests {
             let mut actor =
                 restarted_actor(&oracle, key0, committee, dir.clone(), SEAL_DEADLINE).await;
             let asked: Arc<std::sync::Mutex<Vec<u64>>> = Arc::default();
-            actor.pull_artifact = Some({
+            actor.pull_artifact = {
                 let asked = asked.clone();
                 Arc::new(move |epoch: u64| asked.lock().expect("asked").push(epoch))
-            });
+            };
             let mut out = Vec::new();
             assert!(!actor.decide(DETERMINISTIC_BOOTSTRAP_EPOCH, &mut out).await);
             assert_eq!(actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH), Some("sat_out"));
@@ -11751,11 +11991,11 @@ mod clock_tests {
             // `now` = 4, so every epoch below is in `decide`'s window `[2, 5]`.
             actor.last_height = Some(INTERVAL * 4);
             // Epoch 3 carries forward; 2 and 4 mint.
-            actor.changed = Some(Arc::new(|e: u64| match e {
+            actor.changed = Arc::new(|e: u64| match e {
                 2 | 4 => Some(true),
                 3 => Some(false),
                 _ => None,
-            }));
+            });
             let mut out = Vec::new();
 
             // (share held, artifact held) ⇒ Keyed.
@@ -11764,7 +12004,7 @@ mod clock_tests {
                 .write()
                 .expect("store")
                 .insert(2, shares[&keys[0].public_key()].clone());
-            actor.outcome_at = Some(artifact_reader(2, logs.clone(), &outcome_bytes));
+            actor.outcome_at = artifact_reader(2, logs.clone(), &outcome_bytes);
             actor.decide(2, &mut out).await;
             assert_eq!(actor.phase(2), Some("keyed"));
 
@@ -12087,10 +12327,10 @@ mod clock_tests {
             actor.last_height = Some(SEAL_DEADLINE + 1);
             actor.insert_ceremony(DETERMINISTIC_BOOTSTRAP_EPOCH, resumed.ceremony);
             let asked: Arc<std::sync::Mutex<Vec<u64>>> = Arc::default();
-            actor.pull_artifact = Some({
+            actor.pull_artifact = {
                 let asked = asked.clone();
                 Arc::new(move |epoch: u64| asked.lock().expect("asked").push(epoch))
-            });
+            };
             assert_eq!(actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH), Some("sealed"));
 
             actor.on_body_lost(DETERMINISTIC_BOOTSTRAP_EPOCH);
@@ -12263,11 +12503,11 @@ mod clock_tests {
                 .insert(DETERMINISTIC_BOOTSTRAP_EPOCH, shares_a[&me].clone());
             let logs: Vec<(u8, B256)> =
                 (0..4u8).map(|i| (i, B256::repeat_byte(0x70 + i))).collect();
-            actor.outcome_at = Some(artifact_reader(
+            actor.outcome_at = artifact_reader(
                 DETERMINISTIC_BOOTSTRAP_EPOCH,
                 logs,
                 &crate::beacon::outcome::encode_outcome(&outcome_b),
-            ));
+            );
             let mut out = Vec::new();
             assert!(!actor.decide(DETERMINISTIC_BOOTSTRAP_EPOCH, &mut out).await);
             assert_eq!(
@@ -12442,7 +12682,7 @@ mod clock_tests {
             actor.last_height = Some(SEAL_DEADLINE + 1);
             actor.insert_ceremony(DETERMINISTIC_BOOTSTRAP_EPOCH, resumed.ceremony);
             let store = crate::beacon::artifact::ArtifactStore::new();
-            actor.outcome_at = Some(store_reader(&store));
+            actor.outcome_at = store_reader(&store);
             let mut arng = StdRng::seed_from_u64(9);
             let logs = pinned_logs_of(&actor, DETERMINISTIC_BOOTSTRAP_EPOCH, &committee);
             let key = key_over(
@@ -12513,7 +12753,7 @@ mod clock_tests {
             actor.last_height = Some(SEAL_DEADLINE + 1);
             actor.insert_ceremony(DETERMINISTIC_BOOTSTRAP_EPOCH, resumed.ceremony);
             let store = crate::beacon::artifact::ArtifactStore::new();
-            actor.outcome_at = Some(store_reader(&store));
+            actor.outcome_at = store_reader(&store);
             let mut arng = StdRng::seed_from_u64(9);
             let a = artifact_over(&actor, DETERMINISTIC_BOOTSTRAP_EPOCH, &committee, &mut arng);
             assert!(store
@@ -12528,7 +12768,7 @@ mod clock_tests {
             assert_eq!(actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH), Some("conflict"));
             assert!(matches!(
                 actor.state(DETERMINISTIC_BOOTSTRAP_EPOCH),
-                Some(EpochState::Conflict { held, second })
+                Some(EpochState::Conflict { held, second, .. })
                     if *held == crate::beacon::artifact::value_digest(&a.0)
                         && *second == crate::beacon::artifact::value_digest(&b.0)
             ));
@@ -12561,7 +12801,7 @@ mod clock_tests {
             actor.last_height = Some(SEAL_DEADLINE + 1);
             actor.insert_ceremony(DETERMINISTIC_BOOTSTRAP_EPOCH, resumed.ceremony);
             let store = crate::beacon::artifact::ArtifactStore::new();
-            actor.outcome_at = Some(store_reader(&store));
+            actor.outcome_at = store_reader(&store);
             let mut arng = StdRng::seed_from_u64(9);
             let logs = pinned_logs_of(&actor, DETERMINISTIC_BOOTSTRAP_EPOCH, &committee);
             let key = key_over(
@@ -12631,7 +12871,7 @@ mod clock_tests {
             actor.insert_ceremony(DETERMINISTIC_BOOTSTRAP_EPOCH, resumed.ceremony);
             let store =
                 crate::beacon::artifact::ArtifactStore::new().with_conflict_dir(dir.clone());
-            actor.outcome_at = Some(store_reader(&store));
+            actor.outcome_at = store_reader(&store);
             let mut arng = StdRng::seed_from_u64(9);
             let logs = pinned_logs_of(&actor, DETERMINISTIC_BOOTSTRAP_EPOCH, &committee);
             let key = key_over(
@@ -12693,7 +12933,7 @@ mod clock_tests {
                 restarted.store.write().expect("store").insert(epoch, share);
             }
             assert!(!restarted.store.read().expect("store").is_empty());
-            restarted.outcome_at = Some(store_reader(&store));
+            restarted.outcome_at = store_reader(&store);
             restarted.last_height = Some(BOUNDARY);
             let mut out = Vec::new();
             assert!(
@@ -12704,7 +12944,7 @@ mod clock_tests {
             assert!(
                 matches!(
                     restarted.state(DETERMINISTIC_BOOTSTRAP_EPOCH),
-                    Some(EpochState::Conflict { held, second }) if *held == vd_a && *second == vd_b
+                    Some(EpochState::Conflict { held, second, .. }) if *held == vd_a && *second == vd_b
                 ),
                 "restart before the tick: Conflict, not Keyed off the reloaded share \
                  (got {:?})",
@@ -12795,7 +13035,7 @@ mod clock_tests {
             );
             assert!(matches!(
                 restarted.state(DETERMINISTIC_BOOTSTRAP_EPOCH),
-                Some(EpochState::Conflict { held, second })
+                Some(EpochState::Conflict { held, second, .. })
                     if *held == vd_first && *second == vd_second
             ));
             assert!(
@@ -12863,11 +13103,11 @@ mod clock_tests {
 
             let mut actor =
                 standalone_actor(&oracle, key0.clone(), committee.clone(), Some(dir.clone())).await;
-            actor.outcome_at = Some(artifact_reader(
+            actor.outcome_at = artifact_reader(
                 2,
                 pinned_canon.iter().map(|(i, h)| (*i, *h)).collect(),
                 &outcome_bytes,
-            ));
+            );
             actor.last_height = Some(BOUNDARY);
             // The heal, over a journal that holds every pinned body: `want` is
             // empty, the recompute is due on the tick.
@@ -12949,7 +13189,7 @@ mod clock_tests {
             assert!(!actor.decide(DETERMINISTIC_BOOTSTRAP_EPOCH, &mut out).await);
             assert!(matches!(
                 actor.state(DETERMINISTIC_BOOTSTRAP_EPOCH),
-                Some(EpochState::Conflict { held, second })
+                Some(EpochState::Conflict { held, second, .. })
                     if *held == B256::ZERO && *second == B256::ZERO
             ));
             assert!(actor
@@ -13163,6 +13403,7 @@ mod clock_tests {
                 committee_for,
                 Some(dir.clone()),
                 DKG_MARGIN_BLOCKS,
+                Wiring::standalone(),
             )
             .await;
             let deadline = DKG_MARGIN_BLOCKS * DETERMINISTIC_BOOTSTRAP_EPOCH - DKG_MARGIN_BLOCKS;
@@ -13292,7 +13533,7 @@ mod clock_tests {
             oracle.manager().track(0, committee.clone()).await;
             let mut actor = standalone_actor(&oracle, key0, committee, None).await;
             // A committee that changes at every epoch, so every epoch mints.
-            actor.changed = Some(Arc::new(|_e: u64| Some(true)));
+            actor.changed = Arc::new(|_e: u64| Some(true));
             actor.last_height = Some(BOUNDARY); // now = 2
             let logs: Vec<(u8, B256)> =
                 (0..4u8).map(|i| (i, B256::repeat_byte(0x70 + i))).collect();
@@ -13313,6 +13554,712 @@ mod clock_tests {
                 Some("dealing"),
                 "now + 1 is the target this actor deals for"
             );
+        });
+    }
+    // ---- 5.3-А2: the wiring and the tails ---------------------------------------
+
+    /// F-01: the verdict's marker is fsync'd BEFORE the artifact's write-behind
+    /// lands, so a death in between restarts with the marker and no artifact in
+    /// the store. `recover` reads the marker first (`Conflict`) and, the store
+    /// holding nothing, the terminal ACQUIRES: it pulls on the tick like every
+    /// keyless terminal (`needs_artifact`), and the store's artifact — the pull
+    /// seam files it, the tick reads it back — becomes its `key`; the signing
+    /// stays stopped (no share, no phase change). Falsifier (M2): `Conflict{key:
+    /// None}` out of `needs_artifact()` — nothing is asked and the node never
+    /// holds `PK_E` for the epoch.
+    #[test]
+    fn a_conflict_restarted_without_the_artifact_acquires_a_key_and_no_share() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let oracle = sim_oracle(&ctx);
+            let mut rng = StdRng::seed_from_u64(0xF001);
+            let keys: Vec<Ed25519PrivateKey> = (0..4)
+                .map(|_| Ed25519PrivateKey::random(&mut rng))
+                .collect();
+            let committee = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+            oracle.manager().track(0, committee.clone()).await;
+            let (a, b) = (B256::repeat_byte(0xA1), B256::repeat_byte(0xB2));
+
+            // The crash state: the marker on disk, the store empty.
+            let dir = fresh_share_dir("conflict-keyless");
+            std::fs::create_dir_all(&dir).expect("mkdir");
+            share_state::persist_conflict(&dir, DETERMINISTIC_BOOTSTRAP_EPOCH, &a, &b)
+                .expect("marker");
+            let artifacts = crate::beacon::artifact::ArtifactStore::new();
+            let asked: Arc<std::sync::Mutex<Vec<u64>>> = Arc::default();
+            let mut wiring = Wiring::standalone();
+            wiring.outcome_at = store_reader(&artifacts);
+            wiring.pull_artifact = {
+                let asked = asked.clone();
+                Arc::new(move |epoch: u64| asked.lock().expect("asked").push(epoch))
+            };
+            let mut actor = standalone_actor_wired(
+                &oracle,
+                keys[0].clone(),
+                committee.clone(),
+                Some(dir.clone()),
+                wiring,
+            )
+            .await;
+
+            let mut arng = StdRng::seed_from_u64(9);
+            actor.on_height(BOUNDARY, &mut arng).await;
+            assert!(matches!(
+                actor.state(DETERMINISTIC_BOOTSTRAP_EPOCH),
+                Some(EpochState::Conflict { held, second, key: None })
+                    if *held == a && *second == b
+            ));
+            assert_eq!(
+                *asked.lock().expect("asked"),
+                vec![DETERMINISTIC_BOOTSTRAP_EPOCH],
+                "a keyless Conflict asks peers for the epoch's artifact"
+            );
+            let stalls = actor.stalls(DETERMINISTIC_BOOTSTRAP_EPOCH);
+            assert!(stalls.contains(&StallReason::Conflict));
+            assert!(stalls.contains(&StallReason::NoArtifact));
+
+            // The pull seam files a value into the store (the hand-off to the
+            // actor's channel may be lost); the next tick reads it back.
+            let artifact = agreed_artifact(
+                DETERMINISTIC_BOOTSTRAP_EPOCH,
+                vec![(0, B256::repeat_byte(0x11)), (1, B256::repeat_byte(0x22))],
+            );
+            let vd = crate::beacon::artifact::value_digest(&artifact.0);
+            assert!(artifacts
+                .insert(DETERMINISTIC_BOOTSTRAP_EPOCH, artifact)
+                .is_ok());
+            actor.on_height(BOUNDARY + 1, &mut arng).await;
+            assert!(matches!(
+                actor.state(DETERMINISTIC_BOOTSTRAP_EPOCH),
+                Some(EpochState::Conflict { held, second, key: Some(key) })
+                    if *held == a && *second == b && *key == vd
+            ));
+            assert_eq!(
+                asked.lock().expect("asked").len(),
+                1,
+                "keyed: nothing more is asked"
+            );
+            let stalls = actor.stalls(DETERMINISTIC_BOOTSTRAP_EPOCH);
+            assert!(
+                stalls.contains(&StallReason::Conflict),
+                "the verdict stands"
+            );
+            assert!(
+                !stalls.contains(&StallReason::NoArtifact),
+                "the artifact latch leaves with the key"
+            );
+            assert!(
+                actor.store.read().expect("store").is_empty()
+                    && share_state::load_all(&dir, &ShareState::Plaintext).is_empty(),
+                "no share appears: the signing stays stopped"
+            );
+            let _ = std::fs::remove_dir_all(&dir);
+        });
+    }
+
+    /// E-10: the local ban of a proven equivocator (5.3-Б) covers its DEALINGS,
+    /// not only its logs. With the evidence pair held for dealer 1, a
+    /// `Commitment` from dealer 1 is refused at the consumer and counted
+    /// (`equivocator`); the same frame from an honest dealer is not. Without the
+    /// ban a player that has not acked yet takes the dealing of the dealer's
+    /// second polynomial and its share lies off the pinned one. Falsifier (M3):
+    /// the ban removed — the counter stays at 0.
+    #[test]
+    fn a_dealing_from_a_proven_equivocator_is_refused_and_counted() {
+        let recorder = metrics_util::debugging::DebuggingRecorder::new();
+        let snap = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            let runtime = deterministic::Runner::default();
+            runtime.start(|ctx| async move {
+                let oracle = sim_oracle(&ctx);
+                let (committee, key0, journal) = node0_pre_seal_journal_full_sealed(57);
+                oracle.manager().track(0, committee.clone()).await;
+                let keys: Vec<Ed25519PrivateKey> = {
+                    let mut rng = StdRng::seed_from_u64(57);
+                    (0..4)
+                        .map(|_| Ed25519PrivateKey::random(&mut rng))
+                        .collect()
+                };
+                assert_eq!(keys[0].public_key(), key0.public_key());
+                let d1 = keys[1].public_key();
+                let info = info_for_test(&committee);
+                let log1 = journal
+                    .iter()
+                    .find_map(|r| match r {
+                        JournalRecord::PeerLog(l)
+                            if l.clone().check(&info).is_some_and(|(pk, _)| pk == d1) =>
+                        {
+                            Some((**l).clone())
+                        }
+                        _ => None,
+                    })
+                    .expect("dealer 1's log is journaled");
+                let log2: DealerReveal = {
+                    use commonware_cryptography::bls12381::dkg::Dealer;
+                    let (d, _, _) = Dealer::<_, Ed25519PrivateKey>::start::<N3f1>(
+                        StdRng::seed_from_u64(0x5EC2),
+                        info.clone(),
+                        keys[1].clone(),
+                        None,
+                    )
+                    .expect("second dealer");
+                    d.finalize::<N3f1>()
+                };
+                assert_ne!(log_hash(&log1), log_hash(&log2));
+                let dir = fresh_share_dir("equivocator-dealing");
+                std::fs::create_dir_all(&dir).expect("mkdir");
+                for r in journal {
+                    share_state::append_journal(&dir, 2, &r, &ShareState::Plaintext)
+                        .expect("append");
+                }
+                share_state::append_journal(
+                    &dir,
+                    2,
+                    &JournalRecord::DealerEquivocation(Box::new(log1), Box::new(log2)),
+                    &ShareState::Plaintext,
+                )
+                .expect("append evidence");
+                let mut actor =
+                    standalone_actor(&oracle, key0, committee.clone(), Some(dir.clone())).await;
+                let mut arng = StdRng::seed_from_u64(9);
+                actor.on_height(SEAL_DEADLINE + 1, &mut arng).await;
+                // Self-verification of the fixture: the evidence is held for d1.
+                assert!(actor
+                    .evidence(DETERMINISTIC_BOOTSTRAP_EPOCH)
+                    .contains_key(&d1));
+                let _ = beacon_refusals(&snap, "equivocator");
+
+                let ns = b"FLUENT_DPOS_V1_clocktest";
+                let commitment = |dealer: &Ed25519PrivateKey| -> Bytes {
+                    let (_cer, step) = DkgCeremony::start(ns, 2, committee.clone(), dealer.clone())
+                        .expect("start");
+                    let body = step
+                        .outgoing
+                        .into_iter()
+                        .find_map(|o| match o.msg.body {
+                            b @ DkgBody::Commitment(_) => Some(b),
+                            _ => None,
+                        })
+                        .expect("a commitment dealing");
+                    BeaconMessage::Dkg(
+                        DkgMsg {
+                            ceremony_epoch: 2,
+                            body,
+                        }
+                        .encode(),
+                    )
+                    .encode()
+                };
+                actor
+                    .on_message(d1.clone(), &commitment(&keys[1]), &mut arng)
+                    .await;
+                assert_eq!(
+                    beacon_refusals(&snap, "equivocator"),
+                    1,
+                    "the proven equivocator's dealing is refused and counted"
+                );
+                actor
+                    .on_message(keys[2].public_key(), &commitment(&keys[2]), &mut arng)
+                    .await;
+                assert_eq!(
+                    beacon_refusals(&snap, "equivocator"),
+                    0,
+                    "an honest dealer's frame is not"
+                );
+                let _ = std::fs::remove_dir_all(&dir);
+            });
+        });
+    }
+
+    /// E-10 at the start-race DRAIN: the ban holds where a BUFFERED dealing is
+    /// consumed, not only on the live dispatch. A restart over a journal that
+    /// holds `DealerEquivocation` for dealer 1: dealer 1's `Commitment` (and an
+    /// honest dealer's) arrives BEFORE the first tick — no slot yet, so both are
+    /// buffered; the first tick resumes the ceremony `Dealing`, restores the
+    /// evidence into the slot (`enter`) and drains the buffer — and the
+    /// equivocator's dealing is refused THERE (`equivocator`, once), the honest
+    /// dealer's is not. Falsifier (M1): the drain admits on the seat alone — the
+    /// counter stays at 0 and the equivocator's dealing is replayed into the
+    /// ceremony.
+    #[test]
+    fn a_buffered_dealing_from_a_proven_equivocator_is_refused_at_the_drain() {
+        let recorder = metrics_util::debugging::DebuggingRecorder::new();
+        let snap = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            let runtime = deterministic::Runner::default();
+            runtime.start(|ctx| async move {
+                let oracle = sim_oracle(&ctx);
+                // Pre-seal journal (peers sealed, node-0 did not): a resume below
+                // the seal deadline is `Dealing`, the one phase with a drain.
+                let (committee, key0, journal) = node0_pre_seal_journal(58);
+                oracle.manager().track(0, committee.clone()).await;
+                let keys: Vec<Ed25519PrivateKey> = {
+                    let mut rng = StdRng::seed_from_u64(58);
+                    (0..4)
+                        .map(|_| Ed25519PrivateKey::random(&mut rng))
+                        .collect()
+                };
+                assert_eq!(keys[0].public_key(), key0.public_key());
+                let d1 = keys[1].public_key();
+                let info = info_for_test(&committee);
+                let log1 = journal
+                    .iter()
+                    .find_map(|r| match r {
+                        JournalRecord::PeerLog(l)
+                            if l.clone().check(&info).is_some_and(|(pk, _)| pk == d1) =>
+                        {
+                            Some((**l).clone())
+                        }
+                        _ => None,
+                    })
+                    .expect("dealer 1's log is journaled");
+                let log2: DealerReveal = {
+                    use commonware_cryptography::bls12381::dkg::Dealer;
+                    let (d, _, _) = Dealer::<_, Ed25519PrivateKey>::start::<N3f1>(
+                        StdRng::seed_from_u64(0x5EC3),
+                        info.clone(),
+                        keys[1].clone(),
+                        None,
+                    )
+                    .expect("second dealer");
+                    d.finalize::<N3f1>()
+                };
+                assert_ne!(log_hash(&log1), log_hash(&log2));
+                let dir = fresh_share_dir("equivocator-drain");
+                std::fs::create_dir_all(&dir).expect("mkdir");
+                for r in journal {
+                    share_state::append_journal(&dir, 2, &r, &ShareState::Plaintext)
+                        .expect("append");
+                }
+                share_state::append_journal(
+                    &dir,
+                    2,
+                    &JournalRecord::DealerEquivocation(Box::new(log1), Box::new(log2)),
+                    &ShareState::Plaintext,
+                )
+                .expect("append evidence");
+                let mut actor =
+                    standalone_actor(&oracle, key0, committee.clone(), Some(dir.clone())).await;
+                let mut arng = StdRng::seed_from_u64(9);
+                let _ = beacon_refusals(&snap, "equivocator");
+                let _ = beacon_refusals(&snap, "no_seat");
+
+                let ns = b"FLUENT_DPOS_V1_clocktest";
+                let commitment = |dealer: &Ed25519PrivateKey| -> Bytes {
+                    let (_cer, step) = DkgCeremony::start(ns, 2, committee.clone(), dealer.clone())
+                        .expect("start");
+                    let body = step
+                        .outgoing
+                        .into_iter()
+                        .find_map(|o| match o.msg.body {
+                            b @ DkgBody::Commitment(_) => Some(b),
+                            _ => None,
+                        })
+                        .expect("a commitment dealing");
+                    BeaconMessage::Dkg(
+                        DkgMsg {
+                            ceremony_epoch: 2,
+                            body,
+                        }
+                        .encode(),
+                    )
+                    .encode()
+                };
+                // THE BUFFER: no tick yet ⇒ no slot ⇒ both dealings are buffered;
+                // the evidence is on disk, not in a slot, so nothing is refused here.
+                actor
+                    .on_message(d1.clone(), &commitment(&keys[1]), &mut arng)
+                    .await;
+                actor
+                    .on_message(keys[2].public_key(), &commitment(&keys[2]), &mut arng)
+                    .await;
+                assert_eq!(
+                    actor
+                        .pending
+                        .get(&DETERMINISTIC_BOOTSTRAP_EPOCH)
+                        .map(|m| m.len()),
+                    Some(2),
+                    "both dealings raced ahead of the start and are buffered"
+                );
+                assert_eq!(beacon_refusals(&snap, "equivocator"), 0);
+
+                // THE DRAIN: the first tick resumes `Dealing`, the evidence comes
+                // back with the ceremony, the buffer drains into it.
+                actor.on_height(SEAL_DEADLINE - 1, &mut arng).await;
+                assert_eq!(actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH), Some("dealing"));
+                // Self-verification of the fixture: the evidence is held for d1.
+                assert!(actor
+                    .evidence(DETERMINISTIC_BOOTSTRAP_EPOCH)
+                    .contains_key(&d1));
+                assert!(
+                    !actor.pending.contains_key(&DETERMINISTIC_BOOTSTRAP_EPOCH),
+                    "the buffer was drained"
+                );
+                assert_eq!(
+                    beacon_refusals(&snap, "equivocator"),
+                    1,
+                    "the proven equivocator's buffered dealing is refused at the drain, once — \
+                     the honest dealer's is not"
+                );
+                assert_eq!(
+                    beacon_refusals(&snap, "no_seat"),
+                    0,
+                    "both senders sit in the committee"
+                );
+                let _ = std::fs::remove_dir_all(&dir);
+            });
+        });
+    }
+
+    /// F-02: a body-lost signal that arrives while this node is still DEALING
+    /// (its clock lags the instance) is kept in the slot and applied at the seal:
+    /// the sealed ceremony goes straight to `Acquiring(ArtifactForCeremony)`,
+    /// `Stalled{BodyLost}`, and the pull starts on that tick — not at the
+    /// boundary. Falsifier: the signal dropped on `Dealing` — the epoch seals
+    /// into `Sealed` and nothing is asked.
+    #[test]
+    fn a_body_lost_signal_while_dealing_is_applied_at_the_seal() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let oracle = sim_oracle(&ctx);
+            let mut rng = StdRng::seed_from_u64(0xF002);
+            let keys: Vec<Ed25519PrivateKey> = (0..4)
+                .map(|_| Ed25519PrivateKey::random(&mut rng))
+                .collect();
+            let committee = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+            oracle.manager().track(0, committee.clone()).await;
+            let asked: Arc<std::sync::Mutex<Vec<u64>>> = Arc::default();
+            let mut wiring = Wiring::standalone();
+            wiring.pull_artifact = {
+                let asked = asked.clone();
+                Arc::new(move |epoch: u64| asked.lock().expect("asked").push(epoch))
+            };
+            let mut actor =
+                standalone_actor_wired(&oracle, keys[0].clone(), committee, None, wiring).await;
+            let mut arng = StdRng::seed_from_u64(9);
+            // Into the deal window: the epoch-2 ceremony starts and is still dealing.
+            actor.on_height(SEAL_DEADLINE - 1, &mut arng).await;
+            assert_eq!(actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH), Some("dealing"));
+
+            actor.on_body_lost(DETERMINISTIC_BOOTSTRAP_EPOCH);
+            assert_eq!(
+                actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH),
+                Some("dealing"),
+                "nothing to acquire for before the seal"
+            );
+            assert!(asked.lock().expect("asked").is_empty());
+
+            // The seal: applied here.
+            actor.on_height(SEAL_DEADLINE, &mut arng).await;
+            assert_eq!(
+                actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH),
+                Some("acquiring_artifact_for_ceremony")
+            );
+            assert!(actor
+                .stalls(DETERMINISTIC_BOOTSTRAP_EPOCH)
+                .contains(&StallReason::BodyLost));
+            assert_eq!(
+                *asked.lock().expect("asked"),
+                vec![DETERMINISTIC_BOOTSTRAP_EPOCH],
+                "asked on the seal tick, before the boundary"
+            );
+        });
+    }
+
+    /// F-03: `BodyMissing` and `QuorumMissing` are two latches of `Agreed`, each
+    /// on its own condition. An agreed set with a body this node lacks is
+    /// `Stalled{BodyMissing}` and nothing is said about the quorum yet (the probe
+    /// cannot read it over missing bodies); once that body lands and the set is
+    /// still below the quorum, the epoch is `Stalled{QuorumMissing}` and the
+    /// `BodyMissing` latch has LEFT — one gauge step, not two. Falsifier: the
+    /// `BodyMissing` latch kept past `all_held` (both held), or `QuorumMissing`
+    /// raised over a set whose bodies are not all here (both held at the first
+    /// tick).
+    #[test]
+    fn the_body_missing_latch_leaves_when_every_pinned_body_is_held() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let oracle = sim_oracle(&ctx);
+            let (committee, key0, journal) = node0_pre_seal_journal_full_sealed(131);
+            oracle.manager().track(0, committee.clone()).await;
+            let me0 = key0.public_key();
+            // Own log only in the ceremony; ONE peer log kept aside to land later.
+            let mut withheld: Option<DealerReveal> = None;
+            let own_only: Vec<JournalRecord> = journal
+                .into_iter()
+                .filter_map(|r| match r {
+                    JournalRecord::PeerLog(l) => {
+                        if withheld.is_none() {
+                            withheld = Some(*l);
+                        }
+                        None
+                    }
+                    r => Some(r),
+                })
+                .collect();
+            let withheld = withheld.expect("a peer log");
+            let resumed = DkgCeremony::resume(
+                b"FLUENT_DPOS_V1_clocktest",
+                DETERMINISTIC_BOOTSTRAP_EPOCH,
+                committee.clone(),
+                key0.clone(),
+                own_only,
+                false,
+                &BTreeMap::new(),
+            )
+            .expect("resume");
+            let mut actor = standalone_actor(&oracle, key0, committee.clone(), None).await;
+            actor.last_height = Some(SEAL_DEADLINE + 1);
+            actor.insert_ceremony(DETERMINISTIC_BOOTSTRAP_EPOCH, resumed.ceremony);
+            let info = info_for_test(&committee);
+            let (dealer, _) = withheld.clone().check(&info).expect("a valid peer log");
+            let seat =
+                |pk: &PeerPubkey| committee.iter().position(|p| p == pk).expect("seat") as u8;
+            let own_hash = actor
+                .ceremony(DETERMINISTIC_BOOTSTRAP_EPOCH)
+                .expect("ceremony")
+                .signed_log_hash(&me0)
+                .expect("own log");
+            let mut arng = StdRng::seed_from_u64(9);
+            // Two bodies pinned (below the 3-dealer quorum), one of them not held.
+            actor
+                .on_artifact(
+                    agreed_artifact(
+                        DETERMINISTIC_BOOTSTRAP_EPOCH,
+                        vec![(seat(&me0), own_hash), (seat(&dealer), log_hash(&withheld))],
+                    ),
+                    &mut arng,
+                )
+                .await;
+            assert_eq!(actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH), Some("agreed"));
+            assert_eq!(
+                actor.stalls(DETERMINISTIC_BOOTSTRAP_EPOCH),
+                BTreeSet::from([StallReason::BodyMissing])
+            );
+            assert_eq!(actor.metrics.stalled_gauge(StallReason::BodyMissing), 1);
+
+            // The body lands: every pinned body held, the quorum still not.
+            let key = DkgLogKey {
+                epoch: DETERMINISTIC_BOOTSTRAP_EPOCH,
+                dealer,
+                hash: log_hash(&withheld),
+            };
+            assert!(actor.ingest_log(&key, withheld.encode(), &mut arng).await);
+            assert_eq!(actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH), Some("agreed"));
+            assert_eq!(
+                actor.stalls(DETERMINISTIC_BOOTSTRAP_EPOCH),
+                BTreeSet::from([StallReason::QuorumMissing]),
+                "the condition that passed leaves; the one that holds stands"
+            );
+            assert_eq!(actor.metrics.stalled_gauge(StallReason::BodyMissing), 0);
+            assert_eq!(actor.metrics.stalled_gauge(StallReason::QuorumMissing), 1);
+        });
+    }
+
+    /// DB-08: a `ReceivedDealing` whose journal write failed is not lost with the
+    /// withheld ack — it is retried from the record on the next publish edge, and
+    /// lands once the directory is back, so a restart's resume rebuilds
+    /// `Player.view` from the journal. Falsifier: the failed record dropped —
+    /// the journal never carries the peer's dealing.
+    #[test]
+    fn a_dealing_whose_journal_write_failed_is_retried_on_the_next_edge() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let oracle = sim_oracle(&ctx);
+            let mut rng = StdRng::seed_from_u64(0xD808);
+            let keys: Vec<Ed25519PrivateKey> = (0..4)
+                .map(|_| Ed25519PrivateKey::random(&mut rng))
+                .collect();
+            let committee = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+            oracle.manager().track(0, committee.clone()).await;
+            let good_dir = fresh_share_dir("dealing-retry-good");
+            let bad_dir = fresh_share_dir("dealing-retry-bad");
+            std::fs::write(&bad_dir, b"not a dir").expect("write file");
+            let mut actor = standalone_actor(
+                &oracle,
+                keys[0].clone(),
+                committee.clone(),
+                Some(good_dir.clone()),
+            )
+            .await;
+            let mut arng = StdRng::seed_from_u64(9);
+            actor.on_height(SEAL_DEADLINE - 1, &mut arng).await;
+            assert_eq!(actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH), Some("dealing"));
+
+            // Dealer 1's dealing for this node — the commitment and the private
+            // share addressed to `me` — against the broken directory.
+            let ns = b"FLUENT_DPOS_V1_clocktest";
+            let me0 = keys[0].public_key();
+            let d1 = keys[1].public_key();
+            let (_cer, step) = DkgCeremony::start(
+                ns,
+                DETERMINISTIC_BOOTSTRAP_EPOCH,
+                committee.clone(),
+                keys[1].clone(),
+            )
+            .expect("start");
+            let frames: Vec<Bytes> = step
+                .outgoing
+                .into_iter()
+                .filter(|o| match (&o.target, &o.msg.body) {
+                    (Target::Broadcast, DkgBody::Commitment(_)) => true,
+                    (Target::Direct(to), DkgBody::Share(_)) => *to == me0,
+                    _ => false,
+                })
+                .map(|o| BeaconMessage::Dkg(o.msg.encode()).encode())
+                .collect();
+            assert_eq!(frames.len(), 2, "the commitment and my share");
+            actor.share_dir = bad_dir.clone();
+            for frame in &frames {
+                actor.on_message(d1.clone(), frame, &mut arng).await;
+            }
+            assert_eq!(
+                actor
+                    .nondurable_dealings
+                    .get(&DETERMINISTIC_BOOTSTRAP_EPOCH)
+                    .map(Vec::len),
+                Some(1),
+                "the failed ReceivedDealing is queued for a retry"
+            );
+            assert!(
+                !journaled_dealings(&good_dir).contains(&d1),
+                "and it really is absent from the journal"
+            );
+
+            // The directory is back; the next tick's publish edge retries it.
+            actor.share_dir = good_dir.clone();
+            actor.on_height(SEAL_DEADLINE - 1, &mut arng).await;
+            assert!(
+                actor.nondurable_dealings.is_empty(),
+                "the retry landed and the queue is drained"
+            );
+            assert!(
+                journaled_dealings(&good_dir).contains(&d1),
+                "the peer's dealing is in the journal a restart replays"
+            );
+            let _ = std::fs::remove_dir_all(&good_dir);
+            let _ = std::fs::remove_file(&bad_dir);
+        });
+    }
+
+    /// The dealers whose `ReceivedDealing` the bootstrap epoch's journal in `dir`
+    /// carries — what a restart's resume would rebuild `Player.view` from.
+    fn journaled_dealings(dir: &std::path::Path) -> Vec<PeerPubkey> {
+        let max = NonZeroU32::new(8).expect("nz");
+        match share_state::load_journal(
+            dir,
+            DETERMINISTIC_BOOTSTRAP_EPOCH,
+            &ShareState::Plaintext,
+            max,
+        ) {
+            JournalLoad::Present(records) => records
+                .into_iter()
+                .filter_map(|r| match r {
+                    JournalRecord::ReceivedDealing(d, _, _) => Some(d),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// DB-08 at the start-race DRAIN: a buffered dealing whose `ReceivedDealing`
+    /// did not land when the drain journaled it is queued for the retry, exactly
+    /// as the live dispatch queues one (`journal_or_defer`, the one form). Fresh
+    /// start over a broken directory: dealer 1's dealing (the commitment and my
+    /// share) is buffered before the first tick; the tick starts the ceremony and
+    /// drains — the write fails and the record is queued; the directory is back,
+    /// the next edge lands it. Falsifier (M2): the drain only withholds the ack —
+    /// the queue stays empty and the journal never carries the peer's dealing.
+    #[test]
+    fn a_buffered_dealing_whose_drain_write_failed_is_retried_on_the_next_edge() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let oracle = sim_oracle(&ctx);
+            let mut rng = StdRng::seed_from_u64(0xD809);
+            let keys: Vec<Ed25519PrivateKey> = (0..4)
+                .map(|_| Ed25519PrivateKey::random(&mut rng))
+                .collect();
+            let committee = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+            oracle.manager().track(0, committee.clone()).await;
+            let good_dir = fresh_share_dir("drain-retry-good");
+            let bad_dir = fresh_share_dir("drain-retry-bad");
+            std::fs::write(&bad_dir, b"not a dir").expect("write file");
+            let mut actor = standalone_actor(
+                &oracle,
+                keys[0].clone(),
+                committee.clone(),
+                Some(good_dir.clone()),
+            )
+            .await;
+            let mut arng = StdRng::seed_from_u64(9);
+
+            let ns = b"FLUENT_DPOS_V1_clocktest";
+            let me0 = keys[0].public_key();
+            let d1 = keys[1].public_key();
+            let (_cer, step) = DkgCeremony::start(
+                ns,
+                DETERMINISTIC_BOOTSTRAP_EPOCH,
+                committee.clone(),
+                keys[1].clone(),
+            )
+            .expect("start");
+            let frames: Vec<Bytes> = step
+                .outgoing
+                .into_iter()
+                .filter(|o| match (&o.target, &o.msg.body) {
+                    (Target::Broadcast, DkgBody::Commitment(_)) => true,
+                    (Target::Direct(to), DkgBody::Share(_)) => *to == me0,
+                    _ => false,
+                })
+                .map(|o| BeaconMessage::Dkg(o.msg.encode()).encode())
+                .collect();
+            assert_eq!(frames.len(), 2, "the commitment and my share");
+            // THE BUFFER: no tick yet ⇒ no slot ⇒ the dealing is buffered whole.
+            for frame in &frames {
+                actor.on_message(d1.clone(), frame, &mut arng).await;
+            }
+            assert_eq!(
+                actor
+                    .pending
+                    .get(&DETERMINISTIC_BOOTSTRAP_EPOCH)
+                    .map(|m| m.len()),
+                Some(1),
+                "dealer 1's dealing raced ahead of the start and is buffered"
+            );
+
+            // THE DRAIN, against the broken directory: a fresh start (no journal
+            // to read there) and the replay of the buffered dealing, whose record
+            // does not land.
+            actor.share_dir = bad_dir.clone();
+            actor.on_height(SEAL_DEADLINE - 1, &mut arng).await;
+            assert_eq!(actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH), Some("dealing"));
+            assert!(
+                !actor.pending.contains_key(&DETERMINISTIC_BOOTSTRAP_EPOCH),
+                "the buffer was drained"
+            );
+            assert_eq!(
+                actor
+                    .nondurable_dealings
+                    .get(&DETERMINISTIC_BOOTSTRAP_EPOCH)
+                    .map(Vec::len),
+                Some(1),
+                "the drained dealing's failed ReceivedDealing is queued for a retry"
+            );
+
+            // The directory is back; the next tick's publish edge retries it.
+            actor.share_dir = good_dir.clone();
+            actor.on_height(SEAL_DEADLINE - 1, &mut arng).await;
+            assert!(
+                actor.nondurable_dealings.is_empty(),
+                "the retry landed and the queue is drained"
+            );
+            assert!(
+                journaled_dealings(&good_dir).contains(&d1),
+                "the peer's dealing is in the journal a restart replays"
+            );
+            let _ = std::fs::remove_dir_all(&good_dir);
+            let _ = std::fs::remove_file(&bad_dir);
         });
     }
 }

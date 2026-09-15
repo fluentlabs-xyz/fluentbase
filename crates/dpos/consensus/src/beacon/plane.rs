@@ -34,11 +34,11 @@ use crate::{
     beacon::{
         actor::{
             AgreedOutcomeAt, CeremonyStore, CommitteeFor, DkgActor, DkgLogIndex, PinnedRequest,
-            PullArtifact, StoredArtifact,
+            PullArtifact, StoredArtifact, Wiring,
         },
         artifact::{
-            self, restart_replay, AcquireArtifact, AcquireMint, ArtifactBridge, ArtifactPull,
-            ArtifactStore, ChangedAt, CommitteeSource, KeyIndex, PullAnswer,
+            self, AcquireArtifact, AcquireMint, ArtifactBridge, ArtifactPull, ArtifactStore,
+            ChangedAt, CommitteeSource, KeyIndex, PullAnswer,
         },
         dkg_agree::{AgreedArtifact, ConfirmPool},
         dkg_engine::{
@@ -759,16 +759,11 @@ where
     // (`share_state`), so the artifact journal's own rehydration above is the whole
     // of what a restart recovers, and an epoch it lost is acquired from peers
     // (`DkgActor::drive_acquisition`). The liveness trade is named in
-    // `share_state`'s module doc.
-    // Pick the artifacts this restart owes the `DkgActor`. Nothing else reads the
-    // store back INTO the actor, so a member that went down between adopting an
-    // artifact and finalizing over it would otherwise wait for a re-agreement its
-    // peers have already marked started.
-    let held_shares: BTreeSet<u64> = ceremony_store
-        .read()
-        .map(|shares| shares.keys().copied().collect())
-        .unwrap_or_default();
-    let replay = restart_replay(&artifact_store, &share_dir, &held_shares);
+    // `share_state`'s module doc. Nor is there a replay of the store INTO the
+    // actor: the store is the owner of the epoch's artifact and the actor READS
+    // it — on the tick an epoch is decided (`DkgActor::recover`) and on every
+    // tick after (`reconcile_with_store`) — so a member that went down between
+    // adopting an artifact and finalizing over it is served by that read.
 
     let ArtifactSeam {
         resolver_handle,
@@ -856,31 +851,37 @@ where
                     return;
                 }
             };
+            // Every edge of the actor, in one place and none of them optional.
             let actor = DkgActor::new(
                 dkg_namespace,
                 peer_keypair,
                 sender,
                 receiver,
-                Some(logs),
-                Some(log_resolver_rx),
                 committee_for,
                 ceremony_store,
                 share_notify,
                 activation,
                 interval,
                 actor_metrics,
-                Some(share_dir),
                 share_state,
-                Some(outcome_at),
-            )
-            .with_changed_bit(changed.clone())
-            .with_recorded_logs(recorded)
-            .with_share_confirms(confirms)
-            .with_pinned_requests(pinned_rx)
-            .with_agreement_plane(agreement_request_tx, artifacts_rx)
-            .with_body_lost(body_lost_rx)
-            .with_artifact_pull(pull_artifact)
-            .with_plane_clock(plane_clock);
+                Wiring {
+                    resolver: logs,
+                    resolver_rx: log_resolver_rx,
+                    changed: changed.clone(),
+                    share_dir,
+                    plane_clock,
+                    outcome_at,
+                    pull_artifact,
+                    recorded_dkg_logs: recorded,
+                    confirms,
+                    pinned_rx,
+                    agreement_tx: agreement_request_tx,
+                    artifacts_rx,
+                    body_lost_rx,
+                    #[cfg(test)]
+                    fixture: None,
+                },
+            );
             actor.run(heights, c).await
         })
     };
@@ -915,7 +916,7 @@ where
             bodies: bodies_mux,
         },
         agreement_request_rx,
-        agreed_tx.clone(),
+        agreed_tx,
         agreement_intake_tx,
     );
 
@@ -924,25 +925,6 @@ where
     // had created the key store; the store is created above now, so the two ends
     // meet here and the arm-later dance is gone.
     let write_back_handle = spawn_write_back(context, agreed_rx, adopt_tx);
-    // The replay is pushed AFTER the hop is spawned and not before, because this
-    // hop is the channel's only drain: a send issued first would deadlock on a
-    // store holding more records than the channel's depth.
-    if !replay.is_empty() {
-        info!(
-            epochs = replay.len(),
-            "beacon: replaying locally-stored agreement artifacts into the write-back"
-        );
-    }
-    for artifact in replay {
-        let epoch = artifact.0.target_epoch;
-        if agreed_tx.send(artifact).await.is_err() {
-            warn!(
-                epoch,
-                "beacon: the agreement write-back is gone; the artifact replay stopped"
-            );
-            break;
-        }
-    }
 
     // Everything randomness-shaped, behind ONE handle. This is the only place
     // where all of its inputs exist at once — the ceremony store, the frozen
