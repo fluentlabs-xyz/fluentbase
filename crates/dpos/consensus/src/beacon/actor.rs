@@ -803,6 +803,19 @@ pub struct Wiring<R> {
     /// after the seal deadline resumes PLAYER-ONLY and never seals, and it still
     /// has to run the agreement for the epoch. `dealing_closed()` covers both.
     pub agreement_tx: tokio::sync::mpsc::Sender<u64>,
+    /// The actor's epoch clock as the agreement launcher sees it: the epoch the
+    /// merged height feeder is in (`epoch_of(height)`, AFTER the monotone clamp)
+    /// — the launcher's CUTOFF, below which an instance is aborted and the
+    /// journal-partition band is swept (`dkg_engine::prune_agreements`).
+    /// Published from every height tick but only ON CHANGE (`send_if_modified`):
+    /// the epoch moves once per interval, and that edge is this clock's whole
+    /// wake set. A per-tick publish would be a per-block edge carrying per-epoch
+    /// work (§13 rule 45) — and, on the deterministic stand, a per-block extra
+    /// task in the ready-queue shuffle that reshapes the whole run's random
+    /// trajectory. The fork-safety latch is NOT carried here: the launcher
+    /// waits on the latch's own edge (`SafetyHalt::engaged_edge`), so this actor
+    /// never reads it.
+    pub epoch_clock: tokio::sync::watch::Sender<u64>,
     /// Agreed artifacts arriving from the plane — this node's own instance, or a
     /// peer's artifact that already verified against `committee[epoch]`.
     ///
@@ -978,6 +991,8 @@ pub struct DkgActor<Se, Re, R> {
     pinned_rx: tokio::sync::mpsc::Receiver<PinnedRequest>,
     /// [`Wiring::agreement_tx`].
     agreement_tx: tokio::sync::mpsc::Sender<u64>,
+    /// [`Wiring::epoch_clock`].
+    epoch_clock: tokio::sync::watch::Sender<u64>,
     /// [`Wiring::artifacts_rx`].
     artifacts_rx: tokio::sync::mpsc::Receiver<AgreedArtifact>,
     /// [`Wiring::body_lost_rx`].
@@ -1038,6 +1053,7 @@ where
             confirms,
             pinned_rx,
             agreement_tx,
+            epoch_clock,
             artifacts_rx,
             body_lost_rx,
             #[cfg(test)]
@@ -1094,6 +1110,7 @@ where
             confirmations,
             pinned_rx,
             agreement_tx,
+            epoch_clock,
             artifacts_rx,
             body_lost_rx,
             #[cfg(test)]
@@ -2115,8 +2132,9 @@ where
     /// the chain enters its target still asks this actor for the bodies
     /// (`derive_pinned`), and a swept ceremony answers `Unavailable` forever, which
     /// parks every `verify` and leaves `build_proposal` with nothing to pin. That
-    /// agreement's instance is aborted when the epoch manager enters `target + 1`
-    /// (`prune_agreements`), a full epoch inside this window. A HALTED ordering chain
+    /// agreement's instance is aborted when this actor's own epoch clock enters
+    /// `target + 1` (`dkg_engine::prune_agreements`, on the clock published at the
+    /// end of this tick), a full epoch inside this window. A HALTED ordering chain
     /// cannot sweep anything at all — the caller only runs on a finalized height.
     ///
     /// The journal + the serve store (passive, self-verifying data) ride the same
@@ -2318,6 +2336,22 @@ where
         //     is finalizable on the boundary tick is completed first, never evicted out
         //     from under it. See [`Self::sweep_epoch_state`] for the window's rationale.
         self.sweep_epoch_state(now);
+
+        // 2c. Tell the agreement launcher where the clock stands — its cutoff.
+        //     On CHANGE only (see [`Wiring::epoch_clock`]). The announcement (2a')
+        //     and this ride two channels, so the launcher sees them in either
+        //     order: a target at or above `now` is one this cutoff never touches,
+        //     and an instance for a target the clock has already passed (a
+        //     player-only resume of an old epoch) is retired on the launcher's
+        //     next clock edge — as the epoch manager's next prune used to.
+        self.epoch_clock.send_if_modified(|v| {
+            if *v != now {
+                *v = now;
+                true
+            } else {
+                false
+            }
+        });
 
         // 3. The NEXT epoch's ceremony was started in step 0 (`decide_window` →
         //    `recover(now + 1)`), retried on EVERY tick while undecided (not just
@@ -4314,6 +4348,8 @@ mod clock_tests {
             let (artifacts_tx, artifacts_rx) = tokio::sync::mpsc::channel::<AgreedArtifact>(1);
             let (body_lost_tx, body_lost_rx) = tokio::sync::mpsc::channel::<u64>(1);
             let (agreement_tx, agreement_rx) = tokio::sync::mpsc::channel::<u64>(1);
+            // No receiver: a watch with none is a publish nobody reads, never an error.
+            let (epoch_clock, _) = tokio::sync::watch::channel(0u64);
             let scratch = fresh_share_dir("standalone");
             Self {
                 resolver,
@@ -4327,6 +4363,7 @@ mod clock_tests {
                 confirms: ConfirmPool::new(b"FLUENT_TEST_STANDALONE"),
                 pinned_rx,
                 agreement_tx,
+                epoch_clock,
                 artifacts_rx,
                 body_lost_rx,
                 fixture: Some(Fixture {
@@ -7879,12 +7916,67 @@ mod clock_tests {
         });
     }
 
+    /// The clock the launcher prunes on, as this actor publishes it: an EDGE on
+    /// the epoch, and nothing per tick.
+    ///
+    /// Per tick would be a per-block edge carrying per-epoch work (§13 rule 45),
+    /// and one extra runnable task per height on the deterministic stand
+    /// reshuffles every later random draw of the run. So `send_if_modified`
+    /// publishes exactly when the epoch changes: a healthy epoch costs the
+    /// launcher one wake-up. (A halt is NOT this clock's business — the launcher
+    /// waits on the latch's own edge.)
+    ///
+    /// Falsifier: a second tick inside the epoch waking the receiver (per-tick
+    /// publish); the first tick of an epoch not waking it (the epoch edge is
+    /// lost).
+    #[test]
+    fn the_agreement_clock_moves_on_the_epoch_edge_and_never_per_tick() {
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let oracle = sim_oracle(&ctx);
+            let mut rng = StdRng::seed_from_u64(0x5C);
+            let keys: Vec<Ed25519PrivateKey> = (0..4)
+                .map(|_| Ed25519PrivateKey::random(&mut rng))
+                .collect();
+            let committee = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+            oracle.manager().track(0, committee.clone()).await;
+
+            let (clock_tx, mut clock_rx) = tokio::sync::watch::channel(0u64);
+            let mut wiring = Wiring::standalone();
+            wiring.epoch_clock = clock_tx;
+            let mut actor =
+                standalone_actor_wired(&oracle, keys[0].clone(), committee, None, wiring).await;
+            let mut arng = StdRng::seed_from_u64(0x5D);
+
+            // First tick, epoch 2: the epoch edge.
+            actor.on_height(INTERVAL * 2, &mut arng).await;
+            assert!(clock_rx.has_changed().expect("sender alive"));
+            assert_eq!(*clock_rx.borrow_and_update(), 2);
+            // Two more ticks inside epoch 2: no edge.
+            actor.on_height(INTERVAL * 2 + 1, &mut arng).await;
+            actor.on_height(INTERVAL * 2 + 2, &mut arng).await;
+            assert!(
+                !clock_rx.has_changed().expect("sender alive"),
+                "a tick inside the epoch must not wake the launcher"
+            );
+            // The next epoch: the edge.
+            actor.on_height(INTERVAL * 3, &mut arng).await;
+            assert!(clock_rx.has_changed().expect("sender alive"));
+            assert_eq!(*clock_rx.borrow_and_update(), 3);
+            actor.on_height(INTERVAL * 3 + 1, &mut arng).await;
+            assert!(
+                !clock_rx.has_changed().expect("sender alive"),
+                "a tick inside the epoch must not wake the launcher"
+            );
+        });
+    }
+
     /// The agreement plane keeps agreeing after the chain has entered the target
     /// epoch, so the ceremony it derives against outlives that boundary: a swept
     /// ceremony turns `derive_pinned` into a permanent `Unavailable`, which parks
     /// every `verify` and leaves `build_proposal` with nothing to pin. The instance
-    /// is aborted when the epoch manager enters `target + 1`
-    /// (`epoch_manager::prune_agreements`), a full epoch inside this window.
+    /// is aborted when this actor's epoch clock enters `target + 1`
+    /// (`dkg_engine::prune_agreements`), a full epoch inside this window.
     #[test]
     fn a_ceremony_outlives_the_chain_entering_its_epoch() {
         let runtime = deterministic::Runner::default();

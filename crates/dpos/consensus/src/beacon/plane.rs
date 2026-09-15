@@ -8,7 +8,6 @@
 //! [`CommitteeReads`] so every one of them lands on the same cursor.
 
 use alloy_primitives::B256;
-use commonware_consensus::types::Epoch;
 use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer};
 use commonware_p2p::{Provider, Receiver, Sender};
 use commonware_resolver::p2p::{Config as ResolverConfig, Engine as ResolverEngine};
@@ -163,12 +162,14 @@ impl Drop for SupervisedChildren {
     }
 }
 
-/// The two handles the node owes the beacon, and the one receiver row 5.4 will
-/// take away.
+/// The two handles the node owes the beacon.
 ///
 /// Two, not eight: a beacon child dying is one fact to the node ("a subsystem
 /// died, take the node down"), and which child it was belongs in the log line the
-/// supervisor writes, not in the node's supervision list.
+/// supervisor writes, not in the node's supervision list. And nothing else
+/// crosses out: the epoch-key agreement instances the launcher starts are owned,
+/// pruned and swept inside the beacon (`dkg_engine`), so the receiver that used
+/// to hand them to the epoch manager is gone.
 pub struct Tasks {
     /// The beacon's supervisor. Resolving means a supervised child exited, which
     /// is always fatal; aborting it aborts every child.
@@ -180,16 +181,6 @@ pub struct Tasks {
     /// this beacon: each writer is a `while let Some(_) = rx.recv().await` loop
     /// over a channel whose sender lives inside that object.
     pub drain: Handle<()>,
-    /// Supervisor handles of the agreement instances the launcher starts, for
-    /// `epoch_manager` to adopt so they prune on the engine cutoff.
-    ///
-    /// STILL OUT HERE, and it is the one part of the front door PLAN row 5.0 does
-    /// not close: the band sweep that consumes these lives in
-    /// `epoch_manager::prune_agreements`, and moving it is row 5.4's named work
-    /// (it carries the abort-then-join semantics and the SafetyHalt latch, which
-    /// are not a code move). Bringing the receiver in without the sweep would
-    /// leave the instances unpruned.
-    pub agreement_intake: mpsc::Receiver<(Epoch, Handle<()>)>,
 }
 
 /// Spawn the beacon's supervisor over its children.
@@ -542,6 +533,15 @@ where
     /// the clock the ceremony geometry runs on rather than whichever feeder wrote
     /// last. Arrives from the node crate, where the registry lives.
     pub plane_clock: crate::sync_metrics::PlaneClock,
+    /// The node's fork-safety latch — THE one instance the executor and the epoch
+    /// manager share, arriving from the node crate for the same reason
+    /// `plane_clock` does (a second latch would be one nothing engages). The
+    /// agreement launcher reads it at every instance spawn and waits on its
+    /// 0→1 edge (`SafetyHalt::engaged_edge`, the same edge the epoch manager's
+    /// engine abort waits on): a halted node starts no epoch-key agreement
+    /// instance and aborts the ones it has the moment the latch engages
+    /// (`dkg_engine`). The `DkgActor` does not hold it.
+    pub safety_halt: crate::sync_metrics::SafetyHalt,
     /// The plane's frozen `(dpos_activation, epoch_interval)`, as a WATCH.
     ///
     /// `None` is the [`GeometryUnfrozen`](super::WithheldReason::GeometryUnfrozen)
@@ -554,7 +554,7 @@ where
     pub geometry: watch::Receiver<Option<(u64, u64)>>,
     /// Prefix of every storage partition the plane opens: the epoch-key
     /// agreement journals (`{prefix}dkg_epoch_{E}`, see
-    /// [`crate::beacon::agreement_partition`]) and the key / seed / artifact
+    /// [`crate::dpos::AGREEMENT_JOURNAL_PARTITION_PREFIX`]) and the key / seed / artifact
     /// journals (`{prefix}` ‖ [`MINT_MEMO_PARTITION`] etc., see
     /// [`journal_partition`]). Production passes `""`; the in-crate testbed a
     /// per-node prefix, so N planes on one in-memory `Storage` do not write one
@@ -605,6 +605,7 @@ where
         committees,
         heights,
         plane_clock,
+        safety_halt,
         geometry,
         partition_prefix,
     } = cfg;
@@ -672,8 +673,10 @@ where
     // re-announces every open target on each height tick, so a full channel costs a
     // tick of latency and never a lost instance.
     let (agreement_request_tx, agreement_request_rx) = mpsc::channel::<u64>(EDGE_MAILBOX);
-    let (agreement_intake_tx, agreement_intake) =
-        mpsc::channel::<(Epoch, Handle<()>)>(EDGE_MAILBOX);
+    // The actor's epoch clock as the launcher sees it (`Wiring::epoch_clock`):
+    // the cutoff epoch, published on change. Epoch `0` until the first tick,
+    // whose band is empty.
+    let (epoch_clock_tx, epoch_clock_rx) = watch::channel(0u64);
     // THE DURABLE MINT MEMO, and it opens where the key journal used to. It is the
     // PRECONDITION of that journal's deletion, not a replacement for it: the journal
     // held `epoch → pk` and could not answer a carry epoch at all (W1 did that, and
@@ -876,6 +879,7 @@ where
                     confirms,
                     pinned_rx,
                     agreement_tx: agreement_request_tx,
+                    epoch_clock: epoch_clock_tx,
                     artifacts_rx,
                     body_lost_rx,
                     #[cfg(test)]
@@ -888,8 +892,12 @@ where
 
     // The epoch-key agreement launcher. It owns everything the `DkgActor` cannot
     // reach — the four mux sub-channel registrations, the staking committee read
-    // and the runtime context an instance is spawned on — and turns the actor's
-    // dealing-closed edge into a running instance.
+    // and the runtime context an instance is spawned on — turns the actor's
+    // dealing-closed edge into a running instance, and OWNS that instance from
+    // there: pruned on the actor's epoch clock, its journal partition swept by
+    // the launcher's own band sweep, aborted on the SafetyHalt latch's own edge
+    // and refused outright once it is engaged. Nothing about an instance leaves
+    // the beacon.
     let agreement_launcher_handle = spawn_agreement_launcher(
         context.clone(),
         AgreementPlaneConfig {
@@ -908,6 +916,8 @@ where
             timeouts: AgreementTimeouts::coarse(),
             partition_prefix,
             body_lost: Some(body_lost_tx),
+            #[cfg(test)]
+            probe: None,
         },
         AgreementMuxes {
             vote: vote_mux,
@@ -917,7 +927,8 @@ where
         },
         agreement_request_rx,
         agreed_tx,
-        agreement_intake_tx,
+        epoch_clock_rx,
+        safety_halt,
     );
 
     // The agreement write-back, armed IN PLACE. It used to be handed out
@@ -1004,7 +1015,6 @@ where
             ],
         ),
         drain: spawn_drain(context, writers),
-        agreement_intake,
     };
     Ok((randomness, tasks))
 }
@@ -1151,8 +1161,6 @@ where
             drain: context
                 .with_label("beacon_drain")
                 .spawn(move |_| async move {}),
-            // No agreement plane on this node class, so nothing ever arrives.
-            agreement_intake: mpsc::channel(1).1,
         },
     )
 }

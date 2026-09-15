@@ -146,7 +146,6 @@ pub use surface::{
 
 // The crate-internal tier. Same front door, narrower audience — see the boundary
 // note above.
-pub(crate) use dkg_engine::agreement_partition;
 pub(crate) use surface::absent_unregistered;
 
 /// The crate's own TEST tier — the ONE door the crate's tests reach beacon

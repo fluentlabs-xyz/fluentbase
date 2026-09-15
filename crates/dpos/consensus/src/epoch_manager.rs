@@ -14,7 +14,6 @@
 
 use crate::{
     application::{ExecutedChain, FluentApp, OrderingAssembler},
-    beacon::agreement_partition,
     beacon::{constant_fallback_seed, witness_fallback_seed},
     beacon::{Beacon, PinEffort, ShareProbe, SignerVerdict},
     committee::Committee,
@@ -289,124 +288,6 @@ impl EpochEngineMetrics {
 /// Bounded mpsc capacity for boundary triggers (tokio `mpsc::channel(N)`).
 const BOUNDARY_BUFFER: usize = 64;
 
-/// Target epochs below the cutoff whose agreement journal partition is swept on
-/// every prune.
-///
-/// The sweep is what makes the removal survive CANCELLATION. An agreement
-/// supervisor removes its own partition after it delivers, but every external
-/// `abort()` — this prune, the SafetyHalt unwind, the manager's own exit —
-/// cancels it at an await and that removal never runs. Nothing else reclaims
-/// `dkg_epoch_{n}`, and unlike the ceremony journals there is no reconciler for
-/// it, so the directory and its one blob per traversed view survive forever.
-///
-/// A band reclaims them all: it is driven by epoch NUMBER rather than by a map
-/// this process populated, so it also collects a previous process's leftovers on
-/// the first boundary after a restart, and it collects a partition that an
-/// aborted-but-not-yet-stopped voter wrote one last time. The band is the
-/// trailing scheme-retention window — the same distance the rest of this actor
-/// keeps state for.
-///
-/// It is NOT swept on every prune, and that is the difference from the shape
-/// this replaced. `abort_below` runs on every reconcile, a reconcile runs on
-/// every finalized block through the committee module's wake-up
-/// (`CommitteeStore::anchor_advanced` publishes unconditionally), and each sweep
-/// is `AGREEMENT_SWEEP_SPAN` `Storage::remove` calls — every one of them a
-/// process-global runtime lock and a directory removal. Per BLOCK, for a band
-/// that changes once per EPOCH. The two states that can put a reclaimable
-/// partition inside the band are both edges, so the sweep follows them instead:
-/// the cutoff reaching a height it has never been at (a new epoch enters the
-/// band, and a fresh process's first prune is this case), or this very call
-/// having aborted an instance (its last journal write is on disk by then — the
-/// abort is JOINED above the sweep).
-const AGREEMENT_SWEEP_SPAN: u64 = SCHEME_RETENTION_EPOCHS as u64;
-
-/// Drop every epoch-key agreement instance whose target is below `cutoff`,
-/// aborting it on the way out, and reclaim the journal partitions of the targets
-/// below the cutoff that no longer have one.
-///
-/// The SAME cutoff the per-epoch engines are pruned on, and for a matching
-/// reason: below the frontier an instance has either delivered its artifact —
-/// its supervisor has already returned, so the abort is a no-op — or it is still
-/// agreeing a key for an epoch the chain has gone past.
-///
-/// `swept_to` is the highest cutoff whose band this process has already swept —
-/// see [`AGREEMENT_SWEEP_SPAN`] for why the sweep is edge-driven. It is RAISED
-/// rather than assigned: a prune at a cutoff below the highest one (a deferred
-/// reconcile for an older epoch draining through the committee wake-up) sweeps
-/// its own band when it aborted something, but it has not un-swept the higher
-/// band, and a memo that went backwards there would re-sweep bands already done
-/// on every block until the cutoff climbed back.
-async fn prune_agreements<E: Storage>(
-    context: &E,
-    agreements: &mut BTreeMap<Epoch, Handle<()>>,
-    cutoff: u64,
-    partition_prefix: &str,
-    swept_to: &mut u64,
-) {
-    let stale: Vec<Epoch> = agreements
-        .keys()
-        .copied()
-        .filter(|e| e.get() < cutoff)
-        .collect();
-    // Taken BEFORE the loop consumes the list: an instance aborted here is the
-    // one state that puts a partition in the band without the cutoff moving.
-    let aborted_one = !stale.is_empty();
-    for e in stale {
-        if let Some(handle) = agreements.remove(&e) {
-            handle.abort();
-            // JOINED, and before the sweep below — for the same reason
-            // `run_agreement` joins before destroying its own partition: `abort`
-            // only REQUESTS cancellation, so the simplex voter under this
-            // supervisor runs on to its next await and its `on_stopped` still
-            // syncs the journal. A sweep that ran while it was still stopping
-            // would remove a partition the voter then recreates with one last
-            // write, and nothing reclaims that one. The map removal above is what
-            // makes the guard below unable to protect these epochs, so the wait
-            // has to be here.
-            drop(handle.await);
-            info!(?e, "epoch-key agreement instance pruned (transition)");
-        }
-    }
-    if !(cutoff > *swept_to || aborted_one) {
-        return;
-    }
-    for epoch in cutoff.saturating_sub(AGREEMENT_SWEEP_SPAN)..cutoff {
-        // A live instance still owns its partition even below the cutoff: it was
-        // adopted after this prune's abort pass.
-        if agreements.contains_key(&Epoch::new(epoch)) {
-            continue;
-        }
-        match context
-            .remove(&agreement_partition(partition_prefix, epoch), None)
-            .await
-        {
-            Ok(()) => info!(epoch, "epoch-key agreement journal partition reclaimed"),
-            // Nothing to reclaim: the overwhelmingly common case, since the band
-            // is swept whenever it moves whether or not an instance ever ran
-            // there.
-            Err(commonware_runtime::Error::PartitionMissing(_)) => {}
-            Err(err) => warn!(
-                epoch,
-                ?err,
-                "could not reclaim the epoch-key agreement journal partition"
-            ),
-        }
-    }
-    *swept_to = (*swept_to).max(cutoff);
-}
-
-/// `recv()` on an optional receiver, or park forever when it is `None` — so the
-/// agreement-intake branch of the manager's `select!` is inert on a node with no
-/// agreement plane wired, without a second loop shape.
-async fn recv_agreement(
-    rx: Option<&mut mpsc::Receiver<(Epoch, Handle<()>)>>,
-) -> Option<(Epoch, Handle<()>)> {
-    match rx {
-        Some(rx) => rx.recv().await,
-        None => std::future::pending().await,
-    }
-}
-
 /// The next beacon wake-up THIS actor acts on, with the seed class dropped
 /// inside the future.
 ///
@@ -457,29 +338,6 @@ where
 {
     context: ContextCell<E>,
     active_epochs: BTreeMap<Epoch, Handle<()>>,
-    /// Supervisor handles of the epoch-key AGREEMENT instances, keyed by their
-    /// TARGET epoch — a SECOND map, and it must stay separate from
-    /// `active_epochs`.
-    ///
-    /// `reconcile_roles` polls `engine_handle_dead` over `active_epochs` and reads
-    /// a COMPLETED handle as a caught panic: it drops the entry, bumps
-    /// `engine_respawned` and spawns a replacement. An agreement instance is
-    /// SUPPOSED to complete — it aborts itself the moment its own finalization
-    /// lands (`beacon::dkg_engine`) — so an entry over there would be
-    /// resurrected on every reconcile, for the life of the process. Here nothing
-    /// polls it: a completed supervisor simply sits until `abort_below` drops it,
-    /// and `abort()` on an already-completed handle is a no-op.
-    dkg_agreements: BTreeMap<Epoch, Handle<()>>,
-    /// The highest cutoff whose agreement-journal band [`prune_agreements`] has
-    /// already swept in THIS process — the memo that makes the sweep an
-    /// epoch-rate job instead of a per-block one. `0` at construction, which is
-    /// what makes a fresh process's first prune sweep (and collect the previous
-    /// process's leftovers); a cutoff of `0` has an empty band either way.
-    agreements_swept_to: u64,
-    /// Where those handles come from. `None` ⇒ no agreement plane wired ⇒ the
-    /// branch parks forever and the map stays empty; the beacon plane holds the
-    /// sending half and posts a handle per instance it starts.
-    agreement_intake: Option<mpsc::Receiver<(Epoch, Handle<()>)>>,
     boundary_rx: mpsc::Receiver<Epoch>,
     /// Highest epoch we have entered (full or soft) — i.e. the highest epoch
     /// whose committee scheme is registered, so the marshal can verify its
@@ -510,11 +368,9 @@ where
     /// The edge this actor owes is "the LIVE EPOCH changed", and the tip is only
     /// its input: a verified finalization arrives roughly once a second, while
     /// the epoch it names changes once an epoch. Every pass of
-    /// [`Self::reconcile_roles`] runs `abort_below`, and that unconditionally
-    /// sweeps the epoch-key agreement band — `SCHEME_RETENTION_EPOCHS`
-    /// `Storage::remove` calls, each one a process-global runtime lock and a
-    /// directory removal — so an ungated tip arm would pay that, plus a
-    /// `Beacon::observe_epoch` and a participation probe, on every block.
+    /// [`Self::reconcile_roles`] runs `abort_below`, a `Beacon::observe_epoch`
+    /// and a participation probe — so an ungated tip arm would pay all of that
+    /// on every block.
     ///
     /// Written by `reconcile_roles` itself rather than by the arm, because every
     /// OTHER edge that reconciles the live epoch (a boundary delivery that
@@ -637,13 +493,11 @@ pub struct Config<B, XC, A> {
     /// scheme is a question only the map can answer, and the answer covers every
     /// read that made a record — not only the ones this manager drove.
     pub scheme_pins: EpochSchemeProvider,
-    /// Prefix of every per-epoch journal partition this manager opens or sweeps:
-    /// the ordering engines' `{prefix}consensus_epoch_{E}`
-    /// ([`crate::engine::engine_partition`]) and the adopted agreement instances'
-    /// `{prefix}dkg_epoch_{E}` ([`crate::beacon::agreement_partition`]).
-    /// Production passes `""` (the on-disk names are unchanged); the in-crate
-    /// deterministic testbed passes `node{i}-`, because its N nodes share one
-    /// in-memory `Storage`.
+    /// Prefix of every per-epoch journal partition this manager opens: the
+    /// ordering engines' `{prefix}consensus_epoch_{E}`
+    /// ([`crate::engine::engine_partition`]). Production passes `""` (the
+    /// on-disk names are unchanged); the in-crate deterministic testbed passes
+    /// `node{i}-`, because its N nodes share one in-memory `Storage`.
     pub partition_prefix: String,
     /// DEVNET/TEST-ONLY byzantine validator behaviour (gated behind
     /// `dpos-devnet-byzantine`). `None` on every honest node. Passed into every
@@ -667,9 +521,6 @@ where
         let actor = Self {
             context: ContextCell::new(context),
             active_epochs: BTreeMap::new(),
-            dkg_agreements: BTreeMap::new(),
-            agreements_swept_to: 0,
-            agreement_intake: None,
             boundary_rx,
             highest_entered_epoch: Epoch::new(0),
             // Subscribed HERE rather than in `run`, because the value is read on
@@ -685,18 +536,6 @@ where
             cfg,
         };
         (actor, boundary_tx)
-    }
-
-    /// Take ownership of the epoch-key agreement instances the beacon plane
-    /// starts, so they are pruned on the same frontier cutoff as the per-epoch
-    /// engines and torn down with the manager. Left unwired the manager owns none
-    /// and the branch is inert.
-    pub fn with_agreement_intake(
-        mut self,
-        agreement_intake: mpsc::Receiver<(Epoch, Handle<()>)>,
-    ) -> Self {
-        self.agreement_intake = Some(agreement_intake);
-        self
     }
 
     /// Start the manager. The 3 simplex broker handles (vote/cert/resolver) are
@@ -754,19 +593,23 @@ where
         // it is a synchronous `send_replace`, so no arm below can be held by it.
         // Dropping this sender on the way out is what stops the task.
         let (sweep_wake, sweep_handle) = self.spawn_repair_sweep();
-        // Taken out so the intake branch borrows the local rather than `self` (the
-        // arms below take `&mut self`).
-        let mut agreement_intake = self.agreement_intake.take();
+        // The fork-safety latch's 0→1 edge, armed ONCE. It is a `watch` the
+        // beacon's agreement launcher waits on as well, and a latch that is
+        // already engaged resolves it on every call (there is no permit to
+        // consume), so the arm is DISARMED after its one firing — re-arming it
+        // per iteration would spin this loop for the rest of the process.
+        let halt_edge = safety_halt.engaged_edge();
+        tokio::pin!(halt_edge);
+        let mut halt_seen = false;
         loop {
-            // Arm the edge wakeups BEFORE the select. The two `Notify` producers
-            // here use `notify_one` (permit-storing), so even a signal that fires
+            // Arm the `spawn_unblocked` wakeup BEFORE the select. Its producer
+            // uses `notify_one` (permit-storing), so even a signal that fires
             // while no waiter is armed — between a reconcile and the next select —
             // is held as a permit and consumed by the next `notified()`. The
             // beacon's two classes ride the buffered subscription taken above and
             // are not re-armed per iteration.
             let spawn_n = spawn_unblocked.notified();
-            let halt_n = safety_halt.engaged_edge();
-            tokio::pin!(spawn_n, halt_n);
+            tokio::pin!(spawn_n);
             tokio::select! {
                 // Edge: the fork-safety latch was engaged (result divergence / EL
                 // Invalid / L1 fork). Abort every participating engine NOW so the node
@@ -775,22 +618,16 @@ where
                 // it a Verifier forever thereafter (the latch is permanent). The
                 // manager itself stays UP (marshal keeps verifying certs); recovery is
                 // external (L1 proof + governance).
-                _ = &mut halt_n => {
+                _ = &mut halt_edge, if !halt_seen => {
+                    halt_seen = true;
                     for (epoch, handle) in std::mem::take(&mut self.active_epochs) {
                         warn!(?epoch, "SafetyHalt engaged — aborting participating engine \
                             (demote to verify-only permanently)");
                         handle.abort();
                     }
-                    // The agreement plane goes with them. Its output is a share
-                    // this node will never get to sign with — the latch is
-                    // permanent and `reconcile_roles` keeps it a Verifier forever
-                    // — so leaving it voting on a second plane after a fork-safety
-                    // halt buys nothing and costs the network a vote it should
-                    // not be casting.
-                    for (epoch, handle) in std::mem::take(&mut self.dkg_agreements) {
-                        warn!(?epoch, "SafetyHalt engaged — aborting epoch-key agreement instance");
-                        handle.abort();
-                    }
+                    // The epoch-key agreement plane goes with them, and that is
+                    // the beacon's own doing: its launcher waits on this same
+                    // edge and reads the latch at every spawn (`beacon::dkg_engine`).
                     self.deferred_spawns.clear();
                     for role in self.roles.values_mut() {
                         *role = Role::Verifier;
@@ -849,10 +686,9 @@ where
                     // already ran for has nothing to add: the role rule reads the
                     // tip only through `live_epoch`, so an unchanged live epoch
                     // means an unchanged verdict, while the pass itself is not
-                    // free (`abort_below` sweeps the agreement journal band on
-                    // every call, `observe_epoch` re-attempts the previous
-                    // epoch's key backfill, and a live engine pays a
-                    // participation probe). The retries that DO belong to a
+                    // free (`observe_epoch` re-attempts the previous epoch's key
+                    // backfill, and a live engine pays a participation probe).
+                    // The retries that DO belong to a
                     // block-rate edge have their own: a parked spawn has
                     // `spawn_unblocked`, a deferred reconcile has the committee
                     // module's wake-up, a share or key landing has the beacon
@@ -972,49 +808,6 @@ where
                     sweep_wake.send_replace(self.sweep_frontier());
                     self.reconcile_live(muxes.as_ref()).await;
                 }
-                // Edge: the beacon plane started an epoch-key agreement instance
-                // and handed us its supervisor. Adopting it here is what puts the
-                // instance under the same frontier cutoff as the engines; a second
-                // handle for an epoch we already hold replaces the first, aborting
-                // it so two instances never run for one target.
-                adopted = recv_agreement(agreement_intake.as_mut()) => match adopted {
-                    Some((epoch, handle)) => {
-                        // A HALTED node adopts nothing. The halt arm above aborts
-                        // every instance it can SEE, but it is a one-shot edge —
-                        // `SafetyHalt::engage` fires `notify_one` once and nothing
-                        // notifies again — so an instance that finishes starting
-                        // AFTER that firing lands here with the arm already spent,
-                        // and `prune_agreements` never reaches it either (it only
-                        // sweeps targets below the live cutoff).
-                        //
-                        // Not a race: the launcher lives on a node-side handle and
-                        // `start_one` awaits four mux registrations plus a spawn,
-                        // so the window is wide, and the latch is restored from
-                        // its datadir marker at startup — meaning a node that
-                        // halted yesterday re-adopts on every restart, for as long
-                        // as the plane keeps starting instances. A standing leak,
-                        // not a timing accident.
-                        //
-                        // The policy it violates is written ten lines up, in the
-                        // halt arm: a halted node's vote on a second plane buys
-                        // nothing and costs the network a vote it should not be
-                        // casting. Enforced here rather than by re-arming the
-                        // edge, because the latch is permanent — one read of it is
-                        // the whole check.
-                        if self.cfg.safety_halt.is_engaged() {
-                            warn!(
-                                ?epoch,
-                                "SafetyHalt engaged — refusing to adopt an epoch-key agreement \
-                                 instance that started after the halt"
-                            );
-                            handle.abort();
-                        } else if let Some(previous) = self.dkg_agreements.insert(epoch, handle) {
-                            warn!(?epoch, "replacing a live epoch-key agreement instance");
-                            previous.abort();
-                        }
-                    }
-                    None => agreement_intake = None,
-                },
             }
         }
 
@@ -1025,10 +818,6 @@ where
         // here too — the plane's broker tasks stay live for the next promotion.
         for (epoch, handle) in std::mem::take(&mut self.active_epochs) {
             info!(?epoch, "aborting active epoch engine on exit");
-            handle.abort();
-        }
-        for (epoch, handle) in std::mem::take(&mut self.dkg_agreements) {
-            info!(?epoch, "aborting epoch-key agreement instance on exit");
             handle.abort();
         }
         // Aborted, not left to notice the dropped sender: it can be parked inside
@@ -1177,10 +966,11 @@ where
                 // participating in silence (E4-REVIEW §9.1).
                 //
                 // The latch does the rest: the `engaged_edge` arm of `run`
-                // aborts every running engine and the agreement instances, and
-                // the `is_member` gate below keeps this node a Verifier for
-                // good. Execution stops; the marshal keeps verifying and
-                // serving what it already holds.
+                // aborts every running engine, the beacon's launcher waits on
+                // the same edge and retires the agreement instances at once
+                // (and starts no more), and the `is_member` gate below keeps this node a
+                // Verifier for good. Execution stops; the marshal keeps
+                // verifying and serving what it already holds.
                 if e.is_contract_impossible() {
                     if !self.cfg.safety_halt.is_engaged() {
                         error!(
@@ -1227,7 +1017,7 @@ where
         // Exit-at-transition: abort every engine strictly below the live epoch
         // (folded `prune_old`; `e < cutoff` only, so a stale/replayed boundary for
         // an OLD epoch can never abort a newer engine).
-        self.abort_below(epoch).await;
+        self.abort_below(epoch);
 
         // Not the live epoch → soft-enter (verify-only scheme, NO engine): a
         // Simplex engine for a stale epoch has no live peers and would drive a dead
@@ -1617,14 +1407,16 @@ where
     ///
     /// It does NOT make the epoch un-stale-able, and the doc used to claim it
     /// did. `reconcile_roles` re-reads the tip at its own liveness gate
-    /// (`is_live_epoch`, the `self.tip.borrow()` inside it) AFTER an
-    /// `abort_below(...).await` that does file I/O, so the tip can move — and the
-    /// live epoch with it — between the choice here and the gate there, and that
-    /// gate can then answer FALSE for the epoch this call picked as live. What
-    /// the removal of the guard costs in that window is one `soft_enter` pass,
-    /// and what it CANNOT cost is the divergence the guard was for: `soft_enter`
-    /// returns early on a running engine or a recorded `Signer` (its first two
-    /// lines), so the verify-only registration never lands over a signer entry.
+    /// (`is_live_epoch`, the `self.tip.borrow()` inside it) in a SECOND
+    /// `borrow()`: nothing on this task awaits between the choice here and that
+    /// gate (`abort_below` is synchronous), but the tip is a `watch` another task
+    /// writes, so it can still move — and the live epoch with it — between the
+    /// two reads, and the gate can then answer FALSE for the epoch this call
+    /// picked as live. What the removal of the guard costs in that window is one
+    /// `soft_enter` pass, and what it CANNOT cost is the divergence the guard was
+    /// for: `soft_enter` returns early on a running engine or a recorded `Signer`
+    /// (its first two lines), so the verify-only registration never lands over a
+    /// signer entry.
     async fn reconcile_live<HS, HR>(&mut self, muxes: Option<&Muxes<HS, HR>>)
     where
         HS: Sender<PublicKey = PublicKey>,
@@ -1667,7 +1459,7 @@ where
     /// (a no-op for the stale E) on EVERY finalized block for the process
     /// lifetime. Pruning here makes an EMPTY set the true "no pending promotion"
     /// signal that the `spawn_unblocked` edge gates on.
-    async fn abort_below(&mut self, current: Epoch) {
+    fn abort_below(&mut self, current: Epoch) {
         let cutoff = current.get();
         let to_drop: Vec<Epoch> = self
             .active_epochs
@@ -1682,15 +1474,6 @@ where
                 info!(?e, "epoch exited (transition)");
             }
         }
-        let context = self.context.as_present().clone();
-        prune_agreements(
-            &context,
-            &mut self.dkg_agreements,
-            cutoff,
-            &self.cfg.partition_prefix,
-            &mut self.agreements_swept_to,
-        )
-        .await;
         self.deferred_spawns.retain(|e| e.get() >= cutoff);
         // Prune `roles` to the trailing scheme-retention window: the sole reader is
         // `soft_enter`'s `roles.get(&epoch)` for the epoch under reconcile
@@ -3001,195 +2784,6 @@ mod tests {
             assert!(
                 !engine_handle_dead(&mut pending),
                 "the still-parked child reads alive throughout"
-            );
-        });
-    }
-
-    /// The agreement instances live in their OWN map and are pruned on the same
-    /// frontier cutoff as the engines — and pruning really aborts them, which for
-    /// a still-running instance is the only thing that stops it.
-    ///
-    /// It also WAITS for them. The partition sweep that follows the abort pass
-    /// cannot see these epochs any more — the abort pass removed them from the map
-    /// the sweep's guard consults — so an instance still stopping while the sweep
-    /// runs would have its partition removed and then recreated by its voter's
-    /// last journal write, leaving a directory nothing ever reclaims.
-    #[test]
-    fn agreement_instances_prune_on_the_engine_cutoff_and_are_aborted() {
-        use commonware_runtime::{deterministic, Clock, Runner as _, Spawner};
-        use std::{
-            sync::atomic::{AtomicUsize, Ordering},
-            time::Duration,
-        };
-
-        /// Set on drop, which for an aborted task is the moment its future is
-        /// dropped — the observable proof that `abort()` reached it.
-        struct Tombstone(Arc<AtomicUsize>);
-        impl Drop for Tombstone {
-            fn drop(&mut self) {
-                self.0.fetch_add(1, Ordering::SeqCst);
-            }
-        }
-
-        let runner = deterministic::Runner::timed(Duration::from_secs(10));
-        runner.start(|ctx| async move {
-            let dropped = Arc::new(AtomicUsize::new(0));
-            let mut agreements: BTreeMap<Epoch, Handle<()>> = BTreeMap::new();
-            for epoch in [3u64, 4, 5] {
-                let mark = Tombstone(dropped.clone());
-                agreements.insert(
-                    Epoch::new(epoch),
-                    ctx.with_label("agreement").spawn(move |_| async move {
-                        let _mark = mark;
-                        std::future::pending::<()>().await;
-                    }),
-                );
-            }
-            // Let the spawned tasks reach their park before anything is aborted.
-            ctx.sleep(Duration::from_millis(1)).await;
-
-            prune_agreements(&ctx, &mut agreements, 5, "", &mut 0).await;
-            assert_eq!(
-                agreements.keys().copied().collect::<Vec<_>>(),
-                vec![Epoch::new(5)],
-                "the frontier's own instance must survive its cutoff"
-            );
-
-            assert_eq!(
-                dropped.load(Ordering::SeqCst),
-                2,
-                "prune returned before the instances it aborted had stopped, so the partition \
-                 sweep it runs next races their last journal write"
-            );
-        });
-    }
-
-    /// An agreement supervisor removes its own journal partition after it
-    /// delivers, but every EXTERNAL abort — this prune, the SafetyHalt unwind, the
-    /// manager's exit — cancels it at an await and that removal never runs. Nothing
-    /// else reclaims `dkg_epoch_{n}`, so the prune sweeps the band below the cutoff
-    /// itself, by epoch number and not by the map, which also collects what a
-    /// previous process left behind.
-    #[test]
-    fn pruning_reclaims_the_journal_partitions_an_abort_left_behind() {
-        use commonware_runtime::{deterministic, Runner as _, Spawner as _, Storage as _};
-        use std::time::Duration;
-
-        let runner = deterministic::Runner::timed(Duration::from_secs(10));
-        runner.start(|ctx| async move {
-            // Epoch 3: aborted by an earlier prune (or a previous process) — the
-            // leak. Epoch 5: the frontier's own live instance. Epoch 20: outside the
-            // swept band, so a sweep that ignored the band would look identical.
-            for epoch in [3u64, 5, 20] {
-                ctx.open(&agreement_partition("", epoch), b"blob")
-                    .await
-                    .expect("partition");
-            }
-            let mut agreements: BTreeMap<Epoch, Handle<()>> = BTreeMap::new();
-            agreements.insert(
-                Epoch::new(5),
-                ctx.with_label("live")
-                    .spawn(move |_| async move { std::future::pending::<()>().await }),
-            );
-
-            prune_agreements(&ctx, &mut agreements, 5, "", &mut 0).await;
-
-            assert!(
-                ctx.scan(&agreement_partition("", 3)).await.is_err(),
-                "the partition an aborted supervisor left behind was never reclaimed"
-            );
-            assert!(
-                ctx.scan(&agreement_partition("", 5)).await.is_ok(),
-                "the live instance's own partition must survive"
-            );
-            assert!(
-                ctx.scan(&agreement_partition("", 20)).await.is_ok(),
-                "the sweep must stay inside its band"
-            );
-        });
-    }
-
-    /// The band sweep costs `AGREEMENT_SWEEP_SPAN` `Storage::remove` calls, each
-    /// one a process-global runtime lock and a directory removal, and
-    /// `abort_below` runs it on EVERY reconcile — which is every finalized block,
-    /// because the committee module's wake-up publishes unconditionally on every
-    /// anchor advance. The band itself moves once per EPOCH, so the repeat is
-    /// pure cost.
-    ///
-    /// What this pins is that the repeat is gone WITHOUT the collection being
-    /// gone: a partition that appears under a cutoff already swept is left alone
-    /// until the cutoff moves, and then it is collected. The two edges that can
-    /// legitimately put a reclaimable partition in the band are the other two
-    /// cases — a cutoff the process has never been at (the first test above, and
-    /// every new epoch) and an abort this call performed (the test above it,
-    /// where the abort is joined before the sweep).
-    ///
-    /// Falsifier: the partition surviving the cutoff move (the gate is stuck
-    /// shut, a real leak); the partition disappearing on the repeat (the gate
-    /// never closed and this test proves nothing); the first call not collecting
-    /// at all (`swept_to` starting above the cutoff).
-    #[test]
-    fn a_repeat_prune_at_a_cutoff_already_swept_does_not_touch_storage() {
-        use commonware_runtime::{deterministic, Runner as _, Storage as _};
-        use std::time::Duration;
-
-        let runner = deterministic::Runner::timed(Duration::from_secs(10));
-        runner.start(|ctx| async move {
-            let mut agreements: BTreeMap<Epoch, Handle<()>> = BTreeMap::new();
-            let mut swept_to = 0u64;
-
-            // A fresh process: `swept_to = 0`, so the first prune sweeps and the
-            // leftover goes.
-            ctx.open(&agreement_partition("", 4), b"blob")
-                .await
-                .expect("partition");
-            prune_agreements(&ctx, &mut agreements, 5, "", &mut swept_to).await;
-            assert!(
-                ctx.scan(&agreement_partition("", 4)).await.is_err(),
-                "the first prune at a cutoff this process has never been at must sweep"
-            );
-            assert_eq!(swept_to, 5, "the memo must name the cutoff just swept");
-
-            // The same cutoff again, nothing aborted: the band is where it was, so
-            // the partition recreated under it is NOT the sweep's business yet.
-            ctx.open(&agreement_partition("", 4), b"blob")
-                .await
-                .expect("partition");
-            prune_agreements(&ctx, &mut agreements, 5, "", &mut swept_to).await;
-            assert!(
-                ctx.scan(&agreement_partition("", 4)).await.is_ok(),
-                "the repeat prune swept the band again — `abort_below` runs per finalized \
-                 block, so this is `AGREEMENT_SWEEP_SPAN` filesystem removals per block"
-            );
-
-            // The cutoff moves: the band moves with it and the partition goes.
-            prune_agreements(&ctx, &mut agreements, 6, "", &mut swept_to).await;
-            assert!(
-                ctx.scan(&agreement_partition("", 4)).await.is_err(),
-                "a cutoff this process has never been at must sweep, or the gate is a leak"
-            );
-            assert_eq!(swept_to, 6);
-
-            // A prune BELOW the highest cutoff, with an instance to abort: it
-            // sweeps its own band (the abort is the edge), and it must not lower
-            // the memo — a memo that went backwards would re-sweep on every block
-            // until the cutoff climbed back.
-            ctx.open(&agreement_partition("", 1), b"blob")
-                .await
-                .expect("partition");
-            agreements.insert(
-                Epoch::new(1),
-                ctx.with_label("stale")
-                    .spawn(move |_| async move { std::future::pending::<()>().await }),
-            );
-            prune_agreements(&ctx, &mut agreements, 2, "", &mut swept_to).await;
-            assert!(
-                ctx.scan(&agreement_partition("", 1)).await.is_err(),
-                "a prune that aborted an instance must sweep its band whatever the memo says"
-            );
-            assert_eq!(
-                swept_to, 6,
-                "the memo must be raised, never assigned: epoch 6's band is still swept"
             );
         });
     }

@@ -747,7 +747,6 @@ where
         plane.shared.clone(),
         plane.plane_upstream.clone(),
         plane.evidence.clone(),
-        plane.agreement_intake,
         plane.finalized_cursor.clone(),
         plane.committee.clone(),
         plane.tracked_epoch.clone(),
@@ -972,10 +971,6 @@ pub(crate) struct BeaconPlane<Provider, EvmConfig> {
     /// `Arc<dyn Beacon>`, which is why the explicit `drop(plane.shared)` below
     /// has to happen first.
     pub beacon_drain: Handle<()>,
-    /// Supervisor handles of the agreement instances the launcher starts, for
-    /// `epoch_manager` to adopt so they prune on the engine cutoff. Move-only, so
-    /// it is handed over exactly once — into `launch_dpos_layer`.
-    pub agreement_intake: mpsc::Receiver<(commonware_consensus::types::Epoch, Handle<()>)>,
     /// Shared store + committee resolver + Oracle + metrics + the 5 `MuxHandle`s +
     /// the vote-backup forwarder, CLONED into the signer engine per promotion (the
     /// engine never re-builds any of these or re-binds the network).
@@ -1449,6 +1444,25 @@ where
     // This task keeps only the drop counter for the sends it fails to place.
     let plane_clock = fluentbase_consensus::sync_metrics::PlaneClock::default();
     plane_clock.register(ctx);
+    // The self-heal stuck-detector family, registered ONCE here (it used to be
+    // registered in `DposLayer::launch`; it moved up with the latch below), and
+    // the fork-safety latch over it. Built HERE, before `beacon::build`, because
+    // the beacon's agreement launcher reads the latch and it must be THE one the
+    // executor, the epoch manager and the OuterEngine supervisor share — so it
+    // travels down to the layer in `SharedBeaconPlane`, like `plane_clock`.
+    //
+    // The marker lives beside the beacon shares, in the datadir this node's
+    // chain state lives in — a halt is a property of THIS disk's view of the
+    // chain, so a fresh datadir is (correctly) a fresh start. A marker left by
+    // a previous run re-engages the latch NOW, before the first consensus event
+    // and before the plane can start an agreement instance, so a halted node
+    // never comes back as a signer.
+    let sync_metrics = fluentbase_consensus::sync_metrics::SyncMetrics::default();
+    sync_metrics.register(ctx);
+    let safety_halt = fluentbase_consensus::sync_metrics::SafetyHalt::restoring(
+        sync_metrics.clone(),
+        node.data_dir.data_dir().join(SAFETY_HALT_MARKER),
+    );
     let poller_handle = {
         let provider = node.provider.clone();
         let et = et_arc.clone();
@@ -1909,6 +1923,7 @@ where
             committees,
             heights: dkg_height_rx,
             plane_clock: plane_clock.clone(),
+            safety_halt: safety_halt.clone(),
             geometry: geometry_rx,
             partition_prefix: String::new(),
         },
@@ -1955,7 +1970,6 @@ where
         evidence: evidence_bridge,
         plane_upstream,
         mux_handles,
-        agreement_intake: beacon_tasks.agreement_intake,
         shared: SharedBeaconPlane {
             oracle: handles.oracle,
             randomness: beacon,
@@ -1967,6 +1981,8 @@ where
             tombstones,
             plane_clock,
             dkg_height_tx: dkg_height_tx.clone(),
+            sync_metrics,
+            safety_halt,
         },
         artifact_bytes,
         finalized_cursor,
@@ -2048,7 +2064,6 @@ pub(crate) async fn launch_dpos_layer<N, AddOns>(
     shared_beacon: SharedBeaconPlane,
     plane_upstream: fluentbase_consensus::PlaneUpstreamHandle<Context>,
     evidence: fluentbase_consensus::slasher::EvidenceBridge,
-    agreement_intake: mpsc::Receiver<(commonware_consensus::types::Epoch, Handle<()>)>,
     // The plane's ONE ordering-finalized cursor and the committee module built
     // over it. The executed-chain view below is constructed with this cursor
     // rather than minting its own, which is what makes "the executor advances
@@ -2252,10 +2267,6 @@ where
         slasher_sink,
         evidence,
         staking_config,
-        // Fork-safety halt marker: beside the beacon shares, in the datadir this
-        // node's chain state lives in — a halt is a property of THIS disk's view
-        // of the chain, so a fresh datadir is (correctly) a fresh start.
-        halt_marker: Some(node.data_dir.data_dir().join(SAFETY_HALT_MARKER)),
         upstream,
         deriver,
         executed,
@@ -2275,9 +2286,6 @@ where
         // it never rebuilds the network, re-spawns the DkgActor, or consumes a raw
         // channel half — so a demote→re-promote re-clones with no rebuild.
         beacon_plane: shared_beacon,
-        // The plane's agreement instances, adopted by `epoch_manager` so they are
-        // pruned on the same frontier cutoff as the per-epoch engines.
-        agreement_intake: Some(agreement_intake),
         #[cfg(feature = "dpos-devnet-byzantine")]
         byzantine,
     };

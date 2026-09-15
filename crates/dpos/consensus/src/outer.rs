@@ -453,7 +453,7 @@ pub struct OuterBuilder<B, P, BE, D, XC, A> {
     /// `{prefix}-v2-…`; `consensus_marshal` in production).
     pub partition_prefix: String,
     /// Prefix of the PER-EPOCH journal partitions the epoch manager opens:
-    /// `{prefix}consensus_epoch_{E}` and `{prefix}dkg_epoch_{E}` — see
+    /// `{prefix}consensus_epoch_{E}` — see
     /// [`epoch_manager::Config::partition_prefix`]. Production passes `""`
     /// (on-disk names unchanged); the in-crate deterministic testbed passes
     /// `node{i}-`. Separate from [`Self::partition_prefix`] because the marshal
@@ -537,19 +537,6 @@ pub struct OuterBuilder<B, P, BE, D, XC, A> {
     /// ([`slasher::gossip`]). `None` on the follower path, whose slasher is
     /// constructed but never started.
     pub slasher_evidence: Option<slasher::EvidenceBridge>,
-    /// Supervisor handles of the epoch-key agreement instances the beacon plane
-    /// starts, so [`epoch_manager::Actor`] prunes them on the SAME frontier cutoff
-    /// as the per-epoch engines and tears them down with itself. `None` ⇒ no
-    /// agreement plane wired (the follower path, and any test) ⇒ the manager's
-    /// intake branch parks forever and its map stays empty.
-    ///
-    /// A passthrough and nothing else: the receiver is move-only and the manager
-    /// is constructed inside [`OuterBuilder::build`], so there is no other way for
-    /// the plane to hand it over. The instances themselves never enter the
-    /// supervisor's `select!` — they are SUPPOSED to complete, and a completed
-    /// handle there would read as a dead subsystem.
-    pub agreement_intake: Option<mpsc::Receiver<(Epoch, Handle<()>)>>,
-
     /// DEVNET/TEST-ONLY byzantine validator behaviour (gated behind
     /// `dpos-devnet-byzantine`). `None` on every honest node. Threaded into
     /// [`epoch_manager::Config`] so the per-epoch engine can swap in a
@@ -1076,11 +1063,6 @@ where
                 byzantine: self.byzantine,
             },
         );
-
-        let epoch_manager = match self.agreement_intake {
-            Some(intake) => epoch_manager.with_agreement_intake(intake),
-            None => epoch_manager,
-        };
 
         Ok(OuterEngine {
             randomness: randomness.clone(),

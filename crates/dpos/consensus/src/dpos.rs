@@ -216,6 +216,19 @@ pub(crate) const MINT_MEMO_PARTITION: &str = "beacon-mint-metadata";
 /// instance — a second handle over this partition would be a dual-writer.
 pub const ARTIFACT_JOURNAL_PARTITION: &str = "beacon-artifact-metadata";
 
+/// Base name of the epoch-key agreement instance's journal partition:
+/// `{partition_prefix}dkg_epoch_{target_epoch}` (`beacon::dkg_engine`, the
+/// private `agreement_partition`). One per target epoch, holding the simplex
+/// voter's journal for the life of the instance.
+///
+/// OWNED by the beacon's agreement launcher, which is also what SWEEPS it: the
+/// instance destroys its own partition after it delivers, and every partition an
+/// abort left behind is reclaimed by the launcher's band sweep — the
+/// `SCHEME_RETENTION_EPOCHS` targets below the actor's epoch clock, by epoch
+/// number, on the edge the clock moves (`dkg_engine::prune_agreements`). Nothing
+/// outside the beacon opens, names or removes one.
+pub(crate) const AGREEMENT_JOURNAL_PARTITION_PREFIX: &str = "dkg_epoch_";
+
 /// Reth handles needed by the DPoS layer. The host adapter at
 /// `crates/node/src/dpos.rs` assembles this from `FullNode<N, AddOns>`;
 /// `transaction_pool`, `chain_spec`, and `data_dir` are intentionally
@@ -1235,12 +1248,6 @@ pub struct DposLayerConfig<D, XC, A, U> {
     /// halves of `EVIDENCE_CHANNEL` ([`crate::slasher::gossip`]).
     pub evidence: crate::slasher::EvidenceBridge,
     pub staking_config: StakingReaderConfig,
-    /// Datadir path of the fork-safety halt marker
-    /// ([`crate::sync_metrics::SafetyHalt::restoring`]). A marker left by a
-    /// previous run brings this node up permanently verify-only — the latch has
-    /// no in-process `disengage`, so without it a restart silently cleared a
-    /// halt and the node signed again on the same disk. `None` only in tests.
-    pub halt_marker: Option<std::path::PathBuf>,
     /// Cert upstream: the marshal's by-height backfill resolver, the frozen-tip
     /// ladder probe, and the steady-state re-jump's EL work all ride it. `Some` for
     /// every launched node since the plane-native default (`node/dpos.rs` wraps both
@@ -1275,11 +1282,6 @@ pub struct DposLayerConfig<D, XC, A, U> {
     /// re-builds the network, re-spawns the `DkgActor`, re-registers the metrics, or
     /// re-binds `listen`.
     pub beacon_plane: SharedBeaconPlane,
-    /// Supervisor handles of the epoch-key agreement instances the beacon plane
-    /// starts. Threaded straight through to [`crate::epoch_manager::Actor`], which
-    /// owns them and prunes them on the same frontier cutoff as the per-epoch
-    /// engines. `None` ⇒ no agreement plane wired.
-    pub agreement_intake: Option<mpsc::Receiver<(Epoch, commonware_runtime::Handle<()>)>>,
     /// DEVNET/TEST-ONLY byzantine behaviour (gated behind `dpos-devnet-byzantine`).
     /// Absent — and the field does not exist — in a production build.
     #[cfg(feature = "dpos-devnet-byzantine")]
@@ -1517,6 +1519,19 @@ pub struct SharedBeaconPlane {
     /// here for the same reason `plane_clock` does: the receiver is the plane's
     /// `DkgActor`, and a second channel would be a feeder nothing drains.
     pub dkg_height_tx: mpsc::Sender<u64>,
+    /// The self-heal / fork-safety metric family, registered ONCE in the node
+    /// crate where the beacon plane is built, and the fork-safety latch over it.
+    /// Both travel with the plane for the same reason `plane_clock` does: the
+    /// beacon's agreement launcher reads the latch (`beacon::ValidatorInputs::
+    /// safety_halt`), and the executor, the epoch manager and the OuterEngine
+    /// supervisor must read THE SAME one — a latch built here would be one the
+    /// beacon never sees engage. The production latch is restored from the
+    /// datadir marker ([`crate::sync_metrics::SafetyHalt::restoring`]) at the
+    /// node, before the first consensus event; the latch has no in-process
+    /// `disengage`, so without the marker a restart silently cleared a halt and
+    /// the node signed again on the same disk.
+    pub sync_metrics: SyncMetrics,
+    pub safety_halt: crate::sync_metrics::SafetyHalt,
 }
 
 /// Cold-start kind resolved from durable state. Pure function of the inputs
@@ -2080,7 +2095,6 @@ impl DposLayer {
             slasher_sink,
             evidence,
             staking_config,
-            halt_marker,
             upstream,
             deriver,
             executed,
@@ -2089,7 +2103,6 @@ impl DposLayer {
             feed,
             spawn_unblocked,
             beacon_plane,
-            agreement_intake,
             #[cfg(feature = "dpos-devnet-byzantine")]
             byzantine,
         } = cfg;
@@ -2109,6 +2122,8 @@ impl DposLayer {
             tombstones,
             plane_clock,
             dkg_height_tx,
+            sync_metrics,
+            safety_halt,
         } = beacon_plane;
 
         let RethHandle {
@@ -2121,21 +2136,15 @@ impl DposLayer {
             peer_count,
         } = reth;
 
-        // Self-heal stuck-detector: registered ONCE per launch (mirrors
-        // `BeaconMetrics`) and cloned into the cold-start + boundary-hook self-heal
-        // loops below. `dpos_sync_degraded{reason}` is the observable that replaces
-        // the removed cold-start/boundary `process::exit`s (Decision A).
-        let sync_metrics = SyncMetrics::default();
-        sync_metrics.register(&ctx);
-        // Fork-safety latch (Phase 3): shared across the executor, epoch_manager, and
-        // the OuterEngine supervisor. Engaging it (result divergence / EL Invalid /
-        // L1 fork) halts participation while the node stays up + observable.
-        // A marker left by a previous run re-engages it HERE, before the first
-        // consensus event, so a halted node never comes back as a signer.
-        let safety_halt = match halt_marker {
-            Some(path) => crate::sync_metrics::SafetyHalt::restoring(sync_metrics.clone(), path),
-            None => crate::sync_metrics::SafetyHalt::new(sync_metrics.clone()),
-        };
+        // The self-heal stuck-detector (`sync_metrics`, cloned into the cold-start +
+        // boundary-hook self-heal loops below; `dpos_sync_degraded{reason}` is the
+        // observable that replaces the removed cold-start/boundary `process::exit`s,
+        // Decision A) and the fork-safety latch (`safety_halt`: shared across the
+        // executor, the epoch manager, the OuterEngine supervisor AND the beacon's
+        // agreement launcher; engaging it — result divergence / EL Invalid / L1
+        // fork / contract fork — halts participation while the node stays up +
+        // observable) both arrive with the plane: they are built and the marker
+        // restored where the beacon is built, before the first consensus event.
 
         // Build the staking-reader layer: reader + cache + EpochTransition.
         let staking_address = staking_config.staking_address;
@@ -2947,9 +2956,6 @@ impl DposLayer {
 
         let outer = OuterBuilder {
             me: me.clone(),
-            // The beacon plane's epoch-key agreement instances, adopted by the
-            // epoch manager so they prune on the engine cutoff.
-            agreement_intake,
             // Bug A: no-op the consensus vote/cert-plane blocker (parity with the
             // beacon-resolver NoopBlocker, review [1013]). The simplex batcher's
             // evidence-free `block!(self.blocker, signer, ..)` on a transient
@@ -4112,9 +4118,6 @@ impl DposLayer {
         let beacon_drain_handle = beacon_tasks.drain;
         let outer = OuterBuilder {
             me: me.clone(),
-            // A follower runs no beacon plane, so it starts no agreement instance
-            // and has none to adopt.
-            agreement_intake: None,
             // Bug A: no-op the blocker on the follower too. The follower spawns no
             // simplex batcher, but it DOES run the marshal cert resolver, whose
             // `deliver=false` verdict would `block!` a registry-∪-committee peer on

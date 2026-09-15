@@ -2804,16 +2804,15 @@ async fn build_node(
     // build_beacon_plane` calls it, over the consensus network's BEACON /
     // BEACON_RESOLVER channels and the same four mux brokers, with the schedule
     // standing in for the staking reads. Built BEFORE the `OuterBuilder`, which
-    // takes its randomness and adopts its agreement instances.
+    // takes its randomness (the agreement instances stay the beacon's own).
     let (dkg_height_tx, dkg_height_rx) = mpsc::channel::<u64>(256);
 
-    let (randomness, artifacts, agreement_intake) = match (cfg.beacon, role) {
+    let (randomness, artifacts) = match (cfg.beacon, role) {
         (Beacon::Static, _) => (
             StaticRandomness::build(CHAIN_ID, staking.all_validators_snapshot()),
             None,
-            None,
         ),
-        (Beacon::Live, Role::AbsentBeacon) => (absent(&ctx_i), None, None),
+        (Beacon::Live, Role::AbsentBeacon) => (absent(&ctx_i), None),
         (Beacon::Live, _) => {
             let (bcs, bcr) = register(BEACON_CHANNEL).await;
             let (brs, brr) = register(BEACON_RESOLVER_CHANNEL).await;
@@ -2919,7 +2918,7 @@ async fn build_node(
             // classification on the channel; the seat a sender holds in a
             // frame's epoch is the consumer's check inside the actor (`no_seat`).
             let bcr = crate::dpos::GatedReceiver::new(bcr, ingress_window.clone(), "beacon", true);
-            let (beacon, beacon_tasks) = beacon::build(
+            let (beacon, _beacon_tasks) = beacon::build(
                 &ctx_i,
                 ValidatorInputs {
                     chain_id: CHAIN_ID,
@@ -2937,6 +2936,7 @@ async fn build_node(
                     committees,
                     heights: dkg_height_rx,
                     plane_clock: plane_clock.clone(),
+                    safety_halt: halt.clone(),
                     geometry: tokio::sync::watch::channel(et.lock().await.frozen_geometry()).1,
                     partition_prefix: format!("node{i}-"),
                 },
@@ -2962,11 +2962,7 @@ async fn build_node(
                 let beacon = randomness.clone();
                 Arc::new(move |epoch: u64| beacon.artifact_bytes(epoch))
             };
-            (
-                randomness,
-                Some(artifacts),
-                Some(beacon_tasks.agreement_intake),
-            )
+            (randomness, Some(artifacts))
         }
     };
     // Everything the optional cert-inlet task needs that is about to be MOVED
@@ -3065,7 +3061,6 @@ async fn build_node(
         slasher_sink: Arc::new(NoSink),
         slasher_wal_partition: format!("node{i}-slasher-wal"),
         slasher_evidence: None,
-        agreement_intake,
         #[cfg(feature = "dpos-devnet-byzantine")]
         byzantine: matches!(role, Role::Equivocate)
             .then_some(crate::byzantine::ByzantineMode::Equivocate),

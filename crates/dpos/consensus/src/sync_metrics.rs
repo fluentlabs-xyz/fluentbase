@@ -20,11 +20,11 @@ use prometheus_client::{
 use std::{
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, AtomicU8, Ordering},
+        atomic::{AtomicU8, Ordering},
         Arc, OnceLock,
     },
 };
-use tokio::sync::Notify;
+use tokio::sync::watch;
 use tracing::{error, warn};
 
 /// Why a node is self-healing rather than participating normally — the single
@@ -406,8 +406,11 @@ impl PlaneClock {
 /// 2. LATCHES so [`crate::epoch_manager::Actor::reconcile_roles`] never
 ///    (re-)promotes the node to a participating `Signer` — demoted to verify-only
 ///    permanently (stop signing/proposing/voting);
-/// 3. fires a one-shot [`Notify`] so the epoch manager aborts any running engine
-///    immediately (not just at the next boundary).
+/// 3. publishes the 0→1 EDGE — a `watch<bool>` every [`Self::engaged_edge`]
+///    waiter sees, however many there are and whenever they arm — so the epoch
+///    manager aborts any running engine and the beacon's agreement launcher
+///    aborts any running agreement instance immediately (not just at the next
+///    boundary, and not at the next finalized height).
 ///
 /// The executor then stops driving reth forward, and the OuterEngine supervisor
 /// keeps marshal + `consensus`-RPC alive (it does NOT abort-all — that is
@@ -430,7 +433,13 @@ impl PlaneClock {
 /// Arc-backed → cheap to clone; every clone shares one latch + one gauge family.
 #[derive(Clone, Default)]
 pub struct SafetyHalt {
-    engaged: Arc<AtomicBool>,
+    /// The latch bit AND its edge, one value: a `watch` whose `true` is
+    /// published exactly once (`send_if_modified` on the 0→1 transition), read
+    /// by [`Self::is_engaged`] and awaited by [`Self::engaged_edge`]. One state,
+    /// so the bit a reader sees and the edge a waiter gets cannot disagree; the
+    /// `Sender` is what every clone holds, so the channel closes only with the
+    /// last clone. (`watch::Sender<bool>: Default` — `false`.)
+    engaged: watch::Sender<bool>,
     /// The verdict that engaged the latch — the FIRST one wins (a later engage
     /// is a consequence of the first, not a second diagnosis). Typed rather
     /// than reconstructed from a prometheus label or an eyre display string, so
@@ -440,7 +449,6 @@ pub struct SafetyHalt {
     /// Datadir marker path. `None` for in-process / test latches, which have no
     /// datadir and must not write one.
     marker: Option<Arc<PathBuf>>,
-    notify: Arc<Notify>,
     metrics: SyncMetrics,
 }
 
@@ -450,10 +458,9 @@ impl SafetyHalt {
     /// for in-process and test use only.
     pub fn new(metrics: SyncMetrics) -> Self {
         Self {
-            engaged: Arc::default(),
+            engaged: watch::Sender::default(),
             reason: Arc::default(),
             marker: None,
-            notify: Arc::default(),
             metrics,
         }
     }
@@ -473,10 +480,9 @@ impl SafetyHalt {
     /// the halt record; its content only names the reason.
     pub fn restoring(metrics: SyncMetrics, marker: PathBuf) -> Self {
         let halt = Self {
-            engaged: Arc::default(),
+            engaged: watch::Sender::default(),
             reason: Arc::default(),
             marker: Some(Arc::new(marker)),
-            notify: Arc::default(),
             metrics,
         };
         halt.restore_marker();
@@ -531,19 +537,20 @@ impl SafetyHalt {
         }
     }
 
-    /// Set the latch bit + the unlabeled gauge and fire the one-shot edge.
-    /// Shared by [`Self::engage`] and the reason-less restore paths.
+    /// Set the latch bit + the unlabeled gauge and publish the edge — once: the
+    /// closure modifies (and so publishes) only on the 0→1 transition, under the
+    /// watch's own write lock. Shared by [`Self::engage`] and the reason-less
+    /// restore paths.
     fn latch(&self) {
         self.metrics.safety_halt_engaged.set(1);
-        if !self.engaged.swap(true, Ordering::SeqCst) {
-            self.notify.notify_one();
-        }
+        self.engaged
+            .send_if_modified(|engaged| !std::mem::replace(engaged, true));
     }
 
     /// Latch the halt + raise `dpos_sync_degraded{reason}=1`, and persist the
     /// reason to the datadir marker so a restart re-engages instead of silently
-    /// clearing. Idempotent; the epoch-manager wakeup fires once, on the 0→1
-    /// edge, and the FIRST reason is the one recorded.
+    /// clearing. Idempotent; the edge is published once, on the 0→1 transition,
+    /// and the FIRST reason is the one recorded.
     pub fn engage(&self, reason: SyncReason) {
         self.metrics.degrade(reason);
         let first = self.reason.set(reason).is_ok();
@@ -596,16 +603,26 @@ impl SafetyHalt {
     }
 
     /// Whether the node is safety-halted — read by `reconcile_roles` (never
-    /// re-promote) and by the OuterEngine supervisor (park instead of abort-all).
+    /// re-promote), by the OuterEngine supervisor (park instead of abort-all),
+    /// by the executor before it dispatches, and by the beacon's agreement
+    /// launcher before it spawns. An uncontended read lock on the watch value.
     pub fn is_engaged(&self) -> bool {
-        self.engaged.load(Ordering::SeqCst)
+        *self.engaged.borrow()
     }
 
-    /// Await the 0→1 engage edge (the epoch-manager select arm that aborts the
-    /// running engine). `notify_one` stores a permit, so an engage that races
-    /// ahead of the waiter is delivered to the next `notified()` — no lost wakeup.
+    /// Await the 0→1 engage edge. Resolves for EVERY waiter, and at once for a
+    /// waiter that arms after the engage (`watch::Receiver::wait_for` tests the
+    /// current value before it waits) — no lost wakeup, no single-consumer
+    /// permit. The waiters: the epoch manager's engine-abort arm and the beacon
+    /// launcher's agreement-abort arm. Because the value never goes back to
+    /// `false`, the future resolves on EVERY call once engaged: a `select!`
+    /// loop must arm it ONCE and disarm the arm after the first firing
+    /// (`if !halt_seen`) — a completed pinned future re-polled panics, and one
+    /// re-created per iteration spins the loop.
     pub async fn engaged_edge(&self) {
-        self.notify.notified().await;
+        let mut edge = self.engaged.subscribe();
+        // `Err` needs every `Sender` gone, and `&self` holds one.
+        let _ = edge.wait_for(|engaged| *engaged).await;
     }
 }
 
@@ -818,10 +835,54 @@ mod tests {
         runner.start(|_ctx| async move {
             let halt = SafetyHalt::default();
             halt.engage(SyncReason::ElInvalid);
-            // `notify_one` stored the permit before the waiter armed — the edge
-            // still resolves (no lost wakeup), so this does not hang.
+            // The engage happened before the waiter armed — the edge still
+            // resolves (no lost wakeup), so this does not hang.
             halt.engaged_edge().await;
             assert!(halt.is_engaged());
+        });
+    }
+
+    /// The edge is MULTICAST and LATE-JOINABLE: the epoch manager and the
+    /// beacon's agreement launcher both wait on it, and a waiter that arms after
+    /// the engage (a launcher built over a latch restored from the marker) must
+    /// not park forever. A single-consumer permit gave exactly one of two waiters
+    /// the edge, which is why the launcher used to learn of a halt only from the
+    /// actor's next height tick.
+    ///
+    /// Falsifier: one of the two armed waiters still pending after the engage;
+    /// the late waiter pending.
+    #[test]
+    fn every_engaged_edge_waiter_resolves_and_a_late_one_resolves_at_once() {
+        use std::{future::Future as _, pin::pin, task::Context as TaskContext};
+
+        let runner = Runner::default();
+        runner.start(|_ctx| async move {
+            let halt = SafetyHalt::default();
+            let waker = futures::task::noop_waker();
+            let mut cx = TaskContext::from_waker(&waker);
+
+            let (first, second) = (halt.clone(), halt.clone());
+            let mut first = pin!(first.engaged_edge());
+            let mut second = pin!(second.engaged_edge());
+            assert!(first.as_mut().poll(&mut cx).is_pending());
+            assert!(second.as_mut().poll(&mut cx).is_pending());
+
+            halt.engage(SyncReason::ResultDivergence);
+            assert!(
+                first.as_mut().poll(&mut cx).is_ready(),
+                "the first armed waiter did not get the edge"
+            );
+            assert!(
+                second.as_mut().poll(&mut cx).is_ready(),
+                "the second armed waiter did not get the edge"
+            );
+
+            // Armed AFTER the engage: resolves on the first poll.
+            let mut late = pin!(halt.engaged_edge());
+            assert!(
+                late.as_mut().poll(&mut cx).is_ready(),
+                "a waiter armed after the engage must resolve at once"
+            );
         });
     }
 
