@@ -49,8 +49,6 @@ pub enum StallReason {
     /// The share cannot be derived here (a journal acking a dealing it no longer
     /// holds, or a ceremony that cannot be rebuilt over the roster).
     Unrecoverable,
-    /// A damaged or absent journal at/after the seal deadline: sat out (R-036).
-    SatOut,
     /// Two different quorum-certified artifacts for one epoch.
     Conflict,
     /// The journal recompute over every pinned body could not run (the retained
@@ -62,7 +60,7 @@ pub enum StallReason {
 impl StallReason {
     /// Every reason, in declaration order — what the gauge's HELP enumerates, so
     /// the registry text cannot drift from the enum.
-    pub const ALL: [StallReason; 10] = [
+    pub const ALL: [StallReason; 9] = [
         Self::QuorumMissing,
         Self::BodyMissing,
         Self::BodyLost,
@@ -70,7 +68,6 @@ impl StallReason {
         Self::PersistFailed,
         Self::OffPolynomial,
         Self::Unrecoverable,
-        Self::SatOut,
         Self::Conflict,
         Self::HealFailed,
     ];
@@ -84,7 +81,6 @@ impl StallReason {
             Self::PersistFailed => "persist_failed",
             Self::OffPolynomial => "off_polynomial",
             Self::Unrecoverable => "unrecoverable",
-            Self::SatOut => "sat_out",
             Self::Conflict => "conflict",
             Self::HealFailed => "heal_failed",
         }

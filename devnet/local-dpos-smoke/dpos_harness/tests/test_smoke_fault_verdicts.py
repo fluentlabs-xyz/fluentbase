@@ -539,11 +539,11 @@ def test_the_fresh_ceremony_grep_is_epoch_anchored():
         f"{BOOT}\nINFO {vf.CEREMONY_STARTED_LINE} epoch=20") == ""
 
 
-def _heal(want, dealers, epoch=2):
+def _heal(want, pinned, epoch=2):
     """A heal-DETECT line as `beacon/actor.rs` writes it: the message, then `epoch`, `want` and
-    `dealers` rendered by tracing's field formatter."""
+    `pinned` rendered by tracing's field formatter."""
     return (f"INFO live DKG: demoted committee member detected \u2014 {vf.HEAL_START_LINE} "
-            f"epoch={epoch} want={want} dealers={dealers}")
+            f"epoch={epoch} want={want} pinned={pinned}")
 
 
 #: The same line as `docker logs` hands it over BEFORE `logs_all`'s strip: the node writes SGR
@@ -555,7 +555,7 @@ ANSI_HEAL = ("validator-3-1  | \x1b[2m2026-08-24T10:12:03.114512Z\x1b[0m \x1b[32
              "\x1b[2mfluentbase_dpos_consensus::beacon::actor\x1b[0m\x1b[2m:\x1b[0m "
              "live DKG: demoted committee member detected \u2014 starting share recompute-heal "
              "\x1b[3mepoch\x1b[0m\x1b[2m=\x1b[0m2 \x1b[3mwant\x1b[0m\x1b[2m=\x1b[0m4 "
-             "\x1b[3mdealers\x1b[0m\x1b[2m=\x1b[0m4")
+             "\x1b[3mpinned\x1b[0m\x1b[2m=\x1b[0m4")
 
 
 def test_the_setup_gate_reads_the_no_journal_precondition_on_BOTH_roads():
@@ -572,15 +572,15 @@ def test_the_setup_gate_reads_the_no_journal_precondition_on_BOTH_roads():
     assert vf.evaluate_victim_held_nothing("", _heal(4, 4), "validator-3")[0]
 
 
-def test_a_heal_that_wanted_FEWER_logs_than_dealers_is_the_real_journal_case():
-    """`want = dealers() −` the dealer logs already in the retained journal, so `want < dealers`
+def test_a_heal_that_wanted_FEWER_logs_than_pinned_is_the_real_journal_case():
+    """`want = pinned −` the dealer logs already in the retained journal, so `want < pinned`
     says the victim DID hold some — it was stopped after the deal phase opened, acked those
     dealings, and their dealers therefore reveal nothing publicly. This is the one branch on
     which the old message was true, and it is where it now lives."""
     ok, msg = vf.evaluate_victim_held_nothing("", _heal(1, 4), "validator-3")
     assert not ok
     assert "came back holding a journal" in msg and "ACKED" in msg
-    assert "want=1" in msg and "dealers=4" in msg
+    assert "want=1" in msg and "pinned=4" in msg
 
 
 def test_neither_witness_claims_no_knowledge_of_why():
@@ -597,11 +597,13 @@ def test_an_unparseable_heal_line_is_not_a_witness():
     would make a log-format change silently green — the failure mode the whole case is built to
     avoid — so it fails, and with its own message rather than the journal one."""
     ok, msg = vf.evaluate_victim_held_nothing(
-        "", f"INFO {vf.HEAL_START_LINE} epoch=2 want=? dealers=?", "validator-3")
+        "", f"INFO {vf.HEAL_START_LINE} epoch=2 want=? pinned=?", "validator-3")
     assert not ok
-    assert "no usable want=/dealers= pair" in msg and "holding a journal" not in msg
-    # dealers=0 parses but proves nothing either: 0 == 0 would pass vacuously.
+    assert "no usable want=/pinned= pair" in msg and "holding a journal" not in msg
+    # pinned=0 parses but proves nothing either: 0 == 0 would pass vacuously.
     assert not vf.evaluate_victim_held_nothing("", _heal(0, 0), "validator-3")[0]
+    # The field has one name; a line spelling it any other way is not a pair.
+    assert vf.heal_start_counts(f"INFO {vf.HEAL_START_LINE} epoch=2 want=4 dealers=4") is None
 
 
 def test_the_counters_survive_the_ANSI_docker_logs_carries():
@@ -609,7 +611,7 @@ def test_the_counters_survive_the_ANSI_docker_logs_carries():
     order the case does not control, the same reason `epoch_debug_lines` is a two-grep."""
     assert vf.heal_start_counts(ANSI_HEAL) == (4, 4)
     assert vf.evaluate_victim_held_nothing("", ANSI_HEAL, "validator-3")[0]
-    assert vf.heal_start_counts("INFO x dealers=4 want=4") == (4, 4)
+    assert vf.heal_start_counts("INFO x pinned=4 want=4") == (4, 4)
     assert vf.heal_start_counts("INFO x want=4") is None
     # …and the collector finds it in a whole `logs_all` read (which strips before it lands here).
     stripped = rpc.strip_ansi(f"{BOOT}\n{ANSI_HEAL}")

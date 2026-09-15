@@ -561,9 +561,10 @@ pub(crate) fn append_journal(
 /// from a PRESENT-but-damaged journal, so the caller (`actor::recover`) never
 /// re-deals an already-sealed epoch. A torn/undecryptable journal means
 /// THIS node already participated in `epoch`'s ceremony (it wrote at least one
-/// record); re-dealing fresh would draw new `OsRng` randomness → a divergent
-/// commitment → self-equivocation. So a damaged journal must SIT OUT, never start
-/// fresh.
+/// record); a second sealed log of the same dealer with a different ack/reveal
+/// set is self-equivocation. So a damaged journal is evicted and, at/after
+/// the seal deadline, the share is healed as a player over the pinned bodies;
+/// before the deadline (nothing broadcast yet) the seeded dealer starts fresh.
 pub(crate) enum JournalLoad {
     /// No journal file exists for this epoch — a genuine first run; the caller may
     /// `start_fresh` (deal).
@@ -574,7 +575,8 @@ pub(crate) enum JournalLoad {
     Present(Vec<JournalRecord>),
     /// A journal file exists but its VERY FIRST record is undecodable (torn length
     /// prefix, truncated/garbled body, or undecryptable — e.g. wrong keystore mode).
-    /// We wrote it, so we already participated; the caller SITS OUT (never re-deals).
+    /// The caller evicts it: at/after the seal deadline it heals as a player (never
+    /// re-deals); before the deadline it starts fresh.
     Torn,
 }
 
@@ -583,10 +585,10 @@ pub(crate) enum JournalLoad {
 ///
 /// Returns a tri-state ([`JournalLoad`]): a MISSING file is `NoFile` (genuine first
 /// run → the caller may deal); a present file whose first record is undecodable is
-/// `Torn` (we already participated → the caller must SIT OUT, never re-deal); a
-/// present file is `Present(records)` where a malformed/undecryptable record
-/// TRUNCATES the read (the tail is the crash-lost part) with a warning — never
-/// aborts, mirroring `load_all`'s warn+skip fail-soft.
+/// `Torn` (the caller evicts it and, past the seal deadline, heals as a player
+/// rather than re-dealing); a present file is `Present(records)` where a
+/// malformed/undecryptable record TRUNCATES the read (the tail is the crash-lost
+/// part) with a warning — never aborts, mirroring `load_all`'s warn+skip fail-soft.
 pub(crate) fn load_journal(
     dir: &Path,
     epoch: u64,
@@ -627,7 +629,7 @@ pub(crate) fn load_journal(
         rest = tail;
     }
     // A present-but-damaged journal whose FIRST record never decoded is `Torn` — the
-    // caller must sit out (we participated, so re-dealing self-equivocates).
+    // caller evicts it and never re-deals past the seal (we may have sealed).
     if out.is_empty() {
         JournalLoad::Torn
     } else {
@@ -1215,7 +1217,7 @@ mod tests {
             append_journal(&dir, 5, record, &state).expect("append");
         }
         // A PRESENT file whose first record never decodes is `Torn` (we wrote it →
-        // we participated → must sit out, NEVER `NoFile`/re-deal).
+        // we participated → never re-deal past the seal, NEVER `NoFile`).
         assert!(
             matches!(
                 load_journal(&dir, 5, &ShareState::Encrypted(seal_key(2)), n),

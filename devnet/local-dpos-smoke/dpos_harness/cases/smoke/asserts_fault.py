@@ -661,7 +661,7 @@ def assert_vrf_dkg_live_heal(ctx) -> None:
     # establish is that the victim came back holding NO epoch-2 journal, and that is readable on
     # BOTH roads (`vf.SHARE_ROADS`): a `ceremony started` on the restarted process, which only
     # `start_fresh` under `JournalLoad::NoFile` can write, or the heal-detect line with
-    # `want == dealers`, which says the journal held not one pinned dealer's log. Reading only
+    # `want == pinned`, which says the journal held not one pinned dealer's log. Reading only
     # the first and inferring its converse failed three live runs whose behaviour was correct —
     # the demote-heal reaches the share without any ceremony, so the line is simply never there.
     ctx.check(case, *vf.evaluate_victim_held_nothing(box["fresh"], box["heal"], victim, epoch=2),

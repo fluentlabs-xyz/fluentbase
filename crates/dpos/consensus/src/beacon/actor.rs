@@ -273,9 +273,8 @@ enum Acquire {
     /// or the epoch is being recovered past its boundary: the sealed ceremony waits
     /// for a PEER's copy of the artifact (`pull_artifact`, retried every tick).
     ArtifactForCeremony(Box<DkgCeremony>),
-    /// Partial success (§5.4): the share file landed, the artifact's durable write
-    /// did not. The share is in `store`; the key of the epoch this node signs in is
-    /// nowhere local until a peer serves the artifact.
+    /// A member with no ceremony to resume and no artifact (a held share, or the
+    /// post-seal absentee): [`DkgActor::key_held_share`] decides on its arrival.
     ArtifactForShare,
     /// A non-member of a mint epoch, which needs the epoch's `PK_E` to verify its
     /// certificates (I4, R-121/R-122).
@@ -334,16 +333,10 @@ enum EpochState {
     KeyOnly {
         digest: Option<B256>,
     },
-    /// Terminal. A damaged or absent journal at/after the seal deadline: this node
-    /// may already have sealed and broadcast a log, so it never re-deals (R-036).
-    /// `key` is the epoch's artifact once held — a sat-out member still needs
-    /// `PK_E` to verify the epoch's certificates (I4), so it is acquired.
-    SatOut {
-        key: Option<B256>,
-    },
     /// Terminal. The share is provably not derivable here: the journal acks a
     /// dealing this node no longer holds (`MissingPlayerDealing`), or the ceremony
-    /// cannot be rebuilt/started over the committed roster. `key` as for `SatOut`.
+    /// cannot be rebuilt/started over the committed roster. `key` is the epoch's
+    /// artifact once held: a share-less member still verifies with `PK_E`.
     Unrecoverable {
         key: Option<B256>,
     },
@@ -377,7 +370,6 @@ impl EpochState {
             Self::Acquiring(Acquire::Logs(_)) => "acquiring_logs",
             Self::Keyed { .. } => "keyed",
             Self::KeyOnly { .. } => "key_only",
-            Self::SatOut { .. } => "sat_out",
             Self::Unrecoverable { .. } => "unrecoverable",
             Self::Conflict { .. } => "conflict",
         }
@@ -415,7 +407,7 @@ impl EpochState {
             Self::Acquiring(Acquire::Logs(st)) => Some(st.digest),
             Self::Keyed { digest } => Some(*digest),
             Self::KeyOnly { digest } => *digest,
-            Self::SatOut { key } | Self::Unrecoverable { key } => *key,
+            Self::Unrecoverable { key } => *key,
             Self::Conflict { held, .. } => Some(*held),
             _ => None,
         }
@@ -429,8 +421,7 @@ impl EpochState {
                 Acquire::ArtifactForCeremony(_)
                     | Acquire::ArtifactForShare
                     | Acquire::ArtifactForKey
-            ) | Self::SatOut { key: None }
-                | Self::Unrecoverable { key: None }
+            ) | Self::Unrecoverable { key: None }
                 | Self::Conflict { key: None, .. }
         )
     }
@@ -489,7 +480,7 @@ impl AdoptRefusal {
 /// rule [`DkgActor::set_state`] keeps a latch by. A latch names a condition of a
 /// PHASE (bodies missing from an agreed set, an artifact wanted, a heal that
 /// was refused), so it leaves with the phase and a gauge never counts a
-/// condition an epoch has moved past; the three terminals carry their own.
+/// condition an epoch has moved past; the two terminals carry their own.
 fn carries(state: &EpochState, reason: StallReason) -> bool {
     match reason {
         StallReason::QuorumMissing | StallReason::BodyMissing => matches!(
@@ -511,7 +502,6 @@ fn carries(state: &EpochState, reason: StallReason) -> bool {
             matches!(state, EpochState::Acquiring(Acquire::Logs(_)))
         }
         StallReason::Unrecoverable => matches!(state, EpochState::Unrecoverable { .. }),
-        StallReason::SatOut => matches!(state, EpochState::SatOut { .. }),
         StallReason::Conflict => matches!(state, EpochState::Conflict { .. }),
     }
 }
@@ -1374,7 +1364,6 @@ where
     /// ([`Self::set_state`]), never dropped un-counted.
     fn enter(&mut self, epoch: u64, state: EpochState) {
         let latch = match &state {
-            EpochState::SatOut { .. } => Some(StallReason::SatOut),
             EpochState::Unrecoverable { .. } => Some(StallReason::Unrecoverable),
             EpochState::Conflict { .. } => Some(StallReason::Conflict),
             _ => None,
@@ -1767,10 +1756,7 @@ where
                 false,
                 None,
             ),
-            // A sat-out / unrecoverable member still verifies with the key.
-            EpochState::SatOut { key: None } => {
-                (EpochState::SatOut { key: Some(digest) }, false, None)
-            }
+            // An unrecoverable member still verifies with the key.
             EpochState::Unrecoverable { key: None } => {
                 (EpochState::Unrecoverable { key: Some(digest) }, false, None)
             }
@@ -2900,6 +2886,21 @@ where
         }
     }
 
+    /// The post-seal absentee's entry: heal over the pinned set, or wait for the artifact first.
+    fn heal_or_acquire(
+        &self,
+        epoch: u64,
+        committee: &Set<PeerPubkey>,
+        agreed: Option<AgreedSet>,
+    ) -> EpochState {
+        match agreed {
+            Some(set) => EpochState::Acquiring(Acquire::Logs(Box::new(
+                self.heal_over(epoch, committee, set),
+            ))),
+            None => EpochState::Acquiring(Acquire::ArtifactForShare),
+        }
+    }
+
     /// Decide every undecided epoch this actor looks at on a tick: the target it
     /// may still deal for (`now + 1`) and the trailing retention window
     /// `[max(BOOTSTRAP, now − R), now]` it may still owe a key or a heal for. A
@@ -2953,7 +2954,7 @@ where
             self.stall(epoch, reason);
         }
         if !dealing {
-            // Not dealing (sat out, player-only, keyed, ...): drop any dealings that
+            // Not dealing (healing, player-only, keyed, ...): drop any dealings that
             // raced ahead of a start that will now never happen, so they don't
             // linger un-acked until the sweep.
             self.pending.remove(&epoch);
@@ -3124,9 +3125,12 @@ where
     ///   `Torn` and `NoFile` are ONE rule by timing: `h < seal(E)` ⇒ nothing was
     ///   ever broadcast (a node seals only at/after the deadline) and the dealer
     ///   is deterministic, so start fresh (a torn file is removed first, so the
-    ///   fresh journal reads back clean); `h ≥ seal(E)` ⇒ `SatOut` — this node
-    ///   may already have sealed and broadcast, and re-dealing would sign a
-    ///   second, differently-acked log (R-036, R-072/E5-36).
+    ///   fresh journal reads back clean); `h ≥ seal(E)` ⇒ the PLAYER-ONLY heal:
+    ///   this node may already have sealed, so it never re-deals, but a dealer
+    ///   reveals the point of every player whose ack it lacks, so the pinned
+    ///   bodies alone carry an absentee's share (a player that acked before losing
+    ///   its journal ends `Unrecoverable`); a torn file is removed first so the
+    ///   fetched bodies land in a journal the recompute can load.
     ///   A resumed epoch at or past its boundary (`E ≤ now`) that has no artifact
     ///   is `Acquiring(ArtifactForCeremony)` rather than `Sealed`: its agreement
     ///   ran without this node, so the artifact is at the peers, not in an
@@ -3245,19 +3249,20 @@ where
                 tracing::warn!(
                     epoch,
                     "live DKG: ceremony journal present but unreadable/torn at or after the \
-                     seal deadline — sitting out this epoch (we already participated; \
-                     re-dealing would self-equivocate)"
+                     seal deadline — never re-dealing (we may already have sealed); healing \
+                     the share as a player over the pinned bodies"
                 );
-                return quiet(EpochState::SatOut { key });
+                self.evict_journal(epoch);
+                return quiet(self.heal_or_acquire(epoch, &committee, agreed));
             }
             JournalLoad::NoFile if past_seal => {
                 tracing::warn!(
                     epoch,
-                    "live DKG: no ceremony journal at or after the seal deadline — sitting out \
-                     this epoch (a lost journal cannot prove we never sealed; re-dealing would \
-                     self-equivocate)"
+                    "live DKG: no ceremony journal at or after the seal deadline — never \
+                     re-dealing (a lost journal cannot prove we never sealed); healing the \
+                     share as a player over the pinned bodies"
                 );
-                return quiet(EpochState::SatOut { key });
+                return quiet(self.heal_or_acquire(epoch, &committee, agreed));
             }
             JournalLoad::Torn => {
                 tracing::warn!(
@@ -3777,8 +3782,9 @@ where
     /// 1. Every phase that still needs the epoch's artifact — ask peers for it
     ///    ([`PullArtifact`]): the member whose instance lost its body or which is
     ///    being recovered past its boundary (`ArtifactForCeremony`), the member with
-    ///    a share file and no artifact (`ArtifactForShare`, §5.4's partial success),
-    ///    a sat-out / unrecoverable member (it still verifies with `PK_E`), and the
+    ///    a share file and no artifact or the post-seal absentee whose heal the
+    ///    artifact scopes (`ArtifactForShare`), an unrecoverable member (it still
+    ///    verifies with `PK_E`), and the
     ///    NON-MEMBER of a mint epoch that needs `PK_E` to verify its certificates
     ///    (`ArtifactForKey`, I4 / R-121 / R-122 — until this existed nothing asked
     ///    for a non-member's key on the frontier: the epoch manager's repair sweep
@@ -4442,12 +4448,11 @@ mod clock_tests {
     const BOUNDARY: u64 = INTERVAL * DETERMINISTIC_BOOTSTRAP_EPOCH; // 60 = epoch_start(2)
     /// A POSITIVE deal window (`INTERVAL − DKG_MARGIN_BLOCKS = 10` ticks): the
     /// epoch-2 ceremony is created by `recover(2)` at epoch-1 start (height 30)
-    /// and sealed at the seal deadline (40). It used to be `INTERVAL = 20`, a
-    /// ZERO-width window where the start landed exactly AT the deadline — which
-    /// only ever worked because a missing journal at the deadline started fresh
-    /// (R-036, closed by 5.3-А1: at/after the deadline it sits out; that geometry
-    /// is kept as ONE fixture,
-    /// `at_a_zero_width_deal_window_a_missing_journal_at_the_deadline_sits_out`).
+    /// and sealed at the seal deadline (40). A ZERO-width window (`INTERVAL =
+    /// 20`, the start exactly AT the deadline) never deals: a missing journal
+    /// at/after the deadline heals as a player, so that geometry is kept as ONE
+    /// fixture,
+    /// `at_a_zero_width_deal_window_a_missing_journal_at_the_deadline_heals_not_deals`.
     /// Every SEAL_DEADLINE/BOUNDARY-relative drive below keeps its meaning.
     /// (Production uses a much larger interval; this is the minimal test
     /// geometry, not a protocol constraint.)
@@ -8165,13 +8170,13 @@ mod clock_tests {
         });
     }
 
-    /// The epoch slots — every per-epoch fact, the sit-out memory included — are
-    /// bounded by the retention window.
+    /// The epoch slots — every per-epoch fact, the terminal verdicts included —
+    /// are bounded by the retention window.
     ///
-    /// `SatOut` is the load-bearing phase: `recover` never re-decides a decided
-    /// epoch, so a slot for a target the actor can still reach MUST survive the
-    /// sweep (dropping it would re-open a settled sit-out, and re-dealing
-    /// self-equivocates), and only slots below the floor may go.
+    /// `Unrecoverable` is the load-bearing phase: `recover` never re-decides a
+    /// decided epoch, so a slot for a target the actor can still reach MUST
+    /// survive the sweep (dropping it would re-open a settled verdict and re-run
+    /// its heal from scratch), and only slots below the floor may go.
     ///
     /// Self-verifying: it asserts the map actually grew before asserting it was
     /// pruned, so it cannot pass vacuously on an actor that decides nothing.
@@ -8229,30 +8234,31 @@ mod clock_tests {
             assert!(actor.epochs.len() > JOURNAL_RETENTION_EPOCHS as usize);
 
             // Seed the load-bearing phase by hand, on both sides of the floor: a
-            // standalone actor without a share dir has no way to produce a `SatOut`.
-            // One epoch strictly below the retention floor, derived from the window so the
-            // case stays a real aged-out slot when the window changes.
+            // standalone actor without a share dir has no way to produce an
+            // `Unrecoverable`. One epoch strictly below the retention floor, derived
+            // from the window so the case stays a real aged-out slot when the
+            // window changes.
             let aged_out = now - JOURNAL_RETENTION_EPOCHS - 1;
             actor.epochs.remove(&reachable);
-            actor.enter(reachable, EpochState::SatOut { key: None });
-            actor.enter(aged_out, EpochState::SatOut { key: None });
-            assert_eq!(actor.metrics.stalled_gauge(StallReason::SatOut), 2);
+            actor.enter(reachable, EpochState::Unrecoverable { key: None });
+            actor.enter(aged_out, EpochState::Unrecoverable { key: None });
+            assert_eq!(actor.metrics.stalled_gauge(StallReason::Unrecoverable), 2);
 
             // One more tick: the sweep runs at the same `now` that feeds `recover`.
             actor.on_height(INTERVAL * last, &mut arng).await;
             assert_eq!(
-                actor.metrics.stalled_gauge(StallReason::SatOut),
+                actor.metrics.stalled_gauge(StallReason::Unrecoverable),
                 1,
                 "the aged-out slot's latch steps the gauge down with it"
             );
 
             // SAFETY: a slot the actor can still reach as a target must survive. Dropping
-            // it would re-open a settled sit-out, and re-dealing self-equivocates.
+            // it would re-open a settled verdict and re-run its heal from scratch.
             assert_eq!(
                 actor.phase(reachable),
-                Some("sat_out"),
-                "the sweep dropped the sit-out for a target recover can still reach — \
-                 re-dealing that epoch would self-equivocate"
+                Some("unrecoverable"),
+                "the sweep dropped the verdict for a target recover can still reach — \
+                 the epoch would be re-decided and its heal re-run"
             );
 
             // BOUND: nothing below the floor survives.
@@ -10648,9 +10654,9 @@ mod clock_tests {
                 "no dealer log is fetched for an epoch that can no longer be recomputed"
             );
             // Every epoch in the window is asked for except the expired one (each is a
-            // mint epoch this member never dealt for, past its seal: `SatOut`, which
-            // still needs `PK_E` to verify), and the window is the crate's constant —
-            // so the expectation is derived from it.
+            // mint epoch this member never dealt for, past its seal: it waits for the
+            // artifact its heal is scoped to), and the window is the crate's constant
+            // — so the expectation is derived from it.
             let now = 2 + crate::beacon::JOURNAL_RETENTION_EPOCHS + 1;
             let lo = now
                 .saturating_sub(crate::beacon::JOURNAL_RETENTION_EPOCHS)
@@ -11879,13 +11885,8 @@ mod clock_tests {
         });
     }
 
-    /// §5.2 restart table, cell (NoFile, h ≥ seal): a lost journal at the deadline
-    /// cannot prove this node never sealed, so it sits out — it used to start fresh
-    /// and seal a SECOND, differently-acked log (R-036 / E5-15). `Stalled{SatOut}`
-    /// is raised once, and the epoch still asks for the artifact it needs to
-    /// verify with.
     #[test]
-    fn recover_no_journal_at_the_seal_deadline_sits_out() {
+    fn recover_no_journal_at_the_seal_deadline_waits_for_the_artifact_to_heal() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             let oracle = sim_oracle(&ctx);
@@ -11901,29 +11902,306 @@ mod clock_tests {
             };
             let mut out = Vec::new();
             assert!(!actor.decide(DETERMINISTIC_BOOTSTRAP_EPOCH, &mut out).await);
-            assert_eq!(actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH), Some("sat_out"));
+            assert_eq!(
+                actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH),
+                Some("acquiring_artifact_for_share")
+            );
             assert!(out.is_empty(), "nothing is dealt or re-sealed");
+            assert!(actor.ceremony(DETERMINISTIC_BOOTSTRAP_EPOCH).is_none());
             assert!(
                 !journal_path(&dir, DETERMINISTIC_BOOTSTRAP_EPOCH).exists(),
-                "no journal is written for an epoch sat out"
+                "no journal is written for an epoch this node did not deal for"
             );
-            assert!(actor
-                .stalls(DETERMINISTIC_BOOTSTRAP_EPOCH)
-                .contains(&StallReason::SatOut));
-            // The verdict is memory, not a per-tick retry: two more ticks re-decide
-            // nothing and the latch stays one.
+            assert!(actor.stalls(DETERMINISTIC_BOOTSTRAP_EPOCH).is_empty());
             let mut arng = StdRng::seed_from_u64(1);
             actor.on_height(BOUNDARY, &mut arng).await;
             actor.on_height(BOUNDARY + 1, &mut arng).await;
-            assert_eq!(actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH), Some("sat_out"));
             assert_eq!(
-                actor.stalls(DETERMINISTIC_BOOTSTRAP_EPOCH).len(),
-                2,
-                "SatOut + NoArtifact"
+                actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH),
+                Some("acquiring_artifact_for_share")
+            );
+            assert_eq!(
+                actor.stalls(DETERMINISTIC_BOOTSTRAP_EPOCH),
+                BTreeSet::from([StallReason::NoArtifact])
             );
             assert!(
                 !asked.lock().expect("asked").is_empty(),
-                "a sat-out member still acquires the epoch's key to verify with"
+                "the absentee asks for the artifact its heal is scoped to"
+            );
+            let _ = std::fs::remove_dir_all(&dir);
+        });
+    }
+
+    /// An epoch-2 ceremony node 0 was absent from: peers 1..3 sealed, the artifact is theirs.
+    struct AbsentEpoch2 {
+        committee: Set<PeerPubkey>,
+        key0: Ed25519PrivateKey,
+        logs: Vec<(PeerPubkey, DealerReveal)>,
+        pinned: Vec<(u8, B256)>,
+        outcome_bytes: Vec<u8>,
+    }
+
+    /// Node 0 never acks, so every sealed log reveals its point (self-checked).
+    fn node0_absent_epoch2_artifact(seed: u64) -> AbsentEpoch2 {
+        use commonware_cryptography::bls12381::dkg::{observe, DealerLogSummary, Logs};
+        let mut rng = StdRng::seed_from_u64(seed);
+        let keys: Vec<Ed25519PrivateKey> = (0..4)
+            .map(|_| Ed25519PrivateKey::random(&mut rng))
+            .collect();
+        let committee = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
+        let me0 = keys[0].public_key();
+        let logs = mint_committee_logs_at(&keys[1..], &committee, DETERMINISTIC_BOOTSTRAP_EPOCH);
+        let info = info_for_test(&committee);
+        let mut recorded = Logs::<
+            commonware_cryptography::bls12381::primitives::variant::MinSig,
+            PeerPubkey,
+            N3f1,
+        >::new(info.clone());
+        let mut pinned = Vec::new();
+        for (dealer, signed) in &logs {
+            let (pk, log) = signed.clone().check(&info).expect("a sealed log checks");
+            assert_eq!(pk, *dealer);
+            match log.summary() {
+                DealerLogSummary::Ok { reveals, .. } => assert!(
+                    reveals.iter().any(|p| *p == me0),
+                    "the fixture is not an absentee's: a dealer holds node 0's ack"
+                ),
+                DealerLogSummary::TooManyReveals => panic!("one reveal is within f"),
+            }
+            let idx = committee
+                .iter()
+                .position(|p| p == dealer)
+                .expect("a committee seat");
+            pinned.push((u8::try_from(idx).expect("fits"), log_hash(signed)));
+            recorded.record(pk, log);
+        }
+        let outcome = observe::<_, _, N3f1, commonware_cryptography::ed25519::Batch>(
+            &mut rng,
+            recorded,
+            &commonware_parallel::Sequential,
+        )
+        .expect("the three logs are a dealer quorum of four");
+        let outcome_bytes = crate::beacon::outcome::encode_outcome(&outcome);
+        AbsentEpoch2 {
+            committee,
+            key0: keys[0].clone(),
+            logs,
+            pinned,
+            outcome_bytes,
+        }
+    }
+
+    #[test]
+    fn an_absentee_restarted_after_the_seal_heals_its_share_from_the_reveals() {
+        let _guard = COLD_PARSE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let oracle = sim_oracle(&ctx);
+            let AbsentEpoch2 {
+                committee,
+                key0,
+                logs,
+                pinned,
+                outcome_bytes,
+            } = node0_absent_epoch2_artifact(140);
+            oracle.manager().track(0, committee.clone()).await;
+            let me0 = key0.public_key();
+            let dir = fresh_share_dir("absentee-heal");
+            let mut actor =
+                restarted_actor(&oracle, key0, committee.clone(), dir.clone(), SEAL_DEADLINE).await;
+            actor.outcome_at = artifact_reader(
+                DETERMINISTIC_BOOTSTRAP_EPOCH,
+                pinned.clone(),
+                &outcome_bytes,
+            );
+            let mut out = Vec::new();
+            assert!(!actor.decide(DETERMINISTIC_BOOTSTRAP_EPOCH, &mut out).await);
+            assert_eq!(
+                actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH),
+                Some("acquiring_logs")
+            );
+            assert!(out.is_empty(), "nothing is dealt or re-sealed");
+            assert!(actor.ceremony(DETERMINISTIC_BOOTSTRAP_EPOCH).is_none());
+            let want = match actor.state(DETERMINISTIC_BOOTSTRAP_EPOCH) {
+                Some(EpochState::Acquiring(Acquire::Logs(st))) => st.want.clone(),
+                other => panic!("expected the heal, got {:?}", other.map(EpochState::name)),
+            };
+            assert_eq!(
+                want.len(),
+                pinned.len(),
+                "an empty journal holds none of the pinned bodies: every one is wanted"
+            );
+            assert!(
+                !journal_path(&dir, DETERMINISTIC_BOOTSTRAP_EPOCH).exists(),
+                "deciding writes nothing"
+            );
+
+            let mut arng = StdRng::seed_from_u64(7);
+            for (i, (dealer, signed)) in logs.iter().enumerate() {
+                let key = DkgLogKey {
+                    epoch: DETERMINISTIC_BOOTSTRAP_EPOCH,
+                    dealer: dealer.clone(),
+                    hash: log_hash(signed),
+                };
+                assert!(want.contains(&(dealer.clone(), key.hash)));
+                assert!(
+                    actor.ingest_log(&key, signed.encode(), &mut arng).await,
+                    "the pinned body is accepted"
+                );
+                if i + 1 < logs.len() {
+                    assert_eq!(
+                        actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH),
+                        Some("acquiring_logs"),
+                        "no recompute before every pinned body is held"
+                    );
+                }
+            }
+            assert_eq!(actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH), Some("keyed"));
+            let share = actor
+                .store
+                .read()
+                .expect("store")
+                .get(&DETERMINISTIC_BOOTSTRAP_EPOCH)
+                .cloned()
+                .expect("the absentee holds a share for the epoch");
+            let outcome = crate::beacon::outcome::parse_outcome(&outcome_bytes).expect("outcome");
+            assert!(
+                validate_share_on_poly(&outcome, &committee, &me0, &share),
+                "the recomputed share lies on the certified polynomial at node 0's index"
+            );
+            assert_eq!(actor.metrics.dkg_ceremony_ok.get(), 1);
+            assert_eq!(actor.metrics.dkg_share_unrecoverable.get(), 0);
+            assert!(actor.stalls(DETERMINISTIC_BOOTSTRAP_EPOCH).is_empty());
+            assert!(
+                !journal_path(&dir, DETERMINISTIC_BOOTSTRAP_EPOCH).exists(),
+                "the journal the heal wrote is superseded by the share file"
+            );
+            actor.on_height(BOUNDARY, &mut arng).await;
+            actor.on_height(BOUNDARY + 1, &mut arng).await;
+            assert_eq!(actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH), Some("keyed"));
+            assert_eq!(actor.metrics.dkg_ceremony_ok.get(), 1);
+            let _ = std::fs::remove_dir_all(&dir);
+        });
+    }
+
+    /// The dealers hold node 0's acks, so no pinned body reveals its point.
+    #[test]
+    fn an_absentee_heal_over_an_acked_dealing_is_unrecoverable_not_a_loop() {
+        let _guard = COLD_PARSE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let runtime = deterministic::Runner::default();
+        runtime.start(|ctx| async move {
+            let oracle = sim_oracle(&ctx);
+            let (committee, key0, journal) = node0_pre_seal_journal_full_sealed(141);
+            oracle.manager().track(0, committee.clone()).await;
+            let info = info_for_test(&committee);
+            let logs: Vec<(PeerPubkey, DealerReveal)> = journal
+                .iter()
+                .filter_map(|r| match r {
+                    JournalRecord::OwnSeal(signed) | JournalRecord::PeerLog(signed) => {
+                        let (pk, _) = (**signed).clone().check(&info).expect("checks");
+                        Some((pk, (**signed).clone()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(logs.len(), 4, "every member sealed");
+            let pinned: Vec<(u8, B256)> = logs
+                .iter()
+                .map(|(dealer, signed)| {
+                    let idx = committee.iter().position(|p| p == dealer).expect("seat");
+                    (u8::try_from(idx).expect("fits"), log_hash(signed))
+                })
+                .collect();
+            let mut frng = StdRng::seed_from_u64(2);
+            let mut canon = DkgCeremony::resume(
+                b"FLUENT_DPOS_V1_clocktest",
+                DETERMINISTIC_BOOTSTRAP_EPOCH,
+                committee.clone(),
+                key0.clone(),
+                journal,
+                false,
+                &BTreeMap::new(),
+            )
+            .expect("resume");
+            let (outcome, _share) = canon
+                .ceremony
+                .finalize_over_pinned(
+                    &mut frng,
+                    &committee,
+                    &pinned.iter().copied().collect::<BTreeMap<u8, B256>>(),
+                )
+                .expect("the canonical finalize");
+            let outcome_bytes = crate::beacon::outcome::encode_outcome(&outcome);
+
+            let dir = fresh_share_dir("absentee-acked");
+            let resolver = RecordingResolver::default();
+            let in_flight = resolver.in_flight.clone();
+            let committee_for: CommitteeFor = {
+                let set = committee.clone();
+                Arc::new(move |_e: u64| Some(set.clone()))
+            };
+            let mut actor = standalone_actor_at(
+                &oracle,
+                key0,
+                committee_for,
+                Some(dir.clone()),
+                INTERVAL,
+                Wiring::inert(resolver),
+            )
+            .await;
+            actor.last_height = Some(SEAL_DEADLINE);
+            actor.outcome_at = artifact_reader(
+                DETERMINISTIC_BOOTSTRAP_EPOCH,
+                pinned.clone(),
+                &outcome_bytes,
+            );
+            let mut out = Vec::new();
+            assert!(!actor.decide(DETERMINISTIC_BOOTSTRAP_EPOCH, &mut out).await);
+            assert_eq!(
+                actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH),
+                Some("acquiring_logs")
+            );
+            assert!(out.is_empty(), "nothing is dealt or re-sealed");
+
+            let mut arng = StdRng::seed_from_u64(7);
+            for (dealer, signed) in &logs {
+                let key = DkgLogKey {
+                    epoch: DETERMINISTIC_BOOTSTRAP_EPOCH,
+                    dealer: dealer.clone(),
+                    hash: log_hash(signed),
+                };
+                assert!(actor.ingest_log(&key, signed.encode(), &mut arng).await);
+            }
+            assert_eq!(
+                actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH),
+                Some("unrecoverable")
+            );
+            assert_eq!(actor.metrics.dkg_share_unrecoverable.get(), 1);
+            assert_eq!(actor.metrics.dkg_ceremony_ok.get(), 0);
+            assert!(actor.store.read().expect("store").is_empty());
+            assert_eq!(
+                actor.stalls(DETERMINISTIC_BOOTSTRAP_EPOCH),
+                BTreeSet::from([StallReason::Unrecoverable])
+            );
+
+            actor.on_height(BOUNDARY, &mut arng).await;
+            actor.on_height(BOUNDARY + 1, &mut arng).await;
+            assert_eq!(
+                actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH),
+                Some("unrecoverable")
+            );
+            assert_eq!(actor.metrics.dkg_share_unrecoverable.get(), 1);
+            assert!(
+                !in_flight
+                    .lock()
+                    .expect("in flight")
+                    .iter()
+                    .any(|k| k.epoch == DETERMINISTIC_BOOTSTRAP_EPOCH),
+                "no dealer log is fetched for an unrecoverable epoch"
             );
             let _ = std::fs::remove_dir_all(&dir);
         });
@@ -11962,28 +12240,51 @@ mod clock_tests {
         });
     }
 
-    /// §5.2 restart table, cell (Torn, h ≥ seal): this node participated and may
-    /// have sealed; it sits out, exactly as before.
+    /// A torn file stays `Torn` whatever is appended after it, so it goes before the heal.
     #[test]
-    fn recover_torn_journal_at_the_seal_deadline_sits_out() {
+    fn recover_torn_journal_at_the_seal_deadline_evicts_it_and_heals_as_a_player() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             let oracle = sim_oracle(&ctx);
-            let (committee, key0, _journal) = node0_pre_seal_journal_full_sealed(104);
+            let AbsentEpoch2 {
+                committee,
+                key0,
+                pinned,
+                outcome_bytes,
+                ..
+            } = node0_absent_epoch2_artifact(104);
             oracle.manager().track(0, committee.clone()).await;
             let dir = fresh_share_dir("recover-torn-post");
             write_torn_journal(&dir, DETERMINISTIC_BOOTSTRAP_EPOCH);
             let mut actor =
                 restarted_actor(&oracle, key0, committee, dir.clone(), SEAL_DEADLINE).await;
+            actor.outcome_at = artifact_reader(
+                DETERMINISTIC_BOOTSTRAP_EPOCH,
+                pinned.clone(),
+                &outcome_bytes,
+            );
             let mut out = Vec::new();
             assert!(!actor.decide(DETERMINISTIC_BOOTSTRAP_EPOCH, &mut out).await);
-            assert_eq!(actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH), Some("sat_out"));
+            assert_eq!(
+                actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH),
+                Some("acquiring_logs")
+            );
+            assert!(out.is_empty(), "nothing is dealt or re-sealed");
             assert!(
                 matches!(
                     actor.load_journal(DETERMINISTIC_BOOTSTRAP_EPOCH),
-                    JournalLoad::Torn
+                    JournalLoad::NoFile
                 ),
-                "the torn journal is left as it is: evidence, not a fresh start"
+                "the torn file is removed: the fetched bodies must land in a loadable journal"
+            );
+            let want = match actor.state(DETERMINISTIC_BOOTSTRAP_EPOCH) {
+                Some(EpochState::Acquiring(Acquire::Logs(st))) => st.want.clone(),
+                other => panic!("expected the heal, got {:?}", other.map(EpochState::name)),
+            };
+            assert_eq!(
+                want.len(),
+                pinned.len(),
+                "a torn journal holds nothing: every pinned body is wanted"
             );
             let _ = std::fs::remove_dir_all(&dir);
         });
@@ -13306,23 +13607,23 @@ mod clock_tests {
             let (committee, key0, _journal) = node0_pre_seal_journal_full_sealed(121);
             oracle.manager().track(0, committee.clone()).await;
             let mut actor = standalone_actor(&oracle, key0, committee, None).await;
-            actor.enter(3, EpochState::SatOut { key: None });
-            assert_eq!(actor.metrics.stalled_gauge(StallReason::SatOut), 1);
+            actor.enter(3, EpochState::Unrecoverable { key: None });
+            assert_eq!(actor.metrics.stalled_gauge(StallReason::Unrecoverable), 1);
             actor.enter(
                 3,
-                EpochState::SatOut {
+                EpochState::Unrecoverable {
                     key: Some(B256::repeat_byte(7)),
                 },
             );
             assert_eq!(
-                actor.metrics.stalled_gauge(StallReason::SatOut),
+                actor.metrics.stalled_gauge(StallReason::Unrecoverable),
                 1,
                 "the standing latch is kept, not re-raised on a fresh slot"
             );
             assert_eq!(actor.stalls(3).len(), 1);
             actor.enter(3, EpochState::KeyOnly { digest: None });
             assert_eq!(
-                actor.metrics.stalled_gauge(StallReason::SatOut),
+                actor.metrics.stalled_gauge(StallReason::Unrecoverable),
                 0,
                 "a phase that does not carry the latch drops it with its gauge step"
             );
@@ -13474,14 +13775,11 @@ mod clock_tests {
         });
     }
 
-    /// DB-11 / DA-12, the OLD geometry (`interval = DKG_MARGIN_BLOCKS`, a
-    /// zero-width deal window): epoch 2's seal deadline IS epoch 1's first
-    /// height, so the first tick at which epoch 2 is decidable is already at the
-    /// deadline. Before 5.3-А1 that started a ceremony (R-036, `NoFile ⇒
-    /// start_fresh` with no deadline gate) — the only reason the old fixtures
-    /// dealt at all. Now it sits out: no journal, no dealing, `Stalled{SatOut}`.
+    /// A zero-width deal window (`interval = DKG_MARGIN_BLOCKS`): epoch 2's seal
+    /// deadline IS epoch 1's first height, so the first tick at which epoch 2 is
+    /// decidable is already at the deadline.
     #[test]
-    fn at_a_zero_width_deal_window_a_missing_journal_at_the_deadline_sits_out() {
+    fn at_a_zero_width_deal_window_a_missing_journal_at_the_deadline_heals_not_deals() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             let oracle = sim_oracle(&ctx);
@@ -13509,15 +13807,19 @@ mod clock_tests {
             );
             let mut arng = StdRng::seed_from_u64(1);
             actor.on_height(deadline, &mut arng).await;
-            assert_eq!(actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH), Some("sat_out"));
+            assert_eq!(
+                actor.phase(DETERMINISTIC_BOOTSTRAP_EPOCH),
+                Some("acquiring_artifact_for_share")
+            );
             assert!(actor.ceremony(DETERMINISTIC_BOOTSTRAP_EPOCH).is_none());
             assert!(
                 !journal_path(&dir, DETERMINISTIC_BOOTSTRAP_EPOCH).exists(),
                 "nothing was dealt"
             );
-            assert!(actor
-                .stalls(DETERMINISTIC_BOOTSTRAP_EPOCH)
-                .contains(&StallReason::SatOut));
+            assert!(
+                actor.stalls(DETERMINISTIC_BOOTSTRAP_EPOCH).is_empty(),
+                "before the boundary the wait for the artifact carries no latch"
+            );
             let _ = std::fs::remove_dir_all(&dir);
         });
     }

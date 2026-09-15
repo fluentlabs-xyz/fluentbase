@@ -822,7 +822,7 @@ def _heal_log(fresh=True, heal=None, road=vf.SHARE_LINE, promote=True,
     `pre_stop_ceremony` writes a `ceremony started` BEFORE the boot marker — the shape a victim
     stopped mid-deal-phase leaves behind, and the one the setup gate has to reject.
 
-    `heal` is the `(want, dealers)` of the heal-DETECT line, the setup gate's SECOND witness: the
+    `heal` is the `(want, pinned)` of the heal-DETECT line, the setup gate's SECOND witness: the
     demote-heal road reaches the share with no ceremony at all, so `fresh=False, heal=(n, n)` is a
     correct run and not a failure — see `vf.evaluate_victim_held_nothing`."""
     out = []
@@ -833,7 +833,7 @@ def _heal_log(fresh=True, heal=None, road=vf.SHARE_LINE, promote=True,
         out.append(f"INFO {vf.CEREMONY_STARTED_LINE} epoch=2")
     if heal is not None:
         out.append(f"INFO live DKG: demoted committee member detected \u2014 "
-                   f"{vf.HEAL_START_LINE} epoch=2 want={heal[0]} dealers={heal[1]}")
+                   f"{vf.HEAL_START_LINE} epoch=2 want={heal[0]} pinned={heal[1]}")
     if road:
         out.append(f"INFO {road} epoch=2 height=257")
     if promote:
@@ -915,7 +915,7 @@ def test_assert_vrf_dkg_live_heal_refuses_to_run_past_the_DEAL_window(monkeypatc
 
 def test_assert_vrf_dkg_live_heal_passes_on_the_demote_heal_road_with_no_ceremony(monkeypatch):
     """THE RUN THE OLD GATE FAILED THREE TIMES, end to end through the case body. The victim came
-    back holding nothing, the demote-heal fetched every pinned dealer's log (`want == dealers`)
+    back holding nothing, the demote-heal fetched every pinned dealer's log (`want == pinned`)
     and recomputed — `start_fresh` never ran, so there is no `ceremony started` to read, and the
     old single-witness gate called that a journal."""
     ctx, _ = _dkg_world(monkeypatch, finalized_dec=_fin(),
@@ -925,7 +925,7 @@ def test_assert_vrf_dkg_live_heal_passes_on_the_demote_heal_road_with_no_ceremon
 
 
 def test_assert_vrf_dkg_live_heal_fails_when_the_victim_came_back_with_a_journal(monkeypatch):
-    """THE SETUP GATE. `want < dealers` at the heal means the journal already held some dealer
+    """THE SETUP GATE. `want < pinned` at the heal means the journal already held some dealer
     logs — the victim had received and ACKED those dealings before it went down, so it rebuilds
     from its own records and their dealers reveal nothing. Every other leg here stays green on
     that run, which is why the gate exists."""

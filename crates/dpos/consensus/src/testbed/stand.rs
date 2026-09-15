@@ -912,6 +912,8 @@ pub(super) struct Outcome {
     /// `i` holds for epoch `e` (`Beacon::Live`; empty otherwise). Read through
     /// the plane's own `ArtifactSource` — what `consensus_getEpochArtifact` serves.
     pub artifacts: Vec<BTreeMap<u64, Vec<u8>>>,
+    /// `signable[i]` = the epochs node `i`'s beacon answers `ShareProbe::Ready` for at the end.
+    pub signable: Vec<Vec<u64>>,
     /// `et_steps[i]` = every `cold_start` / `on_finalized` node `i`'s
     /// `EpochTransition` answered, in call order.
     pub et_steps: Vec<Vec<EtStep>>,
@@ -1574,6 +1576,8 @@ struct NodeHandles {
     upstream: UpstreamCounters,
     /// `Beacon::Live`: the beacon's artifact read.
     artifacts: Option<ArtifactSource>,
+    /// The node's ONE beacon, for the post-run share-gate read.
+    beacon: Arc<dyn beacon::Beacon>,
     observer: EtObserver,
     staking: FakeStaking,
     /// The node's ONE committee module, for the post-run record scan.
@@ -1987,6 +1991,16 @@ async fn drive(
             None => BTreeMap::new(),
         })
         .collect();
+    let signable: Vec<Vec<u64>> = nodes
+        .iter()
+        .map(|node| {
+            (0..=max_epoch + 2)
+                .filter(|e| {
+                    node.beacon.can_participate(Epoch::new(*e)) == beacon::ShareProbe::Ready
+                })
+                .collect()
+        })
+        .collect();
     let geometry: Vec<Option<(u64, u64)>> = nodes
         .iter()
         .map(|node| *node.observer.geometry.lock().unwrap())
@@ -2115,6 +2129,7 @@ async fn drive(
         traces,
         seeds,
         artifacts,
+        signable,
         et_steps,
         et_boundaries,
         geometry,
@@ -2958,6 +2973,7 @@ async fn build_node(
     // The committee module's verifier can build now — every epoch it reads from
     // here on gets its scheme bound to THIS node's beacon oracle.
     crate::committee::fill_beacon_slot(&beacon_slot, &randomness);
+    let beacon_handle = randomness.clone();
 
     let outer = OuterBuilder {
         me: me.clone(),
@@ -3388,6 +3404,7 @@ async fn build_node(
         trace,
         upstream: upstream_counters,
         artifacts,
+        beacon: beacon_handle,
         observer,
         staking,
         committee,

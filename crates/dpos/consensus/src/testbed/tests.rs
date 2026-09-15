@@ -2025,6 +2025,172 @@ fn restart_without_the_share_dirs_parks_the_chain_verify_only() {
     );
 }
 
+/// Node 1 is cut after the restart so every later block needs node 3's vote and partial.
+#[test]
+fn an_absentee_restarted_after_the_seal_heals_its_share_and_signs() {
+    const CUT_AT: u64 = 20;
+    const HEAL_ABOVE: u64 = 2 * EPOCH_LEN + 2;
+    const SEAL_2: u64 = 2 * EPOCH_LEN - crate::beacon::testing::DKG_MARGIN_BLOCKS;
+    const STOP_1: u64 = 90;
+    let cfg = StandConfig::live(4, 1);
+    let mut stand = Stand::new(cfg.clone());
+    stand
+        .partition(&[0, 1, 2], &[3])
+        .after_height(CUT_AT)
+        .consensus_only()
+        .heal_above(HEAL_ABOVE);
+    let (first, checkpoint) =
+        Stand::run_until_recover(stand, reached(STOP_1), Duration::from_secs(300));
+    assert!(!first.timed_out, "phase 1: {:?}", first.heights);
+    assert!(first.halted.is_empty(), "{:?}", first.halted);
+    let cut = &first.partitions[0];
+    assert!(
+        !cut.heights_at_cut.is_empty() && cut.heights_at_cut.iter().all(|h| *h < EPOCH_LEN),
+        "the cut must land before epoch 2's deal window opens: {cut:?}"
+    );
+    assert!(
+        cut.heights_at_heal
+            .iter()
+            .copied()
+            .max()
+            .is_some_and(|h| h >= HEAL_ABOVE),
+        "the cut must hold past the seal and the boundary: {cut:?}"
+    );
+    let all = [0, 1, 2, 3];
+    let artifact1 = artifact_on_every_node(&first, &all, 2).to_vec();
+    let pinned1: Vec<u8> = decode_artifact(&artifact1)
+        .expect("decodes")
+        .0
+        .logs
+        .iter()
+        .map(|(idx, _)| *idx)
+        .collect();
+    let seats = committee_seats(1, 4);
+    assert_eq!(
+        pinned1.len(),
+        3,
+        "PK_2 was not minted over exactly the three present dealers: {pinned1:?}"
+    );
+    assert!(
+        !pinned1.contains(&seats[3]),
+        "PK_2 was minted over a set that includes the absentee's log: seat {} in {pinned1:?}",
+        seats[3]
+    );
+    for node in [0, 1, 2] {
+        assert!(
+            pinned1.contains(&seats[node]),
+            "node {node}'s seat {} is not pinned in {pinned1:?}",
+            seats[node]
+        );
+    }
+    let pk = pk_of(&artifact1);
+    seed_agreed_at(&first, &all, 2 * EPOCH_LEN, 2, &pk);
+    assert!(
+        first.signable[3].contains(&2),
+        "node 3 did not key in-process after the heal: {:?}",
+        first.signable[3]
+    );
+    assert!(
+        first.heights[3] >= SEAL_2,
+        "node 3's clock is not past seal(2) at the checkpoint"
+    );
+
+    let node3 = cfg.share_root.join("node3");
+    for file in ["beacon-dkgjournal-e2.bin", "beacon-share-e2.bin"] {
+        let path = node3.join(file);
+        assert!(path.exists(), "node 3 has no {file} to lose");
+        std::fs::remove_file(&path).expect("remove node 3's epoch-2 file");
+    }
+
+    let resume_from = STOP_1;
+    let mut cfg = cfg;
+    cfg.resume_from = Some((resume_from, finalized_hash_at(&first, resume_from)));
+    let mut stand = Stand::new(cfg);
+    let cut_at = resume_from + 12;
+    let stop = cut_at + 28;
+    stand
+        .partition(&[0, 2, 3], &[1])
+        .after_height(cut_at)
+        .heal_above(u64::MAX);
+    let second = stand.replay(
+        checkpoint,
+        move |p| p.min_height_of(&[0, 2, 3]) >= stop,
+        Duration::from_secs(300),
+    );
+    let cell = second.logs_containing("no ceremony journal at or after the seal deadline");
+    eprintln!(
+        "(B4″) phase1 heights={:?} real={:?}; phase2 heights={:?} real={:?} cut={:?} \
+         signable={:?} ceremony_ok={:?} unrecoverable={:?} cell_lines={} warns={:?}",
+        first.heights,
+        first.real_elapsed,
+        second.heights,
+        second.real_elapsed,
+        second.partitions.first().map(|p| p.heights_at_cut.clone()),
+        second.signable,
+        (0..4)
+            .map(|i| second.metric(i, "dkg_ceremony_ok_total"))
+            .collect::<Vec<_>>(),
+        (0..4)
+            .map(|i| second.metric(i, "dpos_dkg_share_unrecoverable_total"))
+            .collect::<Vec<_>>(),
+        cell.len(),
+        second
+            .logs
+            .iter()
+            .map(|l| l.text.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !cell.is_empty(),
+        "the restart never hit the (NoFile, h ≥ seal) cell — the fixture proves nothing"
+    );
+    assert!(
+        !second.timed_out,
+        "the chain parked once node 1 was cut: the absentee did not sign — heights {:?} \
+         halted {:?} errors {:?}",
+        second.heights,
+        second.halted,
+        second.errors()
+    );
+    assert!(second.halted.is_empty(), "{:?}", second.halted);
+    assert_eq!(second.diverged, None);
+    assert!(second.errors().is_empty(), "{:?}", second.errors());
+    second.assert_lockstep_except(&[1]);
+    let cut2 = &second.partitions[0];
+    assert!(
+        !cut2.heights_at_cut.is_empty(),
+        "node 1 was never cut, so nothing here needed node 3's partial: {cut2:?}"
+    );
+    assert_eq!(
+        second.metric(3, "dkg_ceremony_ok_total"),
+        Some(1.0),
+        "node 3 adopted a share other than exactly once (the heal)"
+    );
+    assert_eq!(
+        second.metric(3, "dpos_dkg_share_unrecoverable_total"),
+        Some(0.0),
+        "node 3's heal ended in the terminal"
+    );
+    let last_epoch = *second.heights.iter().max().expect("heights") / EPOCH_LEN;
+    for e in 2..=last_epoch {
+        assert!(
+            second.signable[3].contains(&e),
+            "node 3's share-gate is not Ready for epoch {e}: {:?}",
+            second.signable[3]
+        );
+    }
+    let alive = [0, 2, 3];
+    let min = alive.iter().map(|&i| second.heights[i]).min().unwrap();
+    for h in cut_at + 1..=min {
+        seed_agreed_at(&second, &alive, h, h / EPOCH_LEN, &pk);
+    }
+    assert_eq!(
+        proposal_bytes(artifact_on_every_node(&second, &all, 2)),
+        proposal_bytes(&artifact1),
+        "the epoch-2 agreed proposal changed across the replay"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // (C) The boundary walk through the production `EpochTransition` over the fake
 // staking state. Step 5 of the Э3.2 evaluation.

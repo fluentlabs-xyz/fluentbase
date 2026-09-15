@@ -644,7 +644,7 @@ def dkg_deal_window_open(activation_block, interval, lead=DKG_CLOCK_LEAD):
       * having acked, no honest dealer reveals its point at all, so the fallback could not run
         even if the logs were fetched.
 
-    Both leave every assertion in the case green. Only `want == dealers` at the recompute sees it,
+    Both leave every assertion in the case green. Only `want == pinned` at the recompute sees it,
     which is why this guard and `evaluate_victim_held_nothing` are BOTH gates and neither is
     redundant."""
     return epoch_start_1(activation_block, interval) - int(lead)
@@ -707,10 +707,10 @@ CEREMONY_STARTED_LINE = "live DKG: ceremony started"
 #: `beacon/actor.rs` — the recompute-heal's ADOPT log, one of the TWO roads a restarted absentee
 #: can reach its share by. See `SHARE_ROADS`.
 HEAL_LINE = "live DKG: demoted committee member recomputed its share"
-#: The same path's ENTRY log, one rung earlier, and it carries `want=` / `dealers=`. Read twice:
+#: The same path's ENTRY log, one rung earlier, and it carries `want=` / `pinned=`. Read twice:
 #: as a diagnostic on the failure path (its presence with no share line says the artifact arrived
 #: and the recompute did not), and as WITNESS B of `evaluate_victim_held_nothing` — `want ==
-#: dealers` is the demote-heal road's proof that the victim came back holding no journal at all.
+#: pinned` is the demote-heal road's proof that the victim came back holding no journal at all.
 HEAL_START_LINE = "starting share recompute-heal"
 
 #: THE TWO ROADS, and why the case must accept EITHER.
@@ -822,12 +822,13 @@ def heal_start_after_restart(log_text, epoch=2):
 
 
 def heal_start_counts(line):
-    """`(want, dealers)` off a heal-detect line, or `None` if the pair is not readable.
+    """`(want, pinned)` off a heal-detect line, or `None` if the pair is not readable.
 
-    `beacon/actor.rs` logs `want = want.len(), dealers = outcome.dealers().len()` where `want` is
-    `dealers() −` the dealer logs already in the retained journal. The two fields are matched
-    INDEPENDENTLY and not as one ordered pattern — tracing renders fields in an order the case
-    does not control, the same reason `epoch_debug_lines` is a two-grep.
+    `beacon/actor.rs` logs `want = want.len(), pinned = pinned.len()` where `pinned` is the
+    artifact's pinned dealer set for the epoch and `want` is `pinned −` the dealer logs already in
+    the retained journal, by exact `(dealer, hash)`. The two fields are matched INDEPENDENTLY and
+    not as one ordered pattern — tracing renders fields in an order the case does not control,
+    the same reason `epoch_debug_lines` is a two-grep.
 
     ANSI-stripped first even though `logs_all` already strips: the node writes SGR escapes INSIDE
     its `key=value` pairs (§2.4 item 2), so a reader that skipped the strip would parse nothing
@@ -835,10 +836,10 @@ def heal_start_counts(line):
     witness into a passing one."""
     clean = rpc.strip_ansi(line or "")
     want = re.search(r"\bwant=(\d+)", clean)
-    dealers = re.search(r"\bdealers=(\d+)", clean)
-    if not (want and dealers):
+    pinned = re.search(r"\bpinned=(\d+)", clean)
+    if not (want and pinned):
         return None
-    return int(want.group(1)), int(dealers.group(1))
+    return int(want.group(1)), int(pinned.group(1))
 
 
 def evaluate_victim_held_nothing(fresh, heal, victim, epoch=2):
@@ -855,14 +856,14 @@ def evaluate_victim_held_nothing(fresh, heal, victim, epoch=2):
       * A — `CEREMONY_STARTED_LINE` on the restarted process. `start_fresh` is the ONLY emitter
         and `JournalLoad::NoFile` is the only arm that reaches it, so its presence IS the
         no-journal proof. Sound as it always was; only the inference from its absence was not.
-      * B — the heal-detect line with `want == dealers`. The demote-heal reaches the same share
+      * B — the heal-detect line with `want == pinned`. The demote-heal reaches the same share
         without any ceremony: `parse_journal` on an absent journal yields an empty `held`, so
         `want` is every pinned dealer, the resolver fetches those logs (the other members' public
         reveals — the very thing this case covers) and the recompute runs. `start_fresh` never
-        runs and line A never appears. `want == dealers` says the journal held not ONE pinned
+        runs and line A never appears. `want == pinned` says the journal held not ONE pinned
         dealer's log, which is the same reading A gives.
 
-    `want < dealers` is the real "came back holding a journal" condition — some dealings were
+    `want < pinned` is the real "came back holding a journal" condition — some dealings were
     received and acked before the stop — and it is only on THAT branch that the old wording is
     true, which is where it now lives."""
     if fresh:
@@ -871,17 +872,17 @@ def evaluate_victim_held_nothing(fresh, heal, victim, epoch=2):
         counts = heal_start_counts(heal)
         if counts is None or counts[1] <= 0:
             return False, (f"{victim} logged {HEAL_START_LINE!r} for epoch {epoch} but the line "
-                           "carries no usable want=/dealers= pair, so it cannot say whether the "
+                           "carries no usable want=/pinned= pair, so it cannot say whether the "
                            "victim came back with an empty journal — and an unreadable witness is "
                            f"not a witness. The line was: {heal.strip()!r}. Either the log format "
                            "changed (the fields are logged in `beacon/actor.rs`'s heal-detect "
                            "`tracing::info!`) and this reader needs updating, or the read is "
                            "corrupt")
-        want, dealers = counts
-        if want == dealers:
+        want, pinned = counts
+        if want == pinned:
             return True, ""
         return False, (f"{victim} entered the recompute-heal for epoch {epoch} with want={want} "
-                       f"of dealers={dealers} — it came back holding a journal, which means it "
+                       f"of pinned={pinned} — it came back holding a journal, which means it "
                        f"was stopped AFTER the epoch-{epoch} DEAL phase opened and had already "
                        "received and ACKED some of the dealings. Those dealers then have nothing "
                        "to reveal publicly, so the reveal-fallback path this case exists to cover "
