@@ -21,7 +21,87 @@
 //! keeps the core from having to name a beacon type to count its own spawns.
 
 use commonware_runtime::Metrics;
-use prometheus_client::metrics::counter::Counter;
+use prometheus_client::{
+    encoding::{EncodeLabelSet, EncodeLabelValue, LabelValueEncoder},
+    metrics::{counter::Counter, family::Family, gauge::Gauge},
+};
+
+/// Why an epoch is stalled — the `reason` label of `dpos_dkg_stalled` and the
+/// payload of the DKG actor's `Stalled{reason}` event (§5.2/§5.4 of the beacon
+/// design). Latched per `(epoch, reason)` by the actor: one log line, one gauge
+/// step, until the epoch keys or ages out.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum StallReason {
+    /// Every pinned body is held and no dealer quorum is selectable within the
+    /// agreed set: more than `f` dealers are absent from what the network pinned.
+    QuorumMissing,
+    /// The agreed set names a body this node does not hold yet (being fetched).
+    BodyMissing,
+    /// The agreement instance certified a payload whose body never arrived.
+    BodyLost,
+    /// The epoch's boundary is here or past and this node holds no artifact for it.
+    NoArtifact,
+    /// A share's disk write failed; it is not adopted (R-021).
+    PersistFailed,
+    /// A share does not lie on the certified artifact's polynomial at this node's
+    /// index (F-02): refused, the epoch heals over its journal.
+    OffPolynomial,
+    /// The share cannot be derived here (a journal acking a dealing it no longer
+    /// holds, or a ceremony that cannot be rebuilt over the roster).
+    Unrecoverable,
+    /// A damaged or absent journal at/after the seal deadline: sat out (R-036).
+    SatOut,
+    /// Two different quorum-certified artifacts for one epoch.
+    Conflict,
+    /// The journal recompute over every pinned body could not run (the retained
+    /// journal is gone or torn) or failed with a non-terminal error: the heal is
+    /// parked, visibly, until an input changes.
+    HealFailed,
+}
+
+impl StallReason {
+    /// Every reason, in declaration order — what the gauge's HELP enumerates, so
+    /// the registry text cannot drift from the enum.
+    pub const ALL: [StallReason; 10] = [
+        Self::QuorumMissing,
+        Self::BodyMissing,
+        Self::BodyLost,
+        Self::NoArtifact,
+        Self::PersistFailed,
+        Self::OffPolynomial,
+        Self::Unrecoverable,
+        Self::SatOut,
+        Self::Conflict,
+        Self::HealFailed,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::QuorumMissing => "quorum_missing",
+            Self::BodyMissing => "body_missing",
+            Self::BodyLost => "body_lost",
+            Self::NoArtifact => "no_artifact",
+            Self::PersistFailed => "persist_failed",
+            Self::OffPolynomial => "off_polynomial",
+            Self::Unrecoverable => "unrecoverable",
+            Self::SatOut => "sat_out",
+            Self::Conflict => "conflict",
+            Self::HealFailed => "heal_failed",
+        }
+    }
+}
+
+impl EncodeLabelValue for StallReason {
+    fn encode(&self, encoder: &mut LabelValueEncoder) -> Result<(), std::fmt::Error> {
+        EncodeLabelValue::encode(&self.as_str(), encoder)
+    }
+}
+
+/// The `{reason=...}` label set of the `dpos_dkg_stalled` gauge family.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct StallLabels {
+    reason: StallReason,
+}
 
 /// Beacon counters. See the module docs for the registration + clone topology.
 #[derive(Clone, Debug, Default)]
@@ -31,6 +111,27 @@ pub struct BeaconMetrics {
     /// A live-DKG ceremony failed to finalize after the ready-probe (epoch beacon
     /// stalls until a reshare / next ceremony).
     pub dkg_ceremony_fail: Counter,
+    /// `dpos_dkg_stalled{reason}` — how many retained epochs carry a `Stalled{reason}`
+    /// latch right now (the DKG actor's state machine: `+1` when the latch is raised,
+    /// `−1` when the epoch keys or ages out). The paired log line is bounded to one
+    /// per `(epoch, reason)`; this is what scales with the condition.
+    dkg_stalled: Family<StallLabels, Gauge<i64>>,
+    /// Two DIFFERENT quorum-certified artifacts reached the DKG actor for one epoch
+    /// — `≥ 2q−n` signers certified both. The epoch is `Conflict` on this node and
+    /// its signing stops. 0 under `≤ f`.
+    pub dkg_artifact_conflict: Counter,
+    /// `Conflict` verdicts whose durable marker (`beacon-conflict-e<E>.bin`) could
+    /// NOT be written by the DKG actor: the verdict holds in this process, the
+    /// share is dropped regardless, and a restart re-judges the epoch from the
+    /// artifact store's own witness (which writes the same marker first and
+    /// counts its own failure on `dpos_artifact_store_conflict_marker_failed_total`).
+    pub dkg_conflict_marker_failed: Counter,
+    /// Artifact hand-offs to the DKG actor's write-back that were refused (the
+    /// mailbox full or gone) — by the pull seam (`ArtifactBridge::adopt`) or the
+    /// transport acquisition (`TransportAcquire`). Not a lost FACT: the store owns
+    /// the artifact and the actor reads it on its next height tick; this counts
+    /// the ticks of latency a backed-up write-back costs.
+    pub dkg_artifact_handoff_lost: Counter,
     /// A dealer was PROVEN to have signed two distinct `check`-valid logs for one
     /// epoch on this node — the pair is journaled as evidence and the dealer is
     /// locally banned from gossip for that epoch (`ceremony.rs`). Counted once per
@@ -194,9 +295,61 @@ pub struct BeaconMetrics {
 }
 
 impl BeaconMetrics {
+    /// Raise `dpos_dkg_stalled{reason}` by one (an epoch latched the reason).
+    pub fn stalled(&self, reason: StallReason) {
+        self.dkg_stalled
+            .get_or_create(&StallLabels { reason })
+            .inc();
+    }
+
+    /// Lower `dpos_dkg_stalled{reason}` by one (the latched epoch keyed or aged out).
+    pub fn stall_cleared(&self, reason: StallReason) {
+        self.dkg_stalled
+            .get_or_create(&StallLabels { reason })
+            .dec();
+    }
+
+    /// TEST SUPPORT: the current `dpos_dkg_stalled{reason}` — for the balance
+    /// assertions (every raise is paired with a clear by the time an epoch keys
+    /// or ages out).
+    #[cfg(test)]
+    pub fn stalled_gauge(&self, reason: StallReason) -> i64 {
+        self.dkg_stalled
+            .get_or_create(&StallLabels { reason })
+            .get()
+    }
+
     /// Register every counter on the commonware registry. Call once, against the
     /// launch context (mirrors `executor.rs`'s `pending_finalizations` gauge).
     pub fn register(&self, ctx: &impl Metrics) {
+        let reasons: Vec<&str> = StallReason::ALL.iter().map(|r| r.as_str()).collect();
+        ctx.register(
+            "dpos_dkg_stalled",
+            format!(
+                "Retained epochs whose DKG is stalled, by reason ({}). One log line per \
+                 (epoch, reason); this gauge scales with the condition.",
+                reasons.join(", ")
+            ),
+            self.dkg_stalled.clone(),
+        );
+        ctx.register(
+            "dpos_dkg_artifact_conflict_total",
+            "Epochs for which two DIFFERENT quorum-certified artifacts reached the DKG actor \
+             (≥ 2q−n signers certified both); the epoch's signing is stopped on this node.",
+            self.dkg_artifact_conflict.clone(),
+        );
+        ctx.register(
+            "dpos_dkg_conflict_marker_failed_total",
+            "Conflict verdicts whose durable marker the DKG actor could not write; the share \
+             is dropped regardless and a restart re-judges the epoch from the artifact store.",
+            self.dkg_conflict_marker_failed.clone(),
+        );
+        ctx.register(
+            "dpos_dkg_artifact_handoff_lost_total",
+            "Artifact hand-offs to the DKG actor's write-back refused because the mailbox was \
+             full or gone; the store keeps the artifact and the actor reads it on its next tick.",
+            self.dkg_artifact_handoff_lost.clone(),
+        );
         ctx.register(
             "dkg_agree_body_lost_total",
             "Agreement instances that certified a payload whose body never arrived, so no \

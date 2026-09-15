@@ -236,6 +236,10 @@ pub(crate) struct AgreementConfig<P, R, L> {
     pub page_cache: CacheRef,
     /// See [`agreement_partition`].
     pub partition_prefix: String,
+    /// Where a certified-but-unresolved body is reported (the target epoch): the
+    /// DKG actor moves that epoch to acquiring the artifact from peers at once
+    /// (R-026). `None` ⇒ nobody to tell (the instance's unit tests).
+    pub body_lost: Option<tokio::sync::mpsc::Sender<u64>>,
 }
 
 /// The four already-registered network routes an instance runs on: the three
@@ -391,9 +395,17 @@ where
                         cfg.metrics.dkg_agree_body_lost.inc();
                         warn!(
                             epoch = target_epoch,
-                            "dkg agree: certified a payload whose body never arrived — the target \
-                             epoch has to re-agree on a fresh instance"
+                            "dkg agree: certified a payload whose body never arrived — the \
+                             artifact is acquired from a peer that resolved it"
                         );
+                        // Tell the actor NOW, not at the boundary: no instance for this
+                        // target runs again in this process (`started`), so the only
+                        // source of the artifact is a peer's copy, and the actor owns
+                        // the pull. A full mailbox is not retried — the actor asks on
+                        // its own past the boundary anyway.
+                        if let Some(tx) = &cfg.body_lost {
+                            let _ = tx.try_send(target_epoch);
+                        }
                     }
                     resolved
                 }
@@ -421,8 +433,16 @@ where
             };
             // Before the send: a consumer of `out` that immediately serves or
             // re-publishes must never observe an artifact this node cannot yet
-            // answer a peer's request for.
-            cfg.artifacts.insert(target_epoch, artifact.clone());
+            // answer a peer's request for. A store that already holds ANOTHER
+            // value for this target (a pulled artifact that raced this
+            // instance's) keeps it, first-wins, hands this one back, and it is
+            // noted beside the held one — durably, the store owns the witness —
+            // as the `Conflict` input the actor reads on its next tick (or on a
+            // restart); the send below carries it as well, for the tick it would
+            // otherwise wait.
+            if let Err(loser) = cfg.artifacts.insert(target_epoch, artifact.clone()) {
+                cfg.artifacts.note_divergent(target_epoch, &loser);
+            }
             note_omissions(
                 &cfg.recorded,
                 target_epoch,
@@ -536,6 +556,8 @@ pub struct AgreementPlaneConfig<P, R> {
     pub timeouts: AgreementTimeouts,
     /// See [`agreement_partition`]. Production passes `""`.
     pub partition_prefix: String,
+    /// See [`AgreementConfig::body_lost`].
+    pub body_lost: Option<tokio::sync::mpsc::Sender<u64>>,
 }
 
 /// Start the plane's launcher: one long-lived task that turns a target epoch on
@@ -707,6 +729,7 @@ where
             timeouts: cfg.timeouts,
             page_cache,
             partition_prefix: cfg.partition_prefix.clone(),
+            body_lost: cfg.body_lost.clone(),
         },
         AgreementNetworks {
             vote,
@@ -1118,7 +1141,9 @@ mod tests {
             };
             let certificate = finalization_over(proposal.digest());
             let store = ArtifactStore::new();
-            assert!(store.insert(TARGET, (proposal.clone(), certificate.clone())));
+            assert!(store
+                .insert(TARGET, (proposal.clone(), certificate.clone()))
+                .is_ok());
 
             let before = context.current();
             let artifact = resolve_artifact(&context, &bodies, &store, certificate, WAIT).await;
@@ -1319,6 +1344,7 @@ mod tests {
                     confirms: pool.clone(),
                     metrics: BeaconMetrics::default(),
                     partition_prefix: String::new(),
+                    body_lost: None,
                     artifacts: stores[i].clone(),
                     mailbox_size: 64,
                     // The coarse production set is asserted separately; here the
@@ -1453,6 +1479,7 @@ mod tests {
                     committee,
                     mailbox_size: 64,
                     partition_prefix: String::new(),
+                    body_lost: None,
                     timeouts: AgreementTimeouts {
                         leader: Duration::from_secs(2),
                         certification: Duration::from_secs(3),

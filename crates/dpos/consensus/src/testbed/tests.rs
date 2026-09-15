@@ -2314,11 +2314,11 @@ fn cold_start_computes_the_epoch_from_the_finalized_state() {
 /// and its falsifier was "any node crossing its park height". The mechanism it
 /// recorded was I4: `PK_E` reaches a node that is not in `committee[E]` only as
 /// `committee[E]`'s artifact, and nothing on the FRONTIER ever asked for one
-/// (`drive_recompute` pulled for members only; the epoch manager's repair sweep
+/// (the actor's pull was for members only; the epoch manager's repair sweep
 /// excludes `epoch >= frontier` by construction; the cert-inlet's per-certificate
 /// `ensure_key` spends the network-free `PinEffort::Local`).
 ///
-/// `DkgActor::acquire_mint_artifacts` is what closes it, and this test is the only
+/// `DkgActor::drive_acquisition` (the `Acquiring(ArtifactForKey)` phase) is what closes it, and this test is the only
 /// live witness of the closure. Its assertions are therefore the inverse of the old
 /// ones, one for one:
 ///
@@ -2344,7 +2344,7 @@ fn cold_start_computes_the_epoch_from_the_finalized_state() {
 ///
 /// Only the second of the two is reachable through a window that stops at the
 /// actor's current epoch; the first is why
-/// [`acquire_mint_artifacts`](crate::beacon) reaches `now + 1`. A fix that closed
+/// the non-member acquisition (`recover(now + 1)` ⇒ `Acquiring(ArtifactForKey)`) reaches `now + 1`. A fix that closed
 /// only the forward direction would leave this test red.
 ///
 /// # The fake does not lie
@@ -2493,9 +2493,9 @@ fn a_zero_overlap_boundary_is_crossed_by_acquiring_the_other_halfs_key() {
 /// for it, and nothing spent a network pull for the LIVE epoch's key — the epoch
 /// manager's repair sweep excludes `epoch >= frontier` by construction, the
 /// cert-inlet's per-certificate `ensure_key` is contractually network-free, and
-/// `drive_recompute`'s pull is gated on membership.
+/// the actor's pull was gated on membership.
 ///
-/// `DkgActor::acquire_mint_artifacts` spends that pull. The park is gone, and the
+/// `DkgActor::drive_acquisition` spends that pull. The park is gone, and the
 /// assertions invert: the node holds BOTH epochs' artifacts and follows the
 /// committee without a single re-jump. The re-jump gate stays closed, which is what
 /// makes this a statement about the KEY and not about the jump: nothing here is
@@ -3727,7 +3727,7 @@ fn a_two_log_dealer_that_also_withholds_its_partial_is_one_silent_node_within_f(
 /// WHY THEY ARE NEVER MEMBERS (5.1), where they used to leave at epoch 2. The
 /// keyless window this fixture is about has to be CUT open now, and the cut has to
 /// land before the followers' DKG clock enters epoch 1: that is when
-/// `acquire_mint_artifacts` starts pulling the epoch-2 artifact for a NON-MEMBER
+/// the non-member acquisition starts pulling the epoch-2 artifact for a NON-MEMBER
 /// (`actor.rs`, `lo..=now + 1`), the artifact exists within the first block of the
 /// epoch (the ceremony is message-driven, not height-driven), and one pull is all it
 /// takes. So the cut must be in place inside epoch 0 — and a cut that early must not
@@ -3877,7 +3877,7 @@ fn a_forged_seed_slot_is_admitted_with_no_key_and_refused_when_the_key_lands() {
     }
     // WHAT OPENS THE KEYLESS WINDOW (5.1). Non-membership no longer does: since П-3
     // a non-member ASKS a member for the mint's artifact over
-    // `BEACON_RESOLVER_CHANNEL` (R-121/R-122), and `acquire_mint_artifacts` issues
+    // `BEACON_RESOLVER_CHANNEL` (R-121/R-122), and `drive_acquisition` issues
     // that pull an epoch AHEAD of the need (`lo..=now + 1`), so both followers hold
     // `PK_2` before the first block of epoch 2 and never fall behind — measured, the
     // forge window is then never asked for at all (`certs_seen: 1,
@@ -4071,7 +4071,7 @@ fn lying_upstream_stand(role3: Role) -> super::stand::Outcome {
     // rotation. The rotation used to leave it without `PK_3`: it is not in
     // `committee[3]`, and nothing fetched a non-member's artifact. Since П-3 it ASKS
     // for that artifact over `BEACON_RESOLVER_CHANNEL` (R-121/R-122) — an epoch
-    // AHEAD of the need (`acquire_mint_artifacts`, `lo..=now + 1`) — so it crosses
+    // AHEAD of the need (`decide_window` reaches `now + 1`) — so it crosses
     // the boundary in lockstep and the CONTROL run spawns no re-jump at all
     // (measured: `calls=[]`, every node at 192). The lag is therefore physical: node
     // 0 is cut off at `last(2)`, the height it parked at before, and the cut heals a

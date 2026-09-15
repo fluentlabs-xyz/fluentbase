@@ -48,7 +48,7 @@
 //! the epochs it dropped. The actor unions them with its own epoch-keyed maps and
 //! reclaims the journals once over that union — the store deliberately does not reclaim,
 //! because the journal is written by the actor (`append_journal`) and read by paths this
-//! store has no part in (`maybe_start`'s resume/sit-out tri-state, the recompute-heal).
+//! store has no part in (`recover`'s resume/sit-out tri-state, the recompute-heal).
 
 use crate::beacon::{
     actor::CommitteeFor,

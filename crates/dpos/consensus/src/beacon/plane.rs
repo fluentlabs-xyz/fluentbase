@@ -23,9 +23,7 @@ use futures::future::BoxFuture;
 use rand_core::CryptoRngCore;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    future::Future,
     path::PathBuf,
-    pin::Pin,
     sync::{Arc, Mutex, PoisonError, RwLock},
     time::Duration,
 };
@@ -36,7 +34,7 @@ use crate::{
     beacon::{
         actor::{
             AgreedOutcomeAt, CeremonyStore, CommitteeFor, DkgActor, DkgLogIndex, PinnedRequest,
-            PullArtifact,
+            PullArtifact, StoredArtifact,
         },
         artifact::{
             self, restart_replay, AcquireArtifact, AcquireMint, ArtifactBridge, ArtifactPull,
@@ -730,6 +728,9 @@ where
 
     let (agreed_tx, agreed_rx) = mpsc::channel::<AgreedArtifact>(EDGE_MAILBOX);
     let (adopt_tx, artifacts_rx) = mpsc::channel::<AgreedArtifact>(EDGE_MAILBOX);
+    // The instance's other verdict — a certified body it could not resolve —
+    // goes straight to the actor, which owns the pull that heals it (R-026).
+    let (body_lost_tx, body_lost_rx) = mpsc::channel::<u64>(EDGE_MAILBOX);
 
     // The `LogHandler` bridges the resolver engine's Producer/Consumer to the
     // `DkgActor` run loop, which owns the ceremony state single-threaded.
@@ -745,13 +746,19 @@ where
         &journal_partition(&partition_prefix, ARTIFACT_JOURNAL_PARTITION),
     )
     .await?;
+    // The store OWNS the `Conflict` witness, on disk as well as in RAM: a second
+    // certified value it notes is written as `beacon-conflict-e<E>.bin` in the
+    // same directory the actor's `recover` reads the verdict back from, the
+    // instant it is noted — so a restart between the note and the actor's next
+    // tick cannot forget it (Д-А1-20).
+    let artifact_store = artifact_store.with_conflict_dir(share_dir.clone());
     // THERE IS NO SECOND REFILL ROUTE ANY MORE, and its absence is П-3. The share
     // file used to carry a copy of the agreed artifact, and this is where that copy
     // was read back into the store — so an epoch whose artifact journal record never
     // synced still came back with a locally-sourced `PK_E`. The copy is gone
     // (`share_state`), so the artifact journal's own rehydration above is the whole
     // of what a restart recovers, and an epoch it lost is acquired from peers
-    // (`DkgActor::acquire_mint_artifacts`). The liveness trade is named in
+    // (`DkgActor::drive_acquisition`). The liveness trade is named in
     // `share_state`'s module doc.
     // Pick the artifacts this restart owes the `DkgActor`. Nothing else reads the
     // store back INTO the actor, so a member that went down between adopting an
@@ -784,15 +791,19 @@ where
     // first exist together: the durable artifact store and the durable mint memo.
     let key_index = KeyIndex::new(artifact_store.clone(), mints);
 
-    // The demote-heal reads the agreed `Output` for an EPOCH out of the artifact
-    // store. It used to read the boundary block at `epoch_start(E)`, which was a
-    // chicken-and-egg — the heal exists for a member that could not enter `E`, and
-    // `E`'s own first block is what such an epoch does not produce.
+    // The actor's READ of the artifact store (`recover(E)` and the per-tick
+    // `reconcile_with_store`): the held payload and the divergent second value, if
+    // the store ever noted one. It used to read the boundary block at
+    // `epoch_start(E)`, which was a chicken-and-egg — the heal exists for a member
+    // that could not enter `E`, and `E`'s own first block is what such an epoch
+    // does not produce.
     let outcome_at: AgreedOutcomeAt = {
         let store = artifact_store.clone();
         Arc::new(move |epoch: u64| {
-            let outcome = store.get(epoch).map(|a| a.0.group_key.clone());
-            Box::pin(async move { outcome }) as Pin<Box<dyn Future<Output = _> + Send>>
+            store.view(epoch).map(|(held, divergent)| StoredArtifact {
+                held: held.0.clone(),
+                divergent,
+            })
         })
     };
 
@@ -867,6 +878,7 @@ where
             .with_share_confirms(confirms)
             .with_pinned_requests(pinned_rx)
             .with_agreement_plane(agreement_request_tx, artifacts_rx)
+            .with_body_lost(body_lost_rx)
             .with_artifact_pull(pull_artifact)
             .with_plane_clock(plane_clock);
             actor.run(heights, c).await
@@ -894,6 +906,7 @@ where
             mailbox_size: AGREEMENT_MAILBOX,
             timeouts: AgreementTimeouts::coarse(),
             partition_prefix,
+            body_lost: Some(body_lost_tx),
         },
         AgreementMuxes {
             vote: vote_mux,

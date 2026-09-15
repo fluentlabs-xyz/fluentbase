@@ -531,10 +531,12 @@ mod tests {
         let changed: crate::beacon::artifact::ChangedAt =
             Arc::new(move |e| seen.load(Ordering::SeqCst).then_some(e == CHANGE));
         let artifacts = ArtifactStore::new();
-        artifacts.insert(
-            CHANGE,
-            crate::beacon::artifact::artifact_with_key(CHANGE, outcome.clone()),
-        );
+        assert!(artifacts
+            .insert(
+                CHANGE,
+                crate::beacon::artifact::artifact_with_key(CHANGE, outcome.clone()),
+            )
+            .is_ok());
         let node = oracle(
             store(CHANGE, &shares[0]),
             KeyIndex::new(artifacts, crate::beacon::artifact::MintIndex::new(changed)),

@@ -25,8 +25,8 @@
 //! holding a share whose artifact never reached its durable store (the artifact
 //! journal is write-behind) no longer has the epoch key locally at all: σ of the
 //! epoch is held pending, execution parks, and the key arrives from peers —
-//! `DkgActor::drive_recompute` asks for it on the next height tick from its
-//! share-HELD branch (`acquire_mint_artifacts` is the non-member's leg and
+//! `DkgActor::drive_acquisition` asks for it on the next height tick from the
+//! `Acquiring(ArtifactForShare)` phase (`Acquiring(ArtifactForKey)` is the non-member's leg and
 //! excludes members by design), and at `≤ f` faults the peers hold it. That is the
 //! trade §5.4 of
 //! `.dpos-study/history/E5-BEACON-DESIGN.md` accepts: one quorum-attested owner of
@@ -41,7 +41,7 @@
 //!
 //! Both retired shapes take `load_all`'s warn-and-skip path, which is the same one
 //! a corrupt file takes, and the node then treats the epoch as one it holds no
-//! share for: `maybe_start` resumes from the ceremony journal where that is still
+//! share for: `DkgActor::recover` resumes from the ceremony journal where that is still
 //! on disk, and sits the epoch out as a verifier where it is not. Nothing aborts
 //! startup and no wrong share is ever adopted.
 //! - a **v1** file (leading tag `TAG_PLAINTEXT` / `TAG_ENCRYPTED`) — the arm is
@@ -79,6 +79,7 @@ use crate::beacon::{
     dkg_msg::{Ack, DealerReveal},
     seed::parse_share,
 };
+use alloy_primitives::B256;
 use chacha20poly1305::{
     aead::{Aead, AeadCore as _, KeyInit, OsRng, Payload},
     XChaCha20Poly1305, XNonce,
@@ -117,6 +118,9 @@ const NONCE_BYTES: usize = 24;
 
 const FILE_PREFIX: &str = "beacon-share-e";
 const FILE_SUFFIX: &str = ".bin";
+/// The durable `Conflict(E)` marker (`persist_conflict`): the epoch's signing was
+/// stopped on this node. Lives beside the share file on the journal's window.
+const CONFLICT_PREFIX: &str = "beacon-conflict-e";
 
 /// The v2 tagless inner frame: the byte-for-byte payload both v2 arms carry.
 /// `TAG_PLAINTEXT_V2` writes `tag ‖ inner`; `TAG_ENCRYPTED_V2` seals `inner` as
@@ -554,7 +558,7 @@ pub(crate) fn append_journal(
 }
 
 /// Result of [`load_journal`] — distinguishes a GENUINE first run (no journal file)
-/// from a PRESENT-but-damaged journal, so the caller (`actor::maybe_start`) never
+/// from a PRESENT-but-damaged journal, so the caller (`actor::recover`) never
 /// re-deals an already-sealed epoch. A torn/undecryptable journal means
 /// THIS node already participated in `epoch`'s ceremony (it wrote at least one
 /// record); re-dealing fresh would draw new `OsRng` randomness → a divergent
@@ -653,6 +657,89 @@ pub(crate) fn evict_share(dir: &Path, epoch: u64) {
     }
 }
 
+fn conflict_file_for(dir: &Path, epoch: u64) -> PathBuf {
+    dir.join(format!("{CONFLICT_PREFIX}{epoch}{FILE_SUFFIX}"))
+}
+
+/// Record `Conflict(E)` durably: `held ‖ second`, the value digests of the two
+/// quorum-certified artifacts, 64 plaintext bytes (both are public). Written by
+/// the artifact STORE the instant it notes a second value
+/// (`ArtifactStore::note_divergent` — the store owns the witness, so no restart
+/// window between the note and the actor's next tick can lose it), and by the
+/// actor as it enters the terminal when the store has not (`stop_signing`,
+/// BEFORE the share file is evicted). Read back by `DkgActor::recover` BEFORE
+/// anything else it holds for the epoch — a share file that outlived the
+/// terminal (an `evict_share` that failed, a death between the marker and the
+/// eviction) must not re-key the epoch on a restart. Reclaimed with the epoch's
+/// journal (`reconcile_journals` on the first tick, `sweep_epoch_state` after).
+pub(crate) fn persist_conflict(
+    dir: &Path,
+    epoch: u64,
+    held: &B256,
+    second: &B256,
+) -> eyre::Result<()> {
+    std::fs::create_dir_all(dir).map_err(|e| eyre::eyre!("create share dir {dir:?}: {e}"))?;
+    let mut bytes = Vec::with_capacity(64);
+    bytes.extend_from_slice(held.as_slice());
+    bytes.extend_from_slice(second.as_slice());
+    let path = conflict_file_for(dir, epoch);
+    std::fs::write(&path, bytes).map_err(|e| eyre::eyre!("write conflict marker {path:?}: {e}"))?;
+    std::fs::File::open(&path)
+        .and_then(|f| f.sync_all())
+        .map_err(|e| eyre::eyre!("sync conflict marker {path:?}: {e}"))
+}
+
+/// What a `Conflict(E)` marker on disk says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ConflictMarker {
+    /// `(held, second)` — the value digests of the two certified artifacts.
+    Pair(B256, B256),
+    /// The file is there but is not 64 bytes. FAIL-CLOSED: only a verdict ever
+    /// writes the file, so the verdict stands even though its digests are lost;
+    /// the epoch is `Conflict` with no known pair, said as an ERROR, and the
+    /// file is left in place for the operator.
+    Malformed,
+}
+
+/// The `Conflict(E)` marker, if one is on disk.
+pub(crate) fn load_conflict(dir: &Path, epoch: u64) -> Option<ConflictMarker> {
+    let bytes = std::fs::read(conflict_file_for(dir, epoch)).ok()?;
+    if bytes.len() != 64 {
+        tracing::error!(
+            epoch,
+            len = bytes.len(),
+            "beacon: MALFORMED conflict marker — the epoch's signing stays stopped \
+             (fail-closed); the file is left in place"
+        );
+        return Some(ConflictMarker::Malformed);
+    }
+    Some(ConflictMarker::Pair(
+        B256::from_slice(&bytes[..32]),
+        B256::from_slice(&bytes[32..]),
+    ))
+}
+
+/// Every `Conflict(E)` marker under `dir`, ascending by epoch — what the artifact
+/// store reloads its divergence witnesses from at launch.
+pub(crate) fn conflict_markers(dir: &Path) -> Vec<(u64, ConflictMarker)> {
+    let mut epochs = scan_beacon_dir(dir).2;
+    epochs.sort_unstable();
+    epochs
+        .into_iter()
+        .filter_map(|epoch| Some((epoch, load_conflict(dir, epoch)?)))
+        .collect()
+}
+
+/// Delete the `Conflict(E)` marker once the epoch has aged out of the window.
+pub(crate) fn evict_conflict(dir: &Path, epoch: u64) {
+    let path = conflict_file_for(dir, epoch);
+    if let Err(e) = std::fs::remove_file(&path) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!(epoch, ?e, "beacon: failed to evict conflict marker");
+        }
+    }
+}
+
 /// Reconcile the on-disk beacon directory on the first tick, in one scan: prune both
 /// boundary-passed ceremony JOURNALS and superseded SHARE secrets that no in-memory map
 /// holds. The durable lifetime owner — a finalize-then-restart-before-boundary holds the
@@ -677,10 +764,17 @@ pub(crate) fn evict_share(dir: &Path, epoch: u64) {
 /// Keeping only `max` would be WRONG — it would delete the active `<= now` carry-forward
 /// whenever a future share already exists, demoting the node for the rest of the epoch.
 pub(crate) fn reconcile_journals(dir: &Path, now: u64) {
-    let (journals, shares) = scan_beacon_dir(dir);
+    let (journals, shares, conflicts) = scan_beacon_dir(dir);
     for epoch in journals {
         if epoch + crate::beacon::JOURNAL_RETENTION_EPOCHS < now {
             evict_journal(dir, epoch);
+        }
+    }
+    // A conflict marker rides the journal's window: the terminal it records is
+    // an epoch's, and an epoch past the window has no slot to be terminal in.
+    for epoch in conflicts {
+        if epoch + crate::beacon::JOURNAL_RETENTION_EPOCHS < now {
+            evict_conflict(dir, epoch);
         }
     }
     // Active carry-forward = the newest share at or before `now`. Older shares are
@@ -696,7 +790,7 @@ pub(crate) fn reconcile_journals(dir: &Path, now: u64) {
 
 /// Every epoch whose ceremony journal is still on disk under `dir`.
 ///
-/// A journal is the only thing `maybe_start` can resume a ceremony from, so this
+/// A journal is the only thing `DkgActor::recover` can resume a ceremony from, so this
 /// is also the set of epochs an agreed artifact can still be finalized over —
 /// which is what makes it the bound on the startup artifact replay
 /// ([`crate::beacon::artifact::restart_replay`]).
@@ -704,13 +798,15 @@ pub(crate) fn journal_epochs(dir: &Path) -> Vec<u64> {
     scan_beacon_dir(dir).0
 }
 
-/// `(journal epochs, share epochs)` parsed out of ONE directory scan. A missing
-/// dir yields two empty sets; malformed / foreign filenames are ignored.
-fn scan_beacon_dir(dir: &Path) -> (Vec<u64>, Vec<u64>) {
+/// `(journal epochs, share epochs, conflict-marker epochs)` parsed out of ONE
+/// directory scan. A missing dir yields three empty sets; malformed / foreign
+/// filenames are ignored.
+fn scan_beacon_dir(dir: &Path) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
     let mut journals: Vec<u64> = Vec::new();
     let mut shares: Vec<u64> = Vec::new();
+    let mut conflicts: Vec<u64> = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return (journals, shares);
+        return (journals, shares, conflicts);
     };
     for entry in entries.flatten() {
         let name = entry.file_name();
@@ -727,9 +823,15 @@ fn scan_beacon_dir(dir: &Path) -> (Vec<u64>, Vec<u64>) {
             .and_then(|s| s.parse::<u64>().ok())
         {
             shares.push(epoch);
+        } else if let Some(epoch) = name
+            .strip_prefix(CONFLICT_PREFIX)
+            .and_then(|s| s.strip_suffix(FILE_SUFFIX))
+            .and_then(|s| s.parse::<u64>().ok())
+        {
+            conflicts.push(epoch);
         }
     }
-    (journals, shares)
+    (journals, shares, conflicts)
 }
 
 #[cfg(test)]
@@ -1216,6 +1318,59 @@ mod tests {
             "e{future} > now={now} → future, kept"
         );
         assert!(foreign.exists(), "a foreign filename is never deleted");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The `Conflict(E)` marker round-trips, a malformed one is a verdict with no
+    /// pair (fail-closed, never deleted), and a marker ages out with the journal
+    /// window.
+    #[test]
+    fn a_conflict_marker_round_trips_and_ages_out_with_the_journal() {
+        let dir = fresh_dir("conflict-marker");
+        let (held, second) = (B256::repeat_byte(0xA1), B256::repeat_byte(0xB2));
+        let window = crate::beacon::JOURNAL_RETENTION_EPOCHS;
+        let aged_out = 3u64;
+        let now = aged_out + window + 1;
+        persist_conflict(&dir, aged_out, &held, &second).expect("persist");
+        persist_conflict(&dir, now, &held, &second).expect("persist");
+        assert_eq!(
+            load_conflict(&dir, now),
+            Some(ConflictMarker::Pair(held, second))
+        );
+        assert_eq!(load_conflict(&dir, now + 1), None, "no marker, no verdict");
+        std::fs::write(conflict_file_for(&dir, now + 2), b"short").expect("write");
+        assert_eq!(
+            load_conflict(&dir, now + 2),
+            Some(ConflictMarker::Malformed),
+            "malformed: still a verdict (fail-closed), never a pair"
+        );
+        assert_eq!(
+            conflict_markers(&dir),
+            vec![
+                (aged_out, ConflictMarker::Pair(held, second)),
+                (now, ConflictMarker::Pair(held, second)),
+                (now + 2, ConflictMarker::Malformed),
+            ],
+            "the scan reports every marker, malformed ones included"
+        );
+
+        reconcile_journals(&dir, now);
+        assert_eq!(
+            load_conflict(&dir, aged_out),
+            None,
+            "aged out with the journal"
+        );
+        assert_eq!(
+            load_conflict(&dir, now),
+            Some(ConflictMarker::Pair(held, second)),
+            "in window: kept"
+        );
+        assert!(
+            conflict_file_for(&dir, now + 2).exists(),
+            "a malformed marker is left in place"
+        );
+        evict_conflict(&dir, now);
+        assert_eq!(load_conflict(&dir, now), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

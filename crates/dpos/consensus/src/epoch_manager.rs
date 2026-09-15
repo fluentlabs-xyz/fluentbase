@@ -2110,10 +2110,11 @@ mod tests {
                 self.pulls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 self.parked.notify_one();
                 self.gate.notified().await;
-                self.artifacts.insert(
+                // First-wins: a second fetch of one epoch keeps the first value.
+                drop(self.artifacts.insert(
                     minted_at,
                     crate::beacon::testing::artifact_with_key(minted_at, some_outcome(0xB2)),
-                );
+                ));
                 true
             })
         }

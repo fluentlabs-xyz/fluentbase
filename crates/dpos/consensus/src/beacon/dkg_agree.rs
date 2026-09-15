@@ -992,7 +992,7 @@ const BAR_MARGIN_UNMET: &str = "confirm_margin_not_met";
 /// refusal happens.
 ///
 /// Warn-once per `(target epoch, reason)`, on the pattern the finalize-deferral
-/// path already uses (`beacon::actor`'s `deferred_reported` /
+/// path already uses (`beacon::actor`'s `Stalled{reason}` latch /
 /// `dkg_finalize_deferred`). Without the ledger every refusal would re-warn on
 /// every view of a plane whose whole symptom is that views keep passing; with it,
 /// the view carried in the message says how long the plane took to get stuck.

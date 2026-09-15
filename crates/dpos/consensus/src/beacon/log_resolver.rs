@@ -446,7 +446,7 @@ impl Consumer for LogHandler {
     async fn failed(&mut self, _: Self::Key, _: Self::Failure) {
         // No-op retry: the resolver retries on its own AND the actor re-issues the
         // missing `{epoch, dealer, hash}` targets each tick (off the live ceremony in-window
-        // and off `recompute_pending` past the boundary, within the journal-retention
+        // and off the `Acquiring(Logs)` heal past the boundary, within the journal-retention
         // window), so a transiently-unavailable log is re-fetched to completion rather
         // than sat out. A log NO peer holds simply backs off with the epoch's age-out
         // (the fetch set is bounded to `pinned(E) − held`), so this is not a storm.

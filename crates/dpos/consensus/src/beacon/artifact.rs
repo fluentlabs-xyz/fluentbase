@@ -124,7 +124,7 @@ use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use rand_core::{CryptoRngCore, OsRng};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, RwLock},
     time::{Duration, SystemTime},
 };
@@ -132,13 +132,16 @@ use tokio::sync::{
     mpsc::{error::TrySendError, UnboundedReceiver},
     oneshot,
 };
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 #[cfg(test)]
 use crate::scheme::epoch_committee_from_snapshot;
 use crate::{
     beacon::{
-        dkg_agree::AgreedArtifact, metrics::BeaconMetrics, outcome::group_public_key, share_state,
+        dkg_agree::{AgreedArtifact, DkgProposal},
+        metrics::BeaconMetrics,
+        outcome::{encode_outcome, group_public_key},
+        share_state,
     },
     digest::Digest,
 };
@@ -315,6 +318,25 @@ pub(crate) fn verify_artifact_for_epoch<R: CryptoRngCore>(
 }
 
 /// Canonical bytes for one artifact — the durable record and the `Have` payload.
+/// The VALUE identity of a certified payload: `keccak256(target_epoch ‖ logs ‖
+/// group_key)` — the pinned set and the polynomial, which is everything the epoch
+/// signs under. `DkgProposal::digest` (what the instance VOTES on) also covers
+/// `confirms`, the entry-bar evidence a leader attached; two certificates over
+/// one pinned set and one key with different confirmation metadata certify the
+/// SAME value, and are one artifact here, not two. This is the identity
+/// `Conflict` is judged by (the actor) and the bridge's divergence is noted by.
+pub(crate) fn value_digest(proposal: &DkgProposal) -> alloy_primitives::B256 {
+    let mut buf = Vec::with_capacity(8 + 4 + proposal.logs.len() * 33);
+    buf.extend_from_slice(&proposal.target_epoch.to_be_bytes());
+    buf.extend_from_slice(&(proposal.logs.len() as u32).to_be_bytes());
+    for (idx, hash) in &proposal.logs {
+        buf.push(*idx);
+        buf.extend_from_slice(hash.as_slice());
+    }
+    buf.extend_from_slice(&encode_outcome(&proposal.group_key));
+    alloy_primitives::keccak256(buf)
+}
+
 pub(crate) fn encode_artifact(artifact: &AgreedArtifact) -> Vec<u8> {
     artifact.encode().to_vec()
 }
@@ -424,6 +446,21 @@ impl Read for ArtifactResponse {
 pub struct ArtifactStore {
     ram: Arc<RwLock<BTreeMap<u64, Arc<AgreedArtifact>>>>,
     durable: Option<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>,
+    /// The VALUE digest of a SECOND quorum-certified artifact seen for an epoch
+    /// this store already holds one for — the `Conflict` witness, kept beside the
+    /// held value so the fact survives a lost hand-off to the `DkgActor` (which
+    /// reads this store on every height tick, `DkgActor::reconcile_with_store`).
+    /// First-wins like `ram`: a third value changes nothing. THE STORE OWNS THE
+    /// WITNESS, in RAM and on disk: [`Self::note_divergent`] writes the
+    /// `beacon-conflict-e<E>.bin` marker (`share_state::persist_conflict`) under
+    /// `conflict_dir` the instant it notes the value, and a store opened over that
+    /// directory reloads every marker there ([`Self::with_conflict_dir`]) — so no
+    /// restart between the note and the actor's next tick loses the verdict.
+    divergent: Arc<RwLock<BTreeMap<u64, alloy_primitives::B256>>>,
+    /// Where the conflict markers live: the beacon share directory the
+    /// `DkgActor` reads them back from (`recover`). `None` (RAM-only, the
+    /// in-process/test default) ⇒ the witness lives only in this process.
+    conflict_dir: Option<PathBuf>,
     /// One notifier per [`Self::subscribe`] caller, fired by every accepted
     /// [`Self::insert`].
     ///
@@ -459,7 +496,35 @@ impl ArtifactStore {
         Self {
             ram: Arc::new(RwLock::new(ram)),
             durable: Some(durable),
+            divergent: Arc::default(),
+            conflict_dir: None,
             listeners: Arc::default(),
+        }
+    }
+
+    /// Make the divergence witness DURABLE under `dir` — the beacon share
+    /// directory, where `DkgActor::recover` reads `Conflict(E)` back from — and
+    /// reload every marker already there, so a store that restarts between the
+    /// note and the actor's verdict still answers `divergent` for the epoch. A
+    /// malformed marker reloads as a witness with no known digest (fail-closed:
+    /// only a verdict ever writes one).
+    pub fn with_conflict_dir(self, dir: PathBuf) -> Self {
+        {
+            let mut divergent = self
+                .divergent
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for (epoch, marker) in share_state::conflict_markers(&dir) {
+                let second = match marker {
+                    share_state::ConflictMarker::Pair(_, second) => second,
+                    share_state::ConflictMarker::Malformed => alloy_primitives::B256::ZERO,
+                };
+                divergent.entry(epoch).or_insert(second);
+            }
+        }
+        Self {
+            conflict_dir: Some(dir),
+            ..self
         }
     }
 
@@ -475,18 +540,23 @@ impl ArtifactStore {
 
     /// Record `artifact` as the agreement's output for `epoch`.
     ///
-    /// Returns `false` when an artifact for that epoch is already held, and keeps
-    /// the one it has. FIRST-WINS is correct rather than convenient: the
-    /// agreement instance certifies exactly one value per target epoch (a
-    /// certified value bars every other one at `propose` and `verify`), so a
-    /// second artifact for one epoch is either the identical bytes or evidence of
-    /// something this store cannot adjudicate — and overwriting would let a
-    /// fetched artifact displace the one this node itself agreed.
-    pub fn insert(&self, epoch: u64, artifact: AgreedArtifact) -> bool {
+    /// `Err(artifact)` — the value handed BACK (boxed: the refusal is the rare
+    /// arm, and the `Ok` must stay small) — when an artifact for that epoch is
+    /// already held; the store keeps the one it has. FIRST-WINS is correct
+    /// rather than convenient: the agreement instance certifies exactly one value
+    /// per target epoch (a certified value bars every other one at `propose` and
+    /// `verify`), so a second artifact for one epoch is either the identical
+    /// bytes or evidence of something this store cannot adjudicate — and
+    /// overwriting would let a fetched artifact displace the one this node itself
+    /// agreed. The loser comes back so the caller can NOTE it
+    /// ([`Self::note_divergent`]): the decision is taken under the one write lock,
+    /// so a producer that lost the race to another still holds the value the
+    /// verdict needs (there is no check-then-insert window to lose it in).
+    pub fn insert(&self, epoch: u64, artifact: AgreedArtifact) -> Result<(), Box<AgreedArtifact>> {
         let encoded = {
             let mut ram = self.lock_mut();
             if ram.contains_key(&epoch) {
-                return false;
+                return Err(Box::new(artifact));
             }
             let encoded = encode_artifact(&artifact);
             ram.insert(epoch, Arc::new(artifact));
@@ -520,12 +590,72 @@ impl ArtifactStore {
                 handle.notify_one();
             }
         }
-        true
+        Ok(())
     }
 
     /// The artifact for `epoch`, if this node holds one.
     pub fn get(&self, epoch: u64) -> Option<Arc<AgreedArtifact>> {
         self.lock().get(&epoch).cloned()
+    }
+
+    /// Note a quorum-certified `artifact` for `epoch` whose VALUE differs from the
+    /// held one ([`value_digest`]). Returns whether it is the first such value —
+    /// the caller reports the conflict once. A note for an epoch nothing is held
+    /// for, or for the held value itself, is refused: the witness is a PAIR.
+    ///
+    /// The first note is made DURABLE here and now (`share_state::persist_conflict`,
+    /// fsync, under the witness lock) when the store has a `conflict_dir`: the
+    /// `DkgActor` reads the marker first on a restart, so the verdict survives a
+    /// death before its next tick. A marker that cannot be written is said
+    /// (ERROR) and counted; the RAM witness stands regardless, and the actor
+    /// re-attempts the marker as it enters the terminal (`stop_signing`).
+    pub(crate) fn note_divergent(&self, epoch: u64, artifact: &AgreedArtifact) -> bool {
+        let Some(held) = self.get(epoch) else {
+            return false;
+        };
+        let (held, second) = (value_digest(&held.0), value_digest(&artifact.0));
+        if held == second {
+            return false;
+        }
+        let mut divergent = self
+            .divergent
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if divergent.contains_key(&epoch) {
+            return false;
+        }
+        if let Some(dir) = &self.conflict_dir {
+            if let Err(err) = share_state::persist_conflict(dir, epoch, &held, &second) {
+                metrics::counter!("dpos_artifact_store_conflict_marker_failed_total").increment(1);
+                error!(
+                    epoch,
+                    ?err,
+                    "artifact store: could not write the conflict marker for a second \
+                     certified value; the witness holds in this process only until the \
+                     DKG actor's verdict re-attempts it"
+                );
+            }
+        }
+        divergent.insert(epoch, second);
+        true
+    }
+
+    /// What this store knows about `epoch`: the held artifact, and the value
+    /// digest of the divergent second one if it was ever noted. THE read the
+    /// `DkgActor` makes of this store (`AgreedOutcomeAt`): the store owns the fact
+    /// "the epoch's artifact", the actor owns what to do about it.
+    pub fn view(
+        &self,
+        epoch: u64,
+    ) -> Option<(Arc<AgreedArtifact>, Option<alloy_primitives::B256>)> {
+        let held = self.get(epoch)?;
+        let divergent = self
+            .divergent
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&epoch)
+            .copied();
+        Some((held, divergent))
     }
 
     /// Whether this node can answer `Have` for `epoch`.
@@ -935,7 +1065,17 @@ impl<E: Clock + Send + Sync> AcquireArtifact for TransportAcquire<E> {
                 }
             }
             let pk = *group_public_key(&artifact.0.group_key);
-            let first = self.store.insert(minted_at, artifact.clone());
+            let first = match self.store.insert(minted_at, artifact.clone()) {
+                Ok(()) => true,
+                // A producer inserted between the `has` above and here: the
+                // held value stands, and if this one differs it is the
+                // `Conflict` witness — exactly as the instance and the pull
+                // seam note their losers.
+                Err(loser) => {
+                    self.store.note_divergent(minted_at, &loser);
+                    false
+                }
+            };
             self.metrics.follower_artifact_adopted.inc();
             if first {
                 // THE TAIL IS PART OF THE WITNESS, not decoration: without it the line
@@ -955,11 +1095,48 @@ impl<E: Clock + Send + Sync> AcquireArtifact for TransportAcquire<E> {
                 // does, or a member whose own instance died stays shareless for an
                 // epoch it was elected to sign in (see this module's header).
                 if let Some(adopt) = self.adopt.as_ref() {
-                    let _ = adopt.try_send(artifact);
+                    hand_off(adopt, minted_at, &artifact, &self.metrics);
                 }
             }
             true
         })
+    }
+}
+
+/// Hand `artifact` to the agreement write-back — the only route from an
+/// acquisition seam to the `DkgActor`. ONE shape for both seams that make it
+/// (the pull bridge and the transport acquisition): a refused send is said and
+/// counted (`dpos_dkg_artifact_handoff_lost_total`), never fatal — the store owns
+/// the artifact and the actor reads it on its next height tick
+/// (`DkgActor::reconcile_with_store`), so what is lost is a tick of latency, not
+/// the fact.
+fn hand_off(
+    tx: &tokio::sync::mpsc::Sender<AgreedArtifact>,
+    epoch: u64,
+    artifact: &AgreedArtifact,
+    metrics: &BeaconMetrics,
+) {
+    match tx.try_send(artifact.clone()) {
+        Ok(()) => debug!(
+            epoch,
+            "artifact seam: handing an acquired artifact to the agreement write-back"
+        ),
+        Err(TrySendError::Full(_)) => {
+            metrics.dkg_artifact_handoff_lost.inc();
+            warn!(
+                epoch,
+                "artifact seam: the agreement write-back is backed up; the store holds the \
+                 artifact and the DKG actor reads it on its next height tick"
+            );
+        }
+        Err(TrySendError::Closed(_)) => {
+            metrics.dkg_artifact_handoff_lost.inc();
+            warn!(
+                epoch,
+                "artifact seam: the agreement write-back is gone; the store holds the artifact \
+                 and nothing adopts it until the actor is back"
+            );
+        }
     }
 }
 
@@ -1126,8 +1303,11 @@ impl MintFixture {
 
     /// The artifact for a mint the chain has already recorded ARRIVES.
     pub(crate) fn arrive(&self, minted_at: u64, group_key: crate::beacon::outcome::DkgOutcome) {
-        self.artifacts
-            .insert(minted_at, artifact_with_key(minted_at, group_key));
+        // First-wins: a fixture that arrives twice keeps the first value.
+        drop(
+            self.artifacts
+                .insert(minted_at, artifact_with_key(minted_at, group_key)),
+        );
     }
 
     /// Both halves at once, for a fixture that only needs the end state.
@@ -1255,30 +1435,25 @@ where
     ))
 }
 
-/// The stored artifacts a restarting node has to push back through the write-back,
-/// and the reason that push has to exist at all.
+/// The stored artifacts a restarting node pushes back through the write-back.
 ///
-/// The `DkgActor` adopts a pinned dealer-log set from exactly ONE place: the
-/// artifacts channel a LIVE agreement instance feeds. Every other reader of this
-/// store — [`KeyIndex`]'s key reads, the pull seam's serve path — reads it to
-/// answer a key question, and none of them reaches
-/// [`crate::beacon::actor::DkgActor::on_artifact`]. So a member of
-/// `committee[E+1]` that restarts after adopting an artifact but before
-/// `finalize_over_pinned` completes comes back with an empty pinned set and waits
-/// for a re-agreement no peer will run: every peer's launcher already holds `E+1`
-/// in its `started` set. The artifact is on this node's own disk the whole time.
-/// Replaying it is what makes the module's opening claim — recovering an artifact
-/// after a restart is a read, not a re-agreement — true for the actor too.
+/// The `DkgActor` takes a pinned dealer-log set from TWO places: the artifacts
+/// channel (a LIVE instance, the pull seam's hand-off, this replay) and its own
+/// per-tick READ of this store (`DkgActor::recover` on the tick an epoch is
+/// decided, `DkgActor::reconcile_with_store` on every tick after) — the store
+/// owns the fact, the channel is the fast path. So a member of `committee[E+1]`
+/// that restarts after adopting an artifact but before `finalize_over_pinned`
+/// completes is served by the read alone; this replay only spares it the wait
+/// for its first height tick, and is otherwise the same value arriving twice
+/// (first-wins at the actor, by VALUE).
 ///
 /// SELECTED, never replayed wholesale: the store has no eviction policy, so most
-/// of what it holds is history, and re-adopting a settled epoch would take a
-/// ceremony-retention hold nothing releases until the next height tick. An
-/// artifact is worth re-adopting only where BOTH hold:
+/// of what it holds is history. An artifact is replayed only where BOTH hold:
 ///
-/// - this node has no share for the epoch — a held share makes the adoption an
-///   immediate no-op (`on_artifact` returns on exactly that check), and the
-///   common case after a clean finalize is share-and-journal-both-present;
-/// - the epoch's ceremony journal is still on disk — without it `maybe_start`
+/// - this node has no share for the epoch — with a share the actor's own read
+///   keys the epoch on its first tick (`recover`: share held, artifact held), and
+///   a push adds nothing;
+/// - the epoch's ceremony journal is still on disk — without it `DkgActor::recover`
 ///   has nothing to resume, so there is no ceremony for the pinned set to be
 ///   finalized over.
 ///
@@ -1574,32 +1749,51 @@ impl ArtifactBridge {
                     }
                 }
                 let artifact = *artifact;
-                let digest = artifact.0.digest();
-                let stored = self.store.insert(epoch, artifact);
-                // Read back rather than re-wrapping: a first-wins store may
-                // already hold this node's own agreed artifact, and every waiter
-                // must be woken with the value the store will actually serve.
-                if let Some(held) = self.store.get(epoch) {
-                    if held.0.digest() != digest {
-                        // Two artifacts for one epoch that BOTH carry a
-                        // committee quorum. Not the peer's fault and not
-                        // adjudicable here — the instance bars a second value
-                        // within itself, so this can only be two instances for
-                        // one target — but it is a divergence worth saying out
-                        // loud, because the two halves of the network would
-                        // otherwise pin different keys in silence.
-                        warn!(
-                            epoch,
-                            held = %held.0.digest(),
-                            served = %digest,
-                            "artifact seam: a peer served a DIFFERENT quorum-certified artifact \
-                             for an epoch this node already holds one for; keeping the held one"
-                        );
+                // ONE decision, under the store's write lock: the value is held
+                // (first insert) or comes back as the loser. There is no
+                // check-then-insert window in which a producer that raced this
+                // pull in (the local agreement instance, `dkg_engine`) could make
+                // the served value vanish un-noted.
+                match self.store.insert(epoch, artifact) {
+                    Ok(()) => {
+                        // Read back rather than re-wrapping: every waiter is
+                        // woken with the value the store will actually serve.
+                        if let Some(held) = self.store.get(epoch) {
+                            self.adopt(epoch, &held);
+                            self.wake(epoch, PullAnswer::Have(held));
+                        }
                     }
-                    if stored {
-                        self.adopt(epoch, &held);
+                    // A quorum-certified value for an epoch this node already
+                    // holds one for — held before this pull, or inserted by a
+                    // producer while it ran. The same value is nothing new. A
+                    // DIFFERENT one is not the peer's fault (its certificate
+                    // verified) and not adjudicable here — the instance bars a
+                    // second value within itself, so this is two instances for
+                    // one target, ≥ 2q−n signers. The store keeps the held one
+                    // (first-wins) and NOTES the second beside it, durably
+                    // (`note_divergent`), which is what makes the epoch `Conflict`
+                    // at the DKG actor: the actor reads this store on every tick,
+                    // so the fact outlives a lost hand-off. The hand-off is still
+                    // made, for the tick the actor would otherwise wait. Identity
+                    // is by VALUE (`value_digest`): a certificate over the held
+                    // set and key with other confirmation metadata is the held
+                    // value again.
+                    Err(served) => {
+                        if self.store.note_divergent(epoch, &served) {
+                            warn!(
+                                epoch,
+                                held = %self.store.get(epoch).map(|h| value_digest(&h.0)).unwrap_or_default(),
+                                served = %value_digest(&served.0),
+                                "artifact seam: a peer served a DIFFERENT quorum-certified artifact \
+                                 for an epoch this node already holds one for; keeping the held one \
+                                 and reporting the conflict"
+                            );
+                            self.adopt(epoch, &served);
+                        }
+                        if let Some(held) = self.store.get(epoch) {
+                            self.wake(epoch, PullAnswer::Have(held));
+                        }
                     }
-                    self.wake(epoch, PullAnswer::Have(held));
                 }
                 true
             }
@@ -1612,39 +1806,26 @@ impl ArtifactBridge {
     /// Without it a pulled artifact answers every `PK_epoch` read and serves peers
     /// while the node stays permanently SHARELESS for the epoch: `on_artifact` is
     /// reached from the write-back alone, so nothing adopts the pinned set and
-    /// nothing finalizes over it until `drive_recompute` heals — after the chain
+    /// nothing finalizes over it until the boundary heal — after the chain
     /// has already entered the epoch this node was meant to sign in. The reachable
     /// shape is a member of `committee[E+1]` whose instance died mid-agreement:
     /// its peers decided without it and their launchers hold `E+1` in `started`,
     /// so no re-agreement is coming and the pull is its only source.
     ///
-    /// Sent ONLY on a first insert. A repeat delivery for an epoch the store
-    /// already holds has nothing new to adopt, and re-adopting a settled epoch
-    /// takes a ceremony-retention hold that nothing releases until the next height
-    /// tick — the same reason [`restart_replay`] selects rather than replays
-    /// wholesale. That bound also makes the channel's depth a non-issue: at most
-    /// one send per target epoch, into a loop that only forwards.
+    /// Sent on a first insert, and on a DIVERGENT second value (a different
+    /// quorum-certified payload for an epoch already held — the actor's `Conflict`
+    /// input). A repeat delivery of the held value has nothing new to adopt, and
+    /// re-adopting a settled epoch takes a ceremony-retention hold that nothing
+    /// releases until the next height tick — the same reason [`restart_replay`]
+    /// selects rather than replays wholesale. That bound also makes the channel's
+    /// depth a non-issue: at most one send per target epoch and value, into a loop
+    /// that only forwards.
     ///
-    /// A refused send is logged, never a `false` from `deliver`: the peer served an
-    /// artifact that verified, and this node's own write-back being gone or backed
-    /// up is not its misbehaviour.
+    /// A refused send is logged and counted, never a `false` from `deliver`: the
+    /// peer served an artifact that verified, and this node's own write-back being
+    /// gone or backed up is not its misbehaviour ([`hand_off`]).
     fn adopt(&self, epoch: u64, artifact: &AgreedArtifact) {
-        match self.adopt_tx.try_send(artifact.clone()) {
-            Ok(()) => debug!(
-                epoch,
-                "artifact seam: handing a pulled artifact to the agreement write-back"
-            ),
-            Err(TrySendError::Full(_)) => warn!(
-                epoch,
-                "artifact seam: the agreement write-back is backed up; this epoch's pinned set \
-                 was not adopted and waits for the recompute heal"
-            ),
-            Err(TrySendError::Closed(_)) => warn!(
-                epoch,
-                "artifact seam: the agreement write-back is gone; this epoch's pinned set was \
-                 not adopted"
-            ),
-        }
+        hand_off(&self.adopt_tx, epoch, artifact, &self.metrics);
     }
 
     fn wake(&self, epoch: u64, answer: PullAnswer) {
@@ -2154,12 +2335,12 @@ mod tests {
             )
             .await
             .expect("open");
-            assert!(store.insert(TARGET, mine.clone()));
+            assert!(store.insert(TARGET, mine.clone()).is_ok());
             assert!(
-                !store.insert(TARGET, artifact(&c, TARGET)),
+                store.insert(TARGET, artifact(&c, TARGET)).is_err(),
                 "a second artifact for one epoch must not displace the first"
             );
-            assert!(store.insert(TARGET + 2, artifact(&c, TARGET + 2)));
+            assert!(store.insert(TARGET + 2, artifact(&c, TARGET + 2)).is_ok());
             assert_eq!(store.epochs(), vec![TARGET, TARGET + 2]);
             assert_eq!(*store.get(TARGET).expect("held"), mine);
             assert!(store.get(TARGET + 1).is_none());
@@ -2220,7 +2401,7 @@ mod tests {
             drop(rx);
             let store = ArtifactStore::with_persistence(Vec::new(), tx);
             assert!(
-                store.insert(TARGET, mine.clone()),
+                store.insert(TARGET, mine.clone()).is_ok(),
                 "the artifact is ACCEPTED — the durable half does not gate it"
             );
             assert_eq!(
@@ -2330,7 +2511,7 @@ mod tests {
             )
             .await
             .expect("open the artifact store");
-            assert!(store.insert(BOOTSTRAP, mint.clone()));
+            assert!(store.insert(BOOTSTRAP, mint.clone()).is_ok());
 
             // THE CHAIN: one mint, at the bootstrap epoch, and a committee that never
             // changes after it. The asked-epoch log is what makes the restart half
@@ -2458,6 +2639,15 @@ mod tests {
         c: &Committee,
         epoch: u64,
     ) -> (ArtifactBridge, tokio::sync::mpsc::Receiver<AgreedArtifact>) {
+        bridge_over(c, epoch, ArtifactStore::new())
+    }
+
+    /// [`bridge_and_adopt`] over an explicit `store`.
+    fn bridge_over(
+        c: &Committee,
+        epoch: u64,
+        store: ArtifactStore,
+    ) -> (ArtifactBridge, tokio::sync::mpsc::Receiver<AgreedArtifact>) {
         let snapshot = c.snapshot(epoch);
         let source: CommitteeSource = Arc::new(move |e| {
             (e == snapshot.epoch)
@@ -2465,15 +2655,97 @@ mod tests {
         });
         let (adopt_tx, adopt_rx) = tokio::sync::mpsc::channel(16);
         (
-            ArtifactBridge::new(
-                CHAIN_ID,
-                ArtifactStore::new(),
-                source,
-                adopt_tx,
-                BeaconMetrics::default(),
-            ),
+            ArtifactBridge::new(CHAIN_ID, store, source, adopt_tx, BeaconMetrics::default()),
             adopt_rx,
         )
+    }
+
+    /// EB-02 / EA-01. A served value that LOSES the insert — the store already
+    /// holds one (before the pull, or inserted by the local instance while the
+    /// pull ran: `insert` is the one decision, so both are this arm) — is not
+    /// lost: a DIFFERENT value is noted as the divergence witness, written to
+    /// disk by the STORE itself (`beacon-conflict-e<E>.bin`, read back by a store
+    /// reopened over the directory), and handed to the write-back; the SAME value
+    /// again is nothing new. The peer served a certified artifact either way, so
+    /// the delivery is honest.
+    #[test]
+    fn a_served_value_that_loses_the_insert_is_noted_durably_not_lost() {
+        let dir = std::env::temp_dir().join(format!(
+            "beacon-artifact-divergent-{}-{}",
+            std::process::id(),
+            TARGET
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let c = committee(8);
+        let store = ArtifactStore::new().with_conflict_dir(dir.clone());
+        let (fetching, mut adopt_rx) = bridge_over(&c, TARGET, store.clone());
+        // The local instance's value lands first (not through the bridge).
+        let mine = artifact(&c, TARGET);
+        assert!(store.insert(TARGET, mine.clone()).is_ok());
+        assert!(adopt_rx.try_recv().is_err(), "nothing handed off yet");
+
+        // A peer serves a DIFFERENT certified value for the same epoch.
+        let other = {
+            let mut p = proposal(TARGET);
+            p.logs.pop();
+            let cert = c.certify(TARGET, 1, p.digest());
+            (p, cert)
+        };
+        assert_ne!(value_digest(&other.0), value_digest(&mine.0));
+        let served = ArtifactResponse::Have(Box::new(other.clone())).encode();
+        assert!(
+            fetching.deliver(TARGET, served.as_ref()),
+            "a certified value that lost the insert is an honest delivery"
+        );
+        assert_eq!(*store.get(TARGET).expect("held"), mine, "first-wins");
+        assert_eq!(
+            store.view(TARGET).expect("held").1,
+            Some(value_digest(&other.0)),
+            "the loser is the divergence witness"
+        );
+        assert_eq!(
+            share_state::load_conflict(&dir, TARGET),
+            Some(share_state::ConflictMarker::Pair(
+                value_digest(&mine.0),
+                value_digest(&other.0)
+            )),
+            "the STORE wrote the marker the instant it noted the value"
+        );
+        assert_eq!(
+            adopt_rx
+                .try_recv()
+                .expect("the loser is handed to the write-back")
+                .0,
+            other.0,
+        );
+
+        // The held value served again: the same value, nothing new.
+        let again = ArtifactResponse::Have(Box::new(artifact(&c, TARGET))).encode();
+        assert!(fetching.deliver(TARGET, again.as_ref()));
+        assert!(
+            adopt_rx.try_recv().is_err(),
+            "the held value is not re-adopted"
+        );
+        assert_eq!(
+            store.view(TARGET).expect("held").1,
+            Some(value_digest(&other.0)),
+            "the witness is first-wins too"
+        );
+
+        // A store reopened over the directory knows the witness again — without
+        // the actor's verdict ever having run in between.
+        let reopened = ArtifactStore::new().with_conflict_dir(dir.clone());
+        assert!(reopened.insert(TARGET, mine).is_ok());
+        assert_eq!(
+            reopened.view(TARGET).expect("held").1,
+            Some(value_digest(&other.0)),
+            "the reopened store reloaded its marker"
+        );
+        assert!(
+            !reopened.note_divergent(TARGET, &other),
+            "a reloaded witness is not noted twice"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// ITEMS 3 + 4. A producer that lacks the artifact ANSWERS `NotYet` instead
@@ -2501,7 +2773,7 @@ mod tests {
 
         // Once it holds one, it serves it, and the far side takes it.
         let mine = artifact(&c, TARGET);
-        assert!(serving.store.insert(TARGET, mine.clone()));
+        assert!(serving.store.insert(TARGET, mine.clone()).is_ok());
         let answer = serving.produce(TARGET);
         assert!(
             fetching.deliver(TARGET, answer.as_ref()),
@@ -2572,7 +2844,7 @@ mod tests {
         );
 
         let mine = artifact(&c, TARGET);
-        assert!(serving.store.insert(TARGET, mine.clone()));
+        assert!(serving.store.insert(TARGET, mine.clone()).is_ok());
         assert!(fetching.deliver(TARGET, serving.produce(TARGET).as_ref()));
         assert_eq!(
             adopt
@@ -2689,7 +2961,7 @@ mod tests {
 
             // It converges; the very next pull carries the artifact.
             let mine = artifact(&c, TARGET);
-            assert!(serving.store.insert(TARGET, mine.clone()));
+            assert!(serving.store.insert(TARGET, mine.clone()).is_ok());
             match pull.pull(&mut resolver, TARGET).await {
                 Some(PullAnswer::Have(got)) => assert_eq!(*got, mine),
                 other => panic!("expected the artifact, got {other:?}"),
@@ -2826,7 +3098,7 @@ mod tests {
             );
             // Held locally (the store hit that short-circuits the network): forgotten.
             let mine = artifact(&c, TARGET + 6);
-            assert!(resolver.fetching.store.insert(TARGET + 6, mine));
+            assert!(resolver.fetching.store.insert(TARGET + 6, mine).is_ok());
             assert!(matches!(
                 pull.pull(&mut resolver, TARGET + 6).await,
                 Some(PullAnswer::Have(_))
@@ -2886,7 +3158,7 @@ mod tests {
             let store = resolver.fetching.store.clone();
             drop(context.with_label("landing").spawn(move |ctx| async move {
                 ctx.sleep(Duration::from_secs(1)).await;
-                assert!(store.insert(TARGET + 8, landing));
+                assert!(store.insert(TARGET + 8, landing).is_ok());
             }));
             assert!(
                 matches!(

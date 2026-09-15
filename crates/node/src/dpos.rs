@@ -1292,7 +1292,7 @@ where
     // slot: `committee[target]` is frozen a full epoch before its DKG runs (at its
     // `target−2` selection block), so the single `committee` read above feeds both
     // the verify/consensus paths AND the DkgActor (ceremony roster + the `next`
-    // side of `maybe_start`'s change-test + the AM5 idx→pubkey mapping). The former
+    // side of `recover`'s membership test + the AM5 idx→pubkey mapping). The former
     // candidate/stash reader and the separate `active_committee_for` are gone; the
     // DkgActor's default `active_committee_for` covers the `cur` side of the
     // change-test against the same committed slot.

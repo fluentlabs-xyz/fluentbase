@@ -14,7 +14,7 @@
 //
 // NOTE (share-less-on-join heal — §8.11.1): a seated committee[E] member that landed
 // WITHOUT E's share (missed the E-1 window) is now healed by the LOCAL recompute-from-
-// journal path (`beacon::actor::drive_recompute` + `ceremony::recompute_scoped`), NOT by
+// journal path (`beacon::actor::try_recompute` + `ceremony::recompute_scoped`), NOT by
 // a reshare: the member's share is a deterministic function of the consensus-agreed QUAL
 // dealer-log set (each log self-carries the recipient's point as ack-or-reveal,
 // `dkg.rs` `get_reveal`/`Player::finalize`), so retaining the durable journal + the

@@ -656,6 +656,19 @@ impl DkgCeremony {
         }
     }
 
+    /// Forget the ack this node emitted as a player for `dealer`'s dealing — the
+    /// actor's step-1f gate found the paired `ReceivedDealing` record NOT durable and
+    /// withheld the ack. Without this the dealer's next retransmit would re-receive
+    /// the dealing and [`try_ack`](Self::try_ack)'s cache would re-emit the ack with
+    /// an EMPTY journal, which the gate takes as "already durable" — an ack this node
+    /// cannot back after a restart, the exact record the gate exists to prevent. The
+    /// dealing itself stays in the player's `view` (this process can still finalize
+    /// with it); the dealer reveals the point in its log, which is what a restart
+    /// recovers from.
+    pub fn withhold_ack(&mut self, dealer: &PeerPubkey) {
+        self.emitted_acks.remove(dealer);
+    }
+
     /// Re-send each un-acked dealing (`Commitment` + `Share`) point-to-point while the
     /// dealing phase is open — the DEALER LEG of reliable delivery (§8.11.1). A member
     /// that missed our initial dealing (or whose ack we lost) receives it again and
@@ -905,6 +918,13 @@ impl DkgCeremony {
     /// is ever dropped or double-handled. `emitted_acks` is rebuilt from that map in BOTH
     /// shapes so the player ack-cache re-emit works after any resume.
     ///
+    /// `preferred` names, per dealer, the body the rebuilt player should stand on
+    /// when the journal holds more than one of that dealer's (an equivocation pair):
+    /// the actor passes the artifact's pinned `dealer → hash` when it already holds
+    /// the artifact (D-10), and an empty map otherwise, in which case the
+    /// FIRST-recorded body is used — the one this node proposes and confirms. A
+    /// preferred hash the journal does not hold falls back to first-recorded too.
+    ///
     /// `MissingPlayerDealing` (a truncated journal dropped a publicly-acked dealing)
     /// surfaces as `Err` so the caller can sit out the epoch gracefully — never crash.
     pub fn resume(
@@ -914,6 +934,7 @@ impl DkgCeremony {
         me_key: Ed25519PrivateKey,
         records: Vec<JournalRecord>,
         reconstruct_dealer: bool,
+        preferred: &BTreeMap<PeerPubkey, B256>,
     ) -> Result<Resumed, DkgError> {
         let me = me_key.public_key();
         let info = info_for(namespace, epoch, committee.clone())?;
@@ -941,9 +962,17 @@ impl DkgCeremony {
         };
         // One `DealerLog` per dealer for `Player::resume`'s integrity check (a
         // verified log acking `me` for a dealing `me` cannot replay ⇒
-        // `MissingPlayerDealing`): the FIRST-recorded log of each dealer, the same
-        // one this node proposes and confirms.
+        // `MissingPlayerDealing`): the PREFERRED (pinned) body of each dealer where
+        // the caller names one and the journal holds it, else the FIRST-recorded
+        // log of each dealer, the same one this node proposes and confirms.
         let mut log_map: BTreeMap<PeerPubkey, DealerLog<MinSig, PeerPubkey>> = BTreeMap::new();
+        let mut file_log = |pk: PeerPubkey, log: DealerLog<MinSig, PeerPubkey>, hash: B256| {
+            if preferred.get(&pk) == Some(&hash) {
+                log_map.insert(pk, log);
+            } else {
+                log_map.entry(pk).or_insert(log);
+            }
+        };
         let mut own_seal = false;
         // (dealer, pub, priv) dealings to feed `Player::resume` (incl. our own
         // self-dealing — it rebuilds `view[me]` AND regenerates our self-ack).
@@ -967,7 +996,7 @@ impl DkgCeremony {
                 JournalRecord::OwnSeal(_) => {
                     for (pk, log, signed) in checked_logs_in(record, &info, epoch) {
                         own_seal = true;
-                        log_map.entry(pk.clone()).or_insert(log);
+                        file_log(pk.clone(), log, log_hash(&signed));
                         let _ = shell.insert_log(pk, signed);
                     }
                 }
@@ -992,7 +1021,7 @@ impl DkgCeremony {
                         _ => None,
                     };
                     for (pk, log, signed) in halves {
-                        log_map.entry(pk.clone()).or_insert(log);
+                        file_log(pk.clone(), log, log_hash(&signed));
                         let _ = shell.insert_log(pk, signed);
                     }
                     if let Some((dealer, claimed)) = claimed {
@@ -1011,7 +1040,7 @@ impl DkgCeremony {
                 }
                 JournalRecord::PeerLog(_) => {
                     for (pk, log, signed) in checked_logs_in(record, &info, epoch) {
-                        log_map.entry(pk.clone()).or_insert(log);
+                        file_log(pk.clone(), log, log_hash(&signed));
                         let _ = shell.insert_log(pk, signed);
                     }
                 }
@@ -1106,17 +1135,6 @@ impl DkgCeremony {
             ceremony: shell,
             outgoing,
         })
-    }
-
-    /// Whether this ceremony can still attempt
-    /// [`finalize_over_pinned`](Self::finalize_over_pinned) — i.e. its `Player` has
-    /// not already been consumed by a prior finalize. A finalize-`Err` (transient
-    /// `MissingPlayerDealing` race, see
-    /// [`finalize_over_pinned`](Self::finalize_over_pinned)) consumes the player; the supervisor's finalize gate derives from this so the
-    /// ceremony is NOT re-pulled into a destructive finalize, yet stays in the map to
-    /// keep SERVING its recorded logs to recovering peers until the boundary sweep.
-    pub fn can_finalize(&self) -> bool {
-        self.player.is_some()
     }
 
     /// The content hash ([`log_hash`]) of the log this node recorded FIRST for
@@ -1277,13 +1295,11 @@ impl DkgCeremony {
     ///   [`pinned_ready`](Self::pinned_ready), else `Player::finalize` returns
     ///   `Err(DkgFailed)`.
     ///
-    /// On `Err` the ceremony is NOT destroyed — the supervisor removes it from its
-    /// map ONLY on `Ok`. A transient `MissingPlayerDealing` race (`pinned_ready`
-    /// returns ready while `Player::finalize` over the just-scoped set returns `Err`
-    /// because a freshly-resumed node's rebuilt `view` lags a delivered log) thus does
-    /// not forfeit the share by destroying the whole ceremony; the ceremony sits out
-    /// gracefully ([`can_finalize`](Self::can_finalize) is now false, so the gate stops
-    /// re-pulling it) while still serving its recorded logs.
+    /// The player is CONSUMED either way, so this runs at most once per ceremony:
+    /// the actor takes the ceremony out of its `Agreed` phase to call it, moves the
+    /// recorded logs to the serve store, and lands the epoch in the phase the result
+    /// names (`Keyed`, `Acquiring(Logs)` — the journal re-selected over the pinned
+    /// set — or `Unrecoverable`).
     pub fn finalize_over_pinned<R: CryptoRngCore>(
         &mut self,
         rng: &mut R,
@@ -1291,7 +1307,10 @@ impl DkgCeremony {
         pinned: &BTreeMap<u8, B256>,
     ) -> Result<(CeremonyOutput, Share), DkgError> {
         let (logs, _missing) = self.scoped_pinned_logs(committee, pinned);
-        let player = self.player.take().expect("can_finalize gates this");
+        let player = self
+            .player
+            .take()
+            .expect("Agreed holds an unconsumed player");
         player.finalize::<N3f1, ed25519::Batch>(rng, logs, &Sequential)
     }
 }
@@ -2088,6 +2107,7 @@ mod tests {
             key0b,
             journal0b,
             false,
+            &BTreeMap::new(),
         )
         .expect("live resume");
         assert!(
@@ -2108,9 +2128,16 @@ mod tests {
         // the re-spawn would, under a re-deal, diverge — player-only restore makes it
         // irrelevant: no rng is consumed).
         let mut rng_res = StdRng::seed_from_u64(99);
-        let mut resumed =
-            DkgCeremony::resume(b"FLUENT_DPOS_V1_test", 0, committee, key0, journal0, false)
-                .expect("resume");
+        let mut resumed = DkgCeremony::resume(
+            b"FLUENT_DPOS_V1_test",
+            0,
+            committee,
+            key0,
+            journal0,
+            false,
+            &BTreeMap::new(),
+        )
+        .expect("resume");
         assert!(resumed.ceremony.own_log_recorded(&me0));
         let pinned_res = pinned_over_recorded(&resumed.ceremony, &roster);
         let (out_res, share_res) = resumed
@@ -2144,7 +2171,15 @@ mod tests {
             .expect("a peer dealing");
         journal0.remove(idx);
 
-        match DkgCeremony::resume(b"FLUENT_DPOS_V1_test", 0, committee, key0, journal0, false) {
+        match DkgCeremony::resume(
+            b"FLUENT_DPOS_V1_test",
+            0,
+            committee,
+            key0,
+            journal0,
+            false,
+            &BTreeMap::new(),
+        ) {
             Err(DkgError::MissingPlayerDealing) => {}
             Err(other) => panic!("expected MissingPlayerDealing, got {other:?}"),
             Ok(_) => panic!("a missing acked dealing must fail resume"),
@@ -2186,6 +2221,7 @@ mod tests {
             key0,
             received_only,
             true,
+            &BTreeMap::new(),
         )
         .expect("pre-deadline resume");
         assert!(
@@ -2231,6 +2267,7 @@ mod tests {
             key0,
             pre_seal,
             true,
+            &BTreeMap::new(),
         )
         .expect("pre-deadline resume");
         assert!(
@@ -2280,9 +2317,16 @@ mod tests {
             .collect();
         assert!(!peer_dealers.is_empty(), "node-0 acked at least one peer");
 
-        let resumed =
-            DkgCeremony::resume(b"FLUENT_DPOS_V1_test", 0, committee, key0, journal0, false)
-                .expect("resume");
+        let resumed = DkgCeremony::resume(
+            b"FLUENT_DPOS_V1_test",
+            0,
+            committee,
+            key0,
+            journal0,
+            false,
+            &BTreeMap::new(),
+        )
+        .expect("resume");
         let acked: BTreeSet<PeerPubkey> = resumed
             .outgoing
             .iter()
@@ -2323,6 +2367,7 @@ mod tests {
             key0.clone(),
             journal_canon,
             false,
+            &BTreeMap::new(),
         )
         .expect("resume");
         let pinned_canon = pinned_over_recorded(&canon.ceremony, &committee);
@@ -2581,6 +2626,7 @@ mod tests {
             key0.clone(),
             std::mem::take(&mut journal0),
             false,
+            &BTreeMap::new(),
         )
         .expect("live")
         .ceremony;
@@ -2599,9 +2645,17 @@ mod tests {
         assert_eq!(before.len(), 5);
 
         // Restart: replay the journal.
-        let resumed = DkgCeremony::resume(ns, 0, committee.clone(), key0, journal, false)
-            .expect("resume")
-            .ceremony;
+        let resumed = DkgCeremony::resume(
+            ns,
+            0,
+            committee.clone(),
+            key0,
+            journal,
+            false,
+            &BTreeMap::new(),
+        )
+        .expect("resume")
+        .ceremony;
         let after: Vec<LogId> = resumed.signed_logs.keys().cloned().collect();
         assert_eq!(
             after, before,
@@ -2704,12 +2758,20 @@ mod tests {
             let mut records = base();
             records.extend(shape);
             of_the_two(
-                DkgCeremony::resume(ns, 0, committee.clone(), key0.clone(), records, false)
-                    .expect("resume")
-                    .ceremony
-                    .signed_logs
-                    .into_keys()
-                    .collect(),
+                DkgCeremony::resume(
+                    ns,
+                    0,
+                    committee.clone(),
+                    key0.clone(),
+                    records,
+                    false,
+                    &BTreeMap::new(),
+                )
+                .expect("resume")
+                .ceremony
+                .signed_logs
+                .into_keys()
+                .collect(),
             )
         };
         let pair = |a: &DealerReveal, b: &DealerReveal| {
