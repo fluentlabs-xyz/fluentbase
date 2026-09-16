@@ -344,15 +344,16 @@ impl Read for ArtifactResponse {
 /// to lag. Records go out over a non-blocking unbounded channel and every disk
 /// touch happens on the writer.
 ///
-/// Retention: none, deliberately. An artifact is the only source of `PK_epoch` for
-/// a node that never ran the ceremony, and on a committee that has been stable for
-/// a long time the entry worth having is the oldest, so any window measured in
-/// epochs drops the valuable record first. One record per committee change is a
-/// few KiB, so keeping them all stays small.
+/// Retention is by mint, not by epoch age ([`Self::retain_mints_for_window`]): an
+/// artifact is the only source of `PK_epoch` for a node that never ran the
+/// ceremony, and on a committee that has been stable for a long time the entry
+/// worth having is the oldest, so a window measured in epochs would drop the
+/// valuable record first. What goes is a mint no epoch inside the retention window
+/// resolves to any more.
 #[derive(Clone, Default)]
 pub struct ArtifactStore {
     ram: Arc<RwLock<BTreeMap<u64, Arc<AgreedArtifact>>>>,
-    durable: Option<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>,
+    durable: Option<tokio::sync::mpsc::UnboundedSender<Durable>>,
     /// The value digest of a second quorum-certified artifact seen for an epoch
     /// this store already holds one for — the `Conflict` witness, kept beside the
     /// held value so the fact survives a lost hand-off to the `DkgActor`. First-wins
@@ -371,6 +372,14 @@ pub struct ArtifactStore {
     listeners: Arc<Mutex<Vec<Arc<tokio::sync::Notify>>>>,
 }
 
+/// What the RAM store hands the durable writer.
+pub(crate) enum Durable {
+    /// One accepted artifact, encoded.
+    Append(u64, Vec<u8>),
+    /// Drop every journal record whose mint the predicate refuses.
+    Retain(Arc<dyn Fn(u64) -> bool + Send + Sync>),
+}
+
 impl ArtifactStore {
     /// A RAM-only store: tests and any in-process run.
     pub fn new() -> Self {
@@ -379,7 +388,7 @@ impl ArtifactStore {
 
     fn with_persistence(
         rehydrated: Vec<(u64, AgreedArtifact)>,
-        durable: tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>,
+        durable: tokio::sync::mpsc::UnboundedSender<Durable>,
     ) -> Self {
         let ram = rehydrated
             .into_iter()
@@ -437,19 +446,18 @@ impl ArtifactStore {
     /// overwriting would let a fetched artifact displace the one this node itself
     /// agreed. The loser comes back so the caller can note it as divergent.
     pub fn insert(&self, epoch: u64, artifact: AgreedArtifact) -> Result<(), Box<AgreedArtifact>> {
-        let encoded = {
-            let mut ram = self.lock_mut();
-            if ram.contains_key(&epoch) {
-                return Err(Box::new(artifact));
-            }
-            let encoded = encode_artifact(&artifact);
-            ram.insert(epoch, Arc::new(artifact));
-            encoded
-        };
+        let mut ram = self.lock_mut();
+        if ram.contains_key(&epoch) {
+            return Err(Box::new(artifact));
+        }
+        let encoded = encode_artifact(&artifact);
+        ram.insert(epoch, Arc::new(artifact));
+        // Handed over under the RAM lock, as `retain` does: the journal then sees
+        // appends and retains in the order RAM applied them, so the two cannot
+        // disagree on a mint at the retention floor. Unbounded and non-blocking: a
+        // closed writer costs a re-fetch after the next restart and nothing now.
         if let Some(durable) = &self.durable {
-            // Unbounded and non-blocking: a closed writer costs a re-fetch after
-            // the next restart and nothing now.
-            if durable.send((epoch, encoded)).is_err() {
+            if durable.send(Durable::Append(epoch, encoded)).is_err() {
                 // Counted as well as logged: "accepted in RAM, never written" is a
                 // state an operator must be able to see, and a `warn!` alone is not
                 // a signal anything scrapes.
@@ -461,6 +469,7 @@ impl ArtifactStore {
                 );
             }
         }
+        drop(ram);
         // Unconditional and strictly after the durable hand-off: a waiter re-reads
         // on wake-up, so firing regardless is idempotent.
         if let Ok(listeners) = self.listeners.lock() {
@@ -537,11 +546,37 @@ impl ArtifactStore {
         self.lock().contains_key(&epoch)
     }
 
-    /// Every epoch this store can serve, ascending. Test support: production reads
-    /// the store by epoch.
-    #[cfg(test)]
+    /// Every mint this store can serve, ascending.
     pub fn epochs(&self) -> Vec<u64> {
         self.lock().keys().copied().collect()
+    }
+
+    /// Keep only the mints `keep` accepts, in RAM now and in the journal on the
+    /// writer's next turn. The divergence witness is left alone: a conflict marker
+    /// has its own lifetime owner in the DKG actor.
+    pub fn retain(&self, keep: impl Fn(u64) -> bool + Send + Sync + 'static) {
+        let keep: Arc<dyn Fn(u64) -> bool + Send + Sync> = Arc::new(keep);
+        let mut ram = self.lock_mut();
+        ram.retain(|mint, _| keep(*mint));
+        if let Some(durable) = &self.durable {
+            if durable.send(Durable::Retain(keep)).is_err() {
+                metrics::counter!("dpos_artifact_store_handoff_failed_total").increment(1);
+                warn!("artifact store: the durable writer is gone; the journal keeps its records");
+            }
+        }
+    }
+
+    /// The retention rule: keep every mint that some epoch in
+    /// `[now − window, now + MAX_COMMITTEE_LOOKAHEAD_EPOCHS]` resolves to — the
+    /// newest mint at or below `now − window` and everything above it
+    /// ([`share_state::ceremony_retain_floor`], the same rule the shares follow).
+    /// On a stable committee the live mint can be far older than the window and
+    /// survives; only a mint superseded before the window opened goes.
+    pub fn retain_mints_for_window(&self, now: u64, window: u64) {
+        let floor = share_state::ceremony_retain_floor(self.epochs().into_iter(), now, window);
+        if floor > 0 {
+            self.retain(move |mint| mint >= floor);
+        }
     }
 
     fn lock(&self) -> std::sync::RwLockReadGuard<'_, BTreeMap<u64, Arc<AgreedArtifact>>> {
@@ -1249,6 +1284,11 @@ impl<E: Storage + Clock + Metrics> ArtifactJournal<E> {
         self.store.put(U64::new(epoch), bytes);
     }
 
+    /// Drop every record whose mint `keep` refuses. Not durable until [`Self::sync`].
+    pub fn retain(&mut self, keep: &dyn Fn(u64) -> bool) {
+        self.store.retain(|key, _| keep(u64::from(key.clone())));
+    }
+
     /// Commit every staged record atomically.
     pub async fn sync(&mut self) -> Result<(), StoreError> {
         self.store.sync().await?;
@@ -1325,14 +1365,23 @@ where
 pub(crate) fn spawn_writer<E>(
     context: E,
     mut journal: ArtifactJournal<E>,
-    mut rx: UnboundedReceiver<(u64, Vec<u8>)>,
+    mut rx: UnboundedReceiver<Durable>,
 ) -> Handle<()>
 where
     E: Storage + Clock + Metrics + Spawner + Clone + Send + 'static,
 {
     context.spawn(move |_| async move {
-        while let Some((epoch, bytes)) = rx.recv().await {
-            journal.append(epoch, bytes);
+        while let Some(record) = rx.recv().await {
+            let epoch = match record {
+                Durable::Append(epoch, bytes) => {
+                    journal.append(epoch, bytes);
+                    Some(epoch)
+                }
+                Durable::Retain(keep) => {
+                    journal.retain(keep.as_ref());
+                    None
+                }
+            };
             // One record per committee change, so there is no batch worth
             // waiting for and every artifact is durable the moment it is known.
             if let Err(e) = journal.sync().await {
@@ -1346,7 +1395,9 @@ where
                 );
                 continue;
             }
-            metrics::counter!("dpos_artifact_store_appended_total").increment(1);
+            if epoch.is_some() {
+                metrics::counter!("dpos_artifact_store_appended_total").increment(1);
+            }
         }
     })
 }
@@ -2121,6 +2172,91 @@ mod tests {
             lost, 1,
             "the lost durable write is OBSERVABLE — one counter increment, named"
         );
+    }
+
+    /// Retention keeps every mint the window still resolves to: with mints at
+    /// {2, 5, 55} and the window `[52, 62]` at `now = 60`, epoch 52 resolves to the
+    /// mint at 5 and epochs 55.. to the one at 55, so both stay and 2 goes; with
+    /// mints at {2, 5, 40} the window resolves to 40 alone, so 2 and 5 go.
+    #[test]
+    fn retention_keeps_the_mints_the_window_resolves_to() {
+        const WINDOW: u64 = 8;
+        let c = committee(21);
+
+        let store = ArtifactStore::new();
+        for mint in [2u64, 5, 55] {
+            assert!(store.insert(mint, artifact(&c, mint)).is_ok());
+        }
+        store.retain_mints_for_window(60, WINDOW);
+        assert_eq!(
+            store.epochs(),
+            vec![5, 55],
+            "5 is minted_at(52), the oldest epoch in the window, so it stays; 2 is \
+             superseded before the window opens"
+        );
+
+        let store = ArtifactStore::new();
+        for mint in [2u64, 5, 40] {
+            assert!(store.insert(mint, artifact(&c, mint)).is_ok());
+        }
+        store.retain_mints_for_window(60, WINDOW);
+        assert_eq!(
+            store.epochs(),
+            vec![40],
+            "40 is minted_at(52) and of every epoch above; 2 and 5 are superseded"
+        );
+    }
+
+    /// On a stable committee the only mint can sit far below the window floor and
+    /// must survive: it is the key every epoch in the window resolves to.
+    #[test]
+    fn retention_keeps_a_stable_committees_only_mint_far_below_the_floor() {
+        let c = committee(22);
+        let store = ArtifactStore::new();
+        assert!(store.insert(2, artifact(&c, 2)).is_ok());
+        store.retain_mints_for_window(60, 8);
+        assert_eq!(store.epochs(), vec![2], "the live key was evicted");
+        store.retain_mints_for_window(10_000, 8);
+        assert_eq!(store.epochs(), vec![2], "the live key was evicted");
+    }
+
+    /// The journal follows the RAM store: a mint retained out of RAM is gone from
+    /// disk after the writer's next turn, and a reopened store does not bring it back.
+    #[test]
+    fn retention_reaches_the_journal() {
+        let runner = deterministic::Runner::default();
+        runner.start(|context| async move {
+            let c = committee(23);
+            let (store, writer) = open(
+                context.with_label("journal"),
+                context.with_label("writer"),
+                "retained_artifacts",
+            )
+            .await
+            .expect("open the artifact store");
+            for mint in [2u64, 5, 55] {
+                assert!(store.insert(mint, artifact(&c, mint)).is_ok());
+            }
+            store.retain_mints_for_window(60, 8);
+            assert_eq!(store.epochs(), vec![5, 55]);
+            context.sleep(Duration::from_millis(50)).await;
+            let writer = writer.expect("a partitioned store has a writer");
+            writer.abort();
+            drop(writer.await);
+
+            let (reopened, _) = open(
+                context.with_label("journal2"),
+                context.with_label("writer2"),
+                "retained_artifacts",
+            )
+            .await
+            .expect("reopen the artifact store");
+            assert_eq!(
+                reopened.epochs(),
+                vec![5, 55],
+                "the journal kept a mint the RAM store retained out"
+            );
+        });
     }
 
     /// A stable committee's mint outlives the retention window, and so does a

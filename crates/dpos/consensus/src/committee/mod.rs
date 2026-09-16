@@ -153,7 +153,7 @@ pub enum CommitteeError {
     /// the commit height when the epoch is not committed in any state this anchor
     /// covers, the current anchor height when only its state is missing, and
     /// `anchor + 1` for an empty committee. It is a lower bound and a diagnostic
-    /// hint, never a timer; the wake-up to park on is [`Committee::subscribe`].
+    /// hint, never a timer; the wake-up to park on is [`Committee::anchor_advances`].
     #[error("committee[{epoch}] is not readable at this anchor yet (ready at height {ready_at})")]
     NotReadable { epoch: u64, ready_at: u64 },
 
@@ -253,22 +253,23 @@ pub trait Committee: Send + Sync {
     /// catch-up — they are connected and hold the durable finalizations.
     fn latest_scheme(&self) -> Option<std::sync::Arc<BlsScheme>>;
 
-    /// A wake-up carrying the highest epoch this node can now read:
-    /// `epoch(anchor) + MAX_COMMITTEE_LOOKAHEAD_EPOCHS`.
+    /// A wake-up carrying the anchor height as of the last
+    /// [`Committee::anchor_advanced`].
     ///
-    /// The value is a hint; the event is the contract. A consumer parked on a
-    /// [`CommitteeError::NotReadable`] wakes here and re-asks instead of polling
-    /// on a timer, and it fires on every anchor advance, not only on the ones
-    /// that raise the value: an epoch can be unreadable because its commit height
-    /// is above the anchor (the value moves when that changes) or because the
-    /// anchor's own height is not executed yet (it does not).
+    /// The event is the contract, the value a diagnostic. A consumer parked on a
+    /// [`CommitteeError::NotReadable`] or a retryable [`CommitteeError::Read`]
+    /// wakes here and re-asks instead of polling on a timer, and it fires on every
+    /// anchor advance, including one that leaves the height where it was: an epoch
+    /// can be unreadable because its commit height is above the anchor (the height
+    /// moves when that changes) or because the anchor's own height is not executed
+    /// yet (it does not).
     ///
     /// Two events produce it, because there are two ways an epoch becomes
     /// readable: the anchor moved, or the geometry was frozen. Before the freeze
     /// every epoch is [`CommitteeError::NotReadable`] with `ready_at: 0` — no
     /// height can fix it — so the freeze owes the same
     /// [`Committee::anchor_advanced`] call as an anchor advance.
-    fn subscribe(&self) -> tokio::sync::watch::Receiver<u64>;
+    fn anchor_advances(&self) -> tokio::sync::watch::Receiver<u64>;
 
     /// Tell the implementation its anchor moved: re-read the anchor, publish the
     /// wake-up, drop what the window no longer admits.
@@ -505,7 +506,9 @@ where
 /// Test doubles shared by the consumers of this module.
 #[cfg(test)]
 pub(crate) mod testing {
-    use super::{BlsScheme, Committee, CommitteeError, CommitteeRecord, Geometry, PeerPubkey};
+    use super::{
+        BlsScheme, Committee, CommitteeError, CommitteeRecord, Geometry, PeerPubkey, ReadError,
+    };
     use alloy_primitives::B256;
     use std::{
         collections::BTreeMap,
@@ -537,6 +540,12 @@ pub(crate) mod testing {
         /// [`CommitteeError::OutOfWindow`] before the record closure is asked.
         /// `None` means no window.
         window: Option<(u64, u64)>,
+        /// Per-epoch read faults handed out once each, front first, before the
+        /// record closure is asked — the store's `Read` arm for a consumer that
+        /// must retry it.
+        faults: Mutex<BTreeMap<u64, std::collections::VecDeque<ReadError>>>,
+        /// What [`Committee::anchor_hash`] answers; `None` by default.
+        anchor_hash: Mutex<Option<B256>>,
     }
 
     impl SchemeCommittee {
@@ -581,7 +590,25 @@ pub(crate) mod testing {
                 entries: Mutex::new(BTreeMap::new()),
                 geometry,
                 window: None,
+                faults: Mutex::new(BTreeMap::new()),
+                anchor_hash: Mutex::new(None),
             })
+        }
+
+        /// Pin what [`Committee::anchor_hash`] answers.
+        pub(crate) fn set_anchor_hash(&self, hash: Option<B256>) {
+            *self.anchor_hash.lock().unwrap() = hash;
+        }
+
+        /// Queue `faults` for `epoch`: each `committee(epoch)` pops one and answers
+        /// `Read(fault)` until the queue is empty, then the record closure answers.
+        pub(crate) fn fault_reads(&self, epoch: u64, faults: impl IntoIterator<Item = ReadError>) {
+            self.faults
+                .lock()
+                .unwrap()
+                .entry(epoch)
+                .or_default()
+                .extend(faults);
         }
     }
 
@@ -591,6 +618,15 @@ pub(crate) mod testing {
                 if epoch < lo || epoch > hi {
                     return Err(CommitteeError::OutOfWindow { epoch, lo, hi });
                 }
+            }
+            if let Some(fault) = self
+                .faults
+                .lock()
+                .unwrap()
+                .get_mut(&epoch)
+                .and_then(|q| q.pop_front())
+            {
+                return Err(CommitteeError::Read(fault));
             }
             (self.records)(epoch)
                 .map(Arc::new)
@@ -640,7 +676,7 @@ pub(crate) mod testing {
             self.entries.lock().unwrap().values().next_back().cloned()
         }
 
-        fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
+        fn anchor_advances(&self) -> tokio::sync::watch::Receiver<u64> {
             tokio::sync::watch::Sender::new(0).subscribe()
         }
 
@@ -651,7 +687,7 @@ pub(crate) mod testing {
         fn anchor_advanced(&self) {}
 
         fn anchor_hash(&self) -> Option<B256> {
-            None
+            *self.anchor_hash.lock().unwrap()
         }
     }
 }

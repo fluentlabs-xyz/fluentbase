@@ -615,18 +615,40 @@ pub(crate) fn evict_conflict(dir: &Path, epoch: u64) {
     }
 }
 
+/// The retain floor for a mint-keyed store (the in-memory `CeremonyStore`, the
+/// on-disk share files, the artifact store): the greatest mint epoch
+/// `<= now - window`, i.e. the mint in force for the oldest cert inside the
+/// scheme-retention window. Every entry `>= floor` must be kept — a reader resolves
+/// the share at the minting epoch the chain names, which on a stable committee is an
+/// older mint, so a size cap would demote a legitimate signer — while entries below
+/// the floor are superseded mints no cert in the window can select. `0` (no mint old
+/// enough to be a floor) retains everything: a stable committee prunes nothing,
+/// churn bounds growth to the trailing window.
+///
+/// Correctness depends on an invariant this function cannot see, written down here:
+/// above `DETERMINISTIC_BOOTSTRAP_EPOCH`, a mint in the store implies `dkgQual[e]`
+/// is set. A mint under a clear bit puts the floor above the mint the chain names,
+/// and the prune deletes the key this node serves — `NoUsableMint` forever, with no
+/// recompute path and no artifact carrying a share. The contract sets that bit from
+/// `committee[target] != committee[target−1]` in `commitEpochCommittee`, the same
+/// comparison the node makes over the same committed arrays; rosters read at
+/// different states, or a bit redefined as "the DKG qualified", breaks it.
+pub(crate) fn ceremony_retain_floor(keys: impl Iterator<Item = u64>, now: u64, window: u64) -> u64 {
+    let cutoff = now.saturating_sub(window);
+    keys.filter(|&k| k <= cutoff).max().unwrap_or(0)
+}
+
 /// Reconcile the on-disk beacon directory on the first tick: prune boundary-passed
 /// ceremony journals and superseded share secrets that no in-memory map holds.
 /// This is the durable lifetime owner — a finalize-then-restart-before-boundary
 /// leaves the epoch in no in-memory map, so without this its files leak.
 ///
 /// A journal is deleted when `epoch + JOURNAL_RETENTION_EPOCHS < now`, the same
-/// predicate the running sweep applies. Shares keep the active carry-forward (the
-/// max share epoch `<= now`) and every future share (`> now`); only strictly older
-/// shares are deleted, because keeping only the max would delete the active
-/// carry-forward whenever a future share exists and demote the node for the rest of
-/// the epoch. A missing dir is a no-op; malformed or foreign filenames are ignored,
-/// never deleted.
+/// predicate the running sweep applies. Shares are kept from the
+/// [`ceremony_retain_floor`] up — the same rule the running sweep applies to the
+/// in-memory store — so a restarted node still signs partials for rounds of the
+/// previous key inside the retention window. A missing dir is a no-op; malformed or
+/// foreign filenames are ignored, never deleted.
 pub(crate) fn reconcile_journals(dir: &Path, now: u64) {
     let (journals, shares, conflicts) = scan_beacon_dir(dir);
     for epoch in journals {
@@ -641,7 +663,12 @@ pub(crate) fn reconcile_journals(dir: &Path, now: u64) {
             evict_conflict(dir, epoch);
         }
     }
-    if let Some(floor) = shares.iter().copied().filter(|e| *e <= now).max() {
+    let floor = ceremony_retain_floor(
+        shares.iter().copied(),
+        now,
+        crate::SCHEME_RETENTION_EPOCHS as u64,
+    );
+    if floor > 0 {
         for epoch in shares {
             if epoch < floor {
                 evict_share(dir, epoch);
@@ -1200,51 +1227,67 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// `reconcile_journals` keeps the active carry-forward (`max{share epoch <= now}`)
-    /// and every future share (`> now`), deleting only strictly older shares; keeping
-    /// only the max would drop the active carry-forward whenever a future share exists.
+    /// `reconcile_journals` applies the in-memory store's rule to the disk: the
+    /// newest mint at or below `now − SCHEME_RETENTION_EPOCHS` and everything above
+    /// it stay, so a share still in force for a round inside the retention window
+    /// survives a restart.
     #[test]
-    fn reconcile_prunes_superseded_shares_keeps_active_and_future() {
+    fn reconcile_prunes_shares_by_the_same_floor_as_the_ram_store() {
         let (_output, share) = sample_output_share();
         let dir = fresh_dir("share-reconcile");
-        // Shares {3, 5, 7}, now=6 → floor = max{e<=6} = 5 (active), 7 is future.
-        for e in [3u64, 5, 7] {
+        // Shares {3, 5, 55, 62}, now=60, window 8 → cutoff 52, floor = 5.
+        for e in [3u64, 5, 55, 62] {
             persist(&dir, e, &share, &ShareState::Plaintext).expect("persist");
         }
-        reconcile_journals(&dir, 6);
+        reconcile_journals(&dir, 60);
         assert!(
             !file_for(&dir, 3).exists(),
-            "e3 < floor(5) — superseded, deleted"
+            "e3 < floor(5) — no cert in the window selects it, deleted"
         );
         assert!(
             file_for(&dir, 5).exists(),
-            "e5 = active carry-forward (max <= now=6) — kept"
+            "e5 = minted_at(52), the oldest epoch in the window — kept"
         );
+        assert!(file_for(&dir, 55).exists(), "e55 is in force — kept");
         assert!(
-            file_for(&dir, 7).exists(),
-            "e7 > now=6 — a just-finalized future share, kept (keep-only-max would wrongly drop e5)"
+            file_for(&dir, 62).exists(),
+            "e62 > now — a just-finalized future share, kept"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Floor-rule edge: when every share is in the future (`> now`) there is no
-    /// `<= now` floor, so reconcile deletes nothing.
+    /// A mint superseded less than a window ago is still selected by the certs of
+    /// the epochs before its successor, so it stays on disk — the case the old
+    /// "keep the max share ≤ now" rule got wrong.
     #[test]
-    fn reconcile_keeps_all_when_every_share_is_future() {
+    fn reconcile_keeps_a_recently_superseded_share_inside_the_window() {
+        let (_output, share) = sample_output_share();
+        let dir = fresh_dir("share-recent");
+        // Shares {10, 15}, now=20 → cutoff 12, floor = 10: both stay.
+        for e in [10u64, 15] {
+            persist(&dir, e, &share, &ShareState::Plaintext).expect("persist");
+        }
+        reconcile_journals(&dir, 20);
+        assert!(
+            file_for(&dir, 10).exists(),
+            "e10 = minted_at(12..15), still selected inside the window — kept"
+        );
+        assert!(file_for(&dir, 15).exists(), "e15 is in force — kept");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Floor-rule edge: with no mint old enough to be a floor, reconcile deletes
+    /// nothing.
+    #[test]
+    fn reconcile_keeps_all_when_no_share_is_old_enough_to_be_a_floor() {
         let (_output, share) = sample_output_share();
         let dir = fresh_dir("share-all-future");
         for e in [8u64, 9] {
             persist(&dir, e, &share, &ShareState::Plaintext).expect("persist");
         }
-        reconcile_journals(&dir, 5); // now=5, both shares are future
-        assert!(
-            file_for(&dir, 8).exists(),
-            "no `<= now` floor → nothing deleted"
-        );
-        assert!(
-            file_for(&dir, 9).exists(),
-            "no `<= now` floor → nothing deleted"
-        );
+        reconcile_journals(&dir, 5);
+        assert!(file_for(&dir, 8).exists(), "no floor → nothing deleted");
+        assert!(file_for(&dir, 9).exists(), "no floor → nothing deleted");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

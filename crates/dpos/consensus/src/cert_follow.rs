@@ -40,6 +40,23 @@ pub struct UpstreamFinalized {
     pub block: OrderBlock,
 }
 
+/// How a by-height walk over every configured upstream ended
+/// ([`CertUpstream::get_finalization_everywhere`]).
+///
+/// The two negatives are different facts, and only the walk can tell them apart:
+/// crash-survivor recovery reads "nobody holds it" as local consensus data loss and
+/// tells the operator to re-sync the EL disk from a snapshot, which is irreversible,
+/// so it may only ever be told that by a walk that got answers.
+pub enum WalkOutcome {
+    Got(Box<UpstreamFinalized>),
+    /// Every configured upstream answered, and none of them holds the height.
+    /// This — and only this — is evidence about the record.
+    MissedEverywhere,
+    /// Not one configured upstream answered at all: unreachable, a transport
+    /// failure, or a plane fetch that timed out. Evidence about the link only.
+    NoneAnswered,
+}
+
 /// By-height pull seam for the marshal's gap-repair resolver. `Clone` so the
 /// resolver can fan out concurrent fetches; the concrete impl is the node's WS
 /// upstream mailbox.
@@ -52,12 +69,13 @@ pub trait CertUpstream: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = Option<UpstreamFinalized>> + Send;
 
     /// [`Self::get_finalization`], but on an explicit content miss it asks the rest
-    /// of the configured sources before giving up.
+    /// of the configured sources before giving up, and says which negative it got.
     ///
-    /// The default is identical to `get_finalization`, which is correct for the
-    /// plane: a registered node's resolver walks peers on its existing connections.
-    /// Only the WS handle overrides this, because an unregistered follower has no
-    /// peers, only an operator's URL list.
+    /// The default is one plain `get_finalization`, whose `None` cannot tell a
+    /// content miss from a dead link and so is [`WalkOutcome::NoneAnswered`] — the
+    /// fail-safe reading. Correct for the plane: a registered node's resolver walks
+    /// peers on its existing connections. Only the WS handle can answer
+    /// [`WalkOutcome::MissedEverywhere`], because only it asks a list of servers.
     ///
     /// Use this only where a miss is semantically expensive and the caller runs on
     /// its own cadence: boundary seeding at boot, the re-jump landing, crash
@@ -68,8 +86,13 @@ pub trait CertUpstream: Clone + Send + Sync + 'static {
     fn get_finalization_everywhere(
         &self,
         height: Height,
-    ) -> impl Future<Output = Option<UpstreamFinalized>> + Send {
-        self.get_finalization(height)
+    ) -> impl Future<Output = WalkOutcome> + Send {
+        async move {
+            match self.get_finalization(height).await {
+                Some(uf) => WalkOutcome::Got(Box::new(uf)),
+                None => WalkOutcome::NoneAnswered,
+            }
+        }
     }
 
     /// Fetch the upstream's latest finalized block. Used at cold-start to obtain a
@@ -166,11 +189,13 @@ where
     // boot, the re-jump landing, and the beacon-key repair rung — each of which pays
     // for a miss with an epoch of verify-only. The marshal's gap repair deliberately
     // does not come through here.
-    let Some(uf) = upstream
+    let uf = match upstream
         .get_finalization_everywhere(Height::new(height))
         .await
-    else {
-        return failed("upstream does not serve the height");
+    {
+        WalkOutcome::Got(uf) => *uf,
+        WalkOutcome::MissedEverywhere => return failed("no configured upstream holds the height"),
+        WalkOutcome::NoneAnswered => return failed("no configured upstream answered"),
     };
     if uf.block.height != height {
         return failed("upstream served a different height than requested");

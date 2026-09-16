@@ -92,8 +92,9 @@ pub struct CommitteeStore<R> {
     /// The single producer of a verify-only scheme — see [`EpochVerifier`].
     verifier: EpochVerifier,
     state: Mutex<State>,
-    /// Highest readable epoch, published as a wake-up.
-    readable: tokio::sync::watch::Sender<u64>,
+    /// The anchor height as of the last [`Committee::anchor_advanced`], published
+    /// as a wake-up on every advance.
+    anchor_advances: tokio::sync::watch::Sender<u64>,
 }
 
 impl<R: EpochReads> CommitteeStore<R> {
@@ -108,17 +109,14 @@ impl<R: EpochReads> CommitteeStore<R> {
         geometry: GeometryRx,
         verifier: EpochVerifier,
     ) -> Self {
-        let seed = match Self::geometry_of(&geometry) {
-            Some(g) => g.epoch_of(anchor.height()) + MAX_COMMITTEE_LOOKAHEAD_EPOCHS,
-            None => 0,
-        };
+        let seed = anchor.height();
         Self {
             reads,
             anchor,
             geometry,
             verifier,
             state: Mutex::new(State::default()),
-            readable: tokio::sync::watch::Sender::new(seed),
+            anchor_advances: tokio::sync::watch::Sender::new(seed),
         }
     }
 
@@ -130,10 +128,6 @@ impl<R: EpochReads> CommitteeStore<R> {
     /// The frozen geometry, or `None` while the plane has not frozen one yet.
     fn geometry(&self) -> Option<Geometry> {
         Self::geometry_of(&self.geometry)
-    }
-
-    fn highest_readable(&self, geometry: &Geometry) -> u64 {
-        geometry.epoch_of(self.anchor.height()) + MAX_COMMITTEE_LOOKAHEAD_EPOCHS
     }
 
     /// Drop what the window no longer admits. Called with the lock held.
@@ -197,8 +191,8 @@ impl<R: EpochReads> CommitteeStore<R> {
                         %error,
                         "committee read failed PERMANENTLY inside the read window — the read \
                          cannot succeed as things stand (the call reverted, or this node's own \
-                         storage faulted); this epoch will not be registered and no retry can \
-                         fix it — repair the cause and restart"
+                         storage faulted); this epoch is not registered now and will be \
+                         retried on the next anchor advance — repair the cause if it persists"
                     );
                 }
             }
@@ -592,8 +586,8 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
             .find_map(|e| e.scheme.clone())
     }
 
-    fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
-        self.readable.subscribe()
+    fn anchor_advances(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.anchor_advances.subscribe()
     }
 
     fn geometry(&self) -> Option<Geometry> {
@@ -616,16 +610,10 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
             Self::prune(&mut state, lo);
         }
 
-        // Publish on every advance, not only on growth: an epoch below its commit
-        // height opens when the anchor passes that height, while one whose anchor
-        // height is not executed yet opens when execution catches up at the same
-        // height — the value does not move. The published value stays monotone
-        // through the `max`, so a consumer never sees the hint go backwards.
-        let highest = self.highest_readable(&geometry);
-        self.readable.send_if_modified(|current| {
-            *current = (*current).max(highest);
-            true
-        });
+        // Published unconditionally, not only on growth: an epoch whose anchor height
+        // is not executed yet opens when execution catches up at the same height, so
+        // an equal height is still a wake-up.
+        self.anchor_advances.send_replace(anchor_height);
     }
 
     fn anchor_hash(&self) -> Option<B256> {

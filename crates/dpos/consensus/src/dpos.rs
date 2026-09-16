@@ -7,6 +7,7 @@ use crate::{
         ExecutedChain, OrderingAssembler,
     },
     beacon::{Beacon, Observed, ObservedCertificate, Seed},
+    cert_follow::WalkOutcome,
     cold_start_jump::ElSync as _,
     digest::Digest,
     epocher::OriginEpocher,
@@ -213,6 +214,78 @@ pub fn derive_cold_start_heights(
 /// activation block, and the local probe, upstream, and committee window in the
 /// follower's entry march. One constant so the copies cannot drift apart.
 const ACTIVATION_POLL: Duration = Duration::from_secs(2);
+
+/// How many times a cold-start committee read that failed permanently — a revert,
+/// or this node's own storage — is re-asked before the launch is refused.
+const COLD_START_READ_ATTEMPTS: u32 = 5;
+/// The pause between two of those attempts, on the runtime clock.
+const COLD_START_READ_BACKOFF: Duration = Duration::from_secs(2);
+
+/// A cold-start committee read that did not refuse the launch.
+enum ColdStartRead {
+    /// The record, and with it the epoch's verify-only scheme in the module.
+    Ready(Arc<crate::committee::CommitteeRecord>),
+    /// A retryable miss — this process's startup order, not the chain; the boundary
+    /// trigger and the module's wake-up retry it after the launch.
+    Deferred(crate::committee::CommitteeError),
+}
+
+/// Why a cold-start committee read refuses the launch.
+#[derive(Debug)]
+enum ColdStartRefusal {
+    /// The contract answered something no committed epoch can answer.
+    Impossible(crate::committee::CommitteeError),
+    /// The epoch sits below the module's read window, which never moves down.
+    BelowWindow(crate::committee::CommitteeError),
+    /// A revert or a storage fault survived every attempt.
+    Permanent {
+        error: crate::committee::CommitteeError,
+        attempts: u32,
+    },
+}
+
+/// The cold-start read of `committee[epoch]` through the module, with a bounded
+/// retry for the permanent-but-not-impossible class.
+///
+/// A revert or a storage fault under the anchor can be a moment's condition (a
+/// provider still opening its static files, a module mid-upgrade), and the store
+/// re-reads on every call, so the read is re-asked [`COLD_START_READ_ATTEMPTS`]
+/// times [`COLD_START_READ_BACKOFF`] apart before it is the launch's verdict. A
+/// transient miss returns at once — the launch queues the epoch for a retry
+/// anyway — and an impossible answer or a below-window epoch is refused at once,
+/// since no retry can change either.
+async fn cold_start_committee_read(
+    clock: &impl commonware_runtime::Clock,
+    committee: &dyn crate::committee::Committee,
+    epoch: u64,
+) -> Result<ColdStartRead, ColdStartRefusal> {
+    use crate::committee::CommitteeError;
+    let mut attempts = 0u32;
+    loop {
+        attempts = attempts.saturating_add(1);
+        let error = match committee.committee(epoch) {
+            Ok(record) => return Ok(ColdStartRead::Ready(record)),
+            Err(e) if e.is_transient() => return Ok(ColdStartRead::Deferred(e)),
+            Err(e) if e.is_contract_impossible() => return Err(ColdStartRefusal::Impossible(e)),
+            Err(e @ CommitteeError::OutOfWindow { .. }) => {
+                return Err(ColdStartRefusal::BelowWindow(e))
+            }
+            Err(e) => e,
+        };
+        if attempts >= COLD_START_READ_ATTEMPTS {
+            return Err(ColdStartRefusal::Permanent { error, attempts });
+        }
+        warn!(
+            epoch,
+            attempt = attempts,
+            of = COLD_START_READ_ATTEMPTS,
+            error = %error,
+            "cold-start committee read failed permanently (a revert, or this node's own \
+             storage) — re-asking after a pause"
+        );
+        clock.sleep(COLD_START_READ_BACKOFF).await;
+    }
+}
 
 /// Wait for reth to hold the DPoS activation block, returning its
 /// local-canonical hash. There is no give-up and no timeout: the anchor is
@@ -439,20 +512,19 @@ where
     // `_everywhere`: the fatal below tells the operator to re-sync the EL disk from a
     // snapshot. Asking ONE upstream before saying that is not enough when the operator
     // configured several and the block sits on the second.
-    let Some(uf) = up.get_finalization_everywhere(Height::new(height)).await else {
-        // The negative is not yet a verdict. Claim data loss only with positive proof
-        // that an upstream answered us at all; `get_latest` is that proof and nothing
-        // else in the seam is (a by-height negative is produced by both cases alike).
-        // Fail-safe direction: a wrongly-withheld verdict costs one more lap, a
-        // wrongly-issued one costs the operator's disk.
-        if up.get_latest().await.is_none() {
-            return Ok(None);
+    let uf = match up.get_finalization_everywhere(Height::new(height)).await {
+        WalkOutcome::Got(uf) => *uf,
+        // Not a verdict: nothing answered, so nothing is concluded. Fail-safe
+        // direction — a wrongly-withheld verdict costs one more lap, a wrongly-issued
+        // one costs the operator's disk.
+        WalkOutcome::NoneAnswered => return Ok(None),
+        WalkOutcome::MissedEverywhere => {
+            return Err(eyre!(
+                "crash-survivor recovery: marshal {which} has a below-floor hole at height \
+                 {height} and no configured upstream serves it — the consensus record is gone \
+                 everywhere; re-sync the EL disk from a snapshot"
+            ));
         }
-        return Err(eyre!(
-            "crash-survivor recovery: marshal {which} has a below-floor hole at height {height} \
-             and the upstream no longer serves it — the consensus record is gone everywhere; \
-             re-sync the EL disk from a snapshot"
-        ));
     };
     // Nothing else binds the response to the request: `verify_jump_structural` ties
     // the cert only to the block it arrived with, and `verify_jump_authenticated`
@@ -819,6 +891,57 @@ where
     Ok(ReplaySeed::Unavailable)
 }
 
+/// The crash-survivor recovery's committee read: `committee[E]` at the replayed
+/// parent's executed hash, straight off reth.
+///
+/// The only [`CommitteeSource`] that is not the committee module. Recovery runs
+/// before the beacon plane has published the geometry, so the module answers
+/// nothing yet, and the replayed heights can sit above the module's read window
+/// at reth's finalized tag; the walk's own parent hash is executed by
+/// construction and names the committee that finalized the hole.
+struct RecoveryCommitteeSource<Provider, EvmConfig> {
+    reader: RethStakingStateReader<Provider, EvmConfig>,
+    namespace: Vec<u8>,
+}
+
+impl<Provider, EvmConfig> RecoveryCommitteeSource<Provider, EvmConfig> {
+    fn new(reader: RethStakingStateReader<Provider, EvmConfig>, chain_id: u64) -> Self {
+        Self {
+            reader,
+            namespace: fluentbase_bls::fluent_namespace(chain_id),
+        }
+    }
+}
+
+impl<Provider, EvmConfig> crate::cert_inlet::CommitteeSource
+    for RecoveryCommitteeSource<Provider, EvmConfig>
+where
+    Provider:
+        StateProviderFactory + HeaderProvider<Header = Header> + Clone + Send + Sync + 'static,
+    EvmConfig: ConfigureEvm<Primitives = EthPrimitives> + Clone + Send + Sync + 'static,
+{
+    fn scheme_at(
+        &self,
+        epoch: u64,
+        at_hash: B256,
+        oracle: Option<Arc<dyn fluentbase_bls::oracle::SeedOracle>>,
+    ) -> eyre::Result<BlsScheme> {
+        let snap = self.reader.epoch_committee_snapshot(epoch, at_hash)?;
+        ensure!(
+            !snap.validators.is_empty(),
+            "epoch {epoch} has no committed committee at {at_hash}"
+        );
+        let committee = crate::scheme::epoch_committee_from_snapshot(&snap)
+            .map_err(|e| eyre!("epoch {epoch} committee has non-unique participants: {e:?}"))?;
+        Ok(fluentbase_bls::scheme::build_verifier(
+            &self.namespace,
+            committee.bimap,
+            epoch,
+            oracle,
+        ))
+    }
+}
+
 /// Crash-survivor cold-start recovery: reth is missing the
 /// consensus-finalized block at `target` (an ungraceful crash lost reth's
 /// unflushed tail while the marshal persisted the finalization). Read the missing
@@ -888,7 +1011,9 @@ where
     // The finalizations archive is opened as a σ fallback only, never as a gate: a
     // present block with an absent cert is normal (an ancestry-finalized height may
     // have no standalone cert anywhere), so nothing here requires a cert to exist.
-    let archive = crate::outer::init_finalized_blocks_archive(ctx, MARSHAL_PARTITION_PREFIX).await;
+    let archive = crate::outer::init_finalized_blocks_archive(ctx, MARSHAL_PARTITION_PREFIX)
+        .await
+        .wrap_err("crash-survivor recovery: opening the marshal finalized_blocks archive")?;
     let certs = crate::outer::init_finalizations_archive(
         ctx,
         MARSHAL_PARTITION_PREFIX,
@@ -898,7 +1023,8 @@ where
             crate::outer::PAGE_CACHE_CAPACITY,
         ),
     )
-    .await;
+    .await
+    .wrap_err("crash-survivor recovery: opening the marshal finalizations archive")?;
 
     let mut parent_hash = provider
         .block_hash(lowest.saturating_sub(1))
@@ -1209,6 +1335,110 @@ pub(crate) fn frontier_probe<U: crate::cert_follow::CertUpstream>(
     })
 }
 
+/// The executor's forward-only re-jump — over a target out of this node's own
+/// marshal archive, so no committee source is involved — with the frozen-tip
+/// probe as its live-follow driver. One body for both node classes; they differ
+/// only in the L1 checkpoint (validator: none) and in where `T` comes from
+/// (validator: the mirrored `EpochTransition` epoch; follower:
+/// [`local_tracked_epoch`]).
+///
+/// `threshold` is epoch-relative — `min(JUMP_THRESHOLD, interval)` — so the
+/// "≥2 epochs behind" defer deadlock heals within an epoch at any interval.
+#[allow(clippy::too_many_arguments)] // one launch-time dependency each, not a cluster
+fn re_jump_seam<Provider, BeaconEngine, U>(
+    up: &U,
+    committee: Arc<dyn crate::committee::Committee>,
+    provider: Provider,
+    beacon_engine_handle: BeaconEngine,
+    ctx: Context,
+    peer_count: Arc<dyn Fn() -> usize + Send + Sync>,
+    activation: u64,
+    l1_checkpoint: Option<B256>,
+    threshold: u64,
+    tracked_epoch: crate::executor::TrackedEpochFn,
+) -> crate::executor::ReJump
+where
+    Provider: BlockHashReader + BlockNumReader + Clone + Send + Sync + 'static,
+    BeaconEngine: BeaconEngineLike + Clone + Send + Sync + 'static,
+    U: crate::cert_follow::CertUpstream,
+{
+    let rotate = up.rotate_callback();
+    let probe = frontier_probe(up.clone(), committee);
+    let call: crate::executor::ReJumpFn = Arc::new(
+        move |from: u64, target: crate::cert_follow::UpstreamFinalized| {
+            let provider = provider.clone();
+            let beacon_engine_handle = beacon_engine_handle.clone();
+            let peer_count = peer_count.clone();
+            let jump_ctx = ctx.clone();
+            Box::pin(async move {
+                let el = crate::cold_start_jump::RethElSync::new(
+                    jump_ctx,
+                    provider,
+                    beacon_engine_handle,
+                    activation,
+                    peer_count,
+                );
+                crate::cold_start_jump::jump_to_target(
+                    from,
+                    target,
+                    &el,
+                    l1_checkpoint,
+                    activation,
+                    threshold,
+                )
+                .await
+            }) as futures::future::BoxFuture<'static, _>
+        },
+    );
+    crate::executor::ReJump {
+        call,
+        threshold,
+        rotate: Some(rotate),
+        probe: Some(probe),
+        tracked_epoch: Some(tracked_epoch),
+    }
+}
+
+/// The by-height seeding of an epoch-boundary block a jump left below the marshal
+/// floor, authenticated against the committee module at the module's own anchor.
+/// One body for both node classes: a follower runs the same jump and leaves the
+/// same hole, and an upstream-configured node can later be promoted to a seated
+/// validator without restarting.
+fn boundary_fetch_seam<U>(
+    up: &U,
+    committee: Arc<dyn crate::committee::Committee>,
+    chain_id: u64,
+    ctx: Context,
+    sync_metrics: SyncMetrics,
+) -> crate::cert_follow::BoundaryFetchFn
+where
+    U: crate::cert_follow::CertUpstream,
+{
+    let up = up.clone();
+    let committees = Arc::new(crate::cert_inlet::ModuleCommitteeSource::new(
+        committee, chain_id,
+    ));
+    Arc::new(move |height: u64, at_hash: B256| {
+        let up = up.clone();
+        let committees = committees.clone();
+        let sync_metrics = sync_metrics.clone();
+        // A fresh clone per call because `verify_jump_authenticated` needs
+        // `&mut (Clock + CryptoRngCore)`.
+        let mut fetch_ctx = ctx.clone();
+        Box::pin(async move {
+            crate::cert_follow::fetch_verified_boundary(
+                &up,
+                committees.as_ref(),
+                &mut fetch_ctx,
+                &sync_metrics,
+                at_hash,
+                height,
+            )
+            .await
+        }) as futures::future::BoxFuture<'static, _>
+    })
+}
+
 /// `T` for a node that runs no [`fluentbase_staking_reader::EpochTransition`],
 /// the follower.
 ///
@@ -1217,9 +1447,9 @@ pub(crate) fn frontier_probe<U: crate::cert_follow::CertUpstream>(
 /// it computes the same number from the committee module's geometry and its own
 /// ordering-finalized cursor — the same cursor the module anchors its reads on.
 ///
-/// The rule is the transition's, restated over those two: it tracks `epoch_e + 1`
-/// when the finalized block is the last block of its epoch and `epoch_e`
-/// otherwise. `geometry.last(epoch_of(fin)) == fin` is that boundary test.
+/// The rule is the transition's, and it is the epoch manager's
+/// [`crate::epoch_manager::live_epoch_of`]: `epoch_e + 1` when the finalized
+/// block is the last block of its epoch and `epoch_e` otherwise.
 ///
 /// `None` only while the geometry is unfrozen — the one state with no step to
 /// take, which the probe counts as `no_tracked_epoch`/`no_geometry` and asks
@@ -1232,9 +1462,7 @@ pub(crate) fn local_tracked_epoch(
 ) -> crate::executor::TrackedEpochFn {
     Arc::new(move || {
         let geometry = committee.geometry()?;
-        let fin = cursor.height();
-        let e = geometry.epoch_of(fin);
-        Some(if geometry.last(e) == fin { e + 1 } else { e })
+        Some(crate::epoch_manager::live_epoch_of(&geometry, cursor.height()).get())
     })
 }
 
@@ -1554,11 +1782,17 @@ where
     C: crate::cert_inlet::CommitteeSource,
 {
     // One ask per `ACTIVATION_POLL`, and a miss costs this node its entire entry.
-    let Some(uf) = upstream
+    let uf = match upstream
         .get_finalization_everywhere(Height::new(height))
         .await
-    else {
-        return Err("no configured upstream serves the height".to_owned());
+    {
+        WalkOutcome::Got(uf) => *uf,
+        WalkOutcome::MissedEverywhere => {
+            return Err("no configured upstream holds the height".to_owned());
+        }
+        WalkOutcome::NoneAnswered => {
+            return Err("no configured upstream answered the by-height pull".to_owned());
+        }
     };
     // Nothing else binds the answer to the question: the structural check ties the
     // cert only to the block it came with, and authentication takes the epoch from
@@ -1897,7 +2131,12 @@ impl DposLayer {
                         // Recovery runs here, not only in the executor backfill, because
                         // the committee read at `latest_finalized_hash` and the genesis
                         // read both require reth to hold the resume block.
-                        let recover_committees = crate::cert_inlet::RethCommitteeSource::new(
+                        //
+                        // The one committee read that cannot go through the module: it runs
+                        // before the plane has published the geometry, and a re-fetched
+                        // hole can sit above the module's window at reth's finalized tag,
+                        // so the read follows the replayed parent instead.
+                        let recover_committees = RecoveryCommitteeSource::new(
                             RethStakingStateReader::new(
                                 provider.clone(),
                                 evm_config.clone(),
@@ -2019,17 +2258,17 @@ impl DposLayer {
 
         // The cold-start committee read goes through the module, which registers the
         // record and this epoch's verify-only scheme in one slot so the marshal can
-        // verify certificates of the starting epoch before any boundary fires. A
-        // permanent refusal is a fact about the chain and stays the loud startup
-        // error; a transient miss is this process's startup order, and the cold start
-        // below queues the epoch for a retry.
-        match committee.committee(initial_epoch_u64) {
-            Ok(record) => info!(
+        // verify certificates of the starting epoch before any boundary fires. An
+        // impossible or below-window refusal is a fact about the chain and stays the
+        // loud startup error; a transient miss is this process's startup order, and
+        // the cold start below queues the epoch for a retry.
+        match cold_start_committee_read(&ctx, committee.as_ref(), initial_epoch_u64).await {
+            Ok(ColdStartRead::Ready(record)) => info!(
                 epoch = initial_epoch_u64,
                 members = record.members.len(),
                 "cold-start committee read through the committee module"
             ),
-            Err(e) if !e.is_transient() => {
+            Err(ColdStartRefusal::Impossible(e) | ColdStartRefusal::BelowWindow(e)) => {
                 return Err(eyre!(
                     "committee[{initial_epoch_u64}] is REFUSED PERMANENTLY at this node's \
                      committee anchor (read at finalized block {latest_finalized}): {e}. \
@@ -2045,7 +2284,16 @@ impl DposLayer {
                     fluentbase_staking_reader::reader::MIN_COMMITTEE_LENGTH,
                 ));
             }
-            Err(e) => warn!(
+            Err(ColdStartRefusal::Permanent { error, attempts }) => {
+                return Err(eyre!(
+                    "committee[{initial_epoch_u64}] read FAILED PERMANENTLY {attempts} times at \
+                     this node's committee anchor (read at finalized block {latest_finalized}): \
+                     {error}. This class is a revert or this node's own storage fault, not a \
+                     statement about the committed state — repair the cause (the staking \
+                     module at GENESIS_STAKING, or this node's reth database) and restart."
+                ));
+            }
+            Ok(ColdStartRead::Deferred(e)) => warn!(
                 epoch = initial_epoch_u64,
                 error = %e,
                 "no committee for the cold-start epoch at this node's anchor YET (read at \
@@ -2250,68 +2498,30 @@ impl DposLayer {
         let me = peer_keypair.public_key();
         info!(peer_pubkey = %me, "DPoS peer identity");
 
-        // The executor's reaction to its own `Update::Tip`, and the only jump:
-        // forward-only, over a target out of this node's own marshal archive, so
-        // no `upstream` is involved in the closure.
+        // The executor's reaction to its own `Update::Tip`, and the only jump. `T` is
+        // the mirrored `EpochTransition` epoch; no L1 checkpoint on the validator path.
         let re_jump_threshold = crate::cold_start_jump::JUMP_THRESHOLD.min(interval);
         let re_jump: Option<crate::executor::ReJump> = upstream.as_ref().map(|up| {
-            let up = up.clone();
-            let rotate = up.rotate_callback();
-            let frontier_probe = frontier_probe(up.clone(), committee.clone());
-            let provider = provider.clone();
-            let beacon_engine_handle = beacon_engine_handle.clone();
-            let ctx = ctx.clone();
-            let peer_count = peer_count.clone();
-            let cb: crate::executor::ReJumpFn = Arc::new(
-                move |from: u64, target: crate::cert_follow::UpstreamFinalized| {
-                    let provider = provider.clone();
-                    let beacon_engine_handle = beacon_engine_handle.clone();
-                    let peer_count = peer_count.clone();
-                    let jump_ctx = ctx.clone();
-                    Box::pin(async move {
-                        let el = crate::cold_start_jump::RethElSync::new(
-                            jump_ctx,
-                            provider.clone(),
-                            beacon_engine_handle,
-                            dpos_activation_block,
-                            peer_count,
-                        );
-                        // The target is a pair out of this node's own marshal archive,
-                        // already 2f+1 under a committee this node read.
-                        crate::cold_start_jump::jump_to_target(
-                            from,
-                            target,
-                            &el,
-                            // No L1 checkpoint on the validator path.
-                            None,
-                            dpos_activation_block,
-                            re_jump_threshold,
-                        )
-                        .await
-                    }) as futures::future::BoxFuture<'static, _>
-                },
-            );
-            crate::executor::ReJump {
-                call: cb,
-                // Epoch-relative: production epochs keep `JUMP_THRESHOLD`, a compressed
-                // test epoch heals within an epoch.
-                threshold: re_jump_threshold,
-                // Same upstream-rotation escape as the follower; only a `Stalled` streak
-                // fires it.
-                rotate: Some(rotate),
-                // The live-follow driver while rotated out: the executor puts the ladder
-                // step on the marshal and hints it toward any `Latest` above a frozen tip.
-                probe: Some(frontier_probe),
-                tracked_epoch: Some({
-                    let cell = tracked_epoch_cell.clone();
-                    std::sync::Arc::new(move || {
-                        match cell.load(std::sync::atomic::Ordering::Relaxed) {
-                            NO_TRACKED_EPOCH => None,
-                            epoch => Some(epoch),
-                        }
-                    })
-                }),
-            }
+            let cell = tracked_epoch_cell.clone();
+            let tracked_epoch: crate::executor::TrackedEpochFn =
+                Arc::new(
+                    move || match cell.load(std::sync::atomic::Ordering::Relaxed) {
+                        NO_TRACKED_EPOCH => None,
+                        epoch => Some(epoch),
+                    },
+                );
+            re_jump_seam(
+                up,
+                committee.clone(),
+                provider.clone(),
+                beacon_engine_handle.clone(),
+                ctx.clone(),
+                peer_count.clone(),
+                dpos_activation_block,
+                None,
+                re_jump_threshold,
+                tracked_epoch,
+            )
         });
 
         // After a jump the epoch-terminal height `Inline::genesis` needs sits below the
@@ -2319,41 +2529,13 @@ impl DposLayer {
         // that did not already hold it parks verify-only for the landing epoch.
         let boundary_fetch: Option<crate::cert_follow::BoundaryFetchFn> =
             upstream.as_ref().map(|up| {
-                let up = up.clone();
-                let provider = provider.clone();
-                let evm_config = evm_config.clone();
-                let staking_config = staking_config.clone();
-                let ctx = ctx.clone();
-                let sync_metrics = sync_metrics.clone();
-                Arc::new(move |height: u64, at_hash: B256| {
-                    let up = up.clone();
-                    let provider = provider.clone();
-                    let evm_config = evm_config.clone();
-                    let staking_config = staking_config.clone();
-                    let sync_metrics = sync_metrics.clone();
-                    // A fresh clone per call because `verify_jump_authenticated` needs
-                    // `&mut (Clock + CryptoRngCore)`.
-                    let mut fetch_ctx = ctx.clone();
-                    Box::pin(async move {
-                        let committees = crate::cert_inlet::RethCommitteeSource::new(
-                            RethStakingStateReader::new(
-                                provider.clone(),
-                                evm_config,
-                                staking_config,
-                            ),
-                            chain_id,
-                        );
-                        crate::cert_follow::fetch_verified_boundary(
-                            &up,
-                            &committees,
-                            &mut fetch_ctx,
-                            &sync_metrics,
-                            at_hash,
-                            height,
-                        )
-                        .await
-                    }) as futures::future::BoxFuture<'static, _>
-                }) as crate::cert_follow::BoundaryFetchFn
+                boundary_fetch_seam(
+                    up,
+                    committee.clone(),
+                    chain_id,
+                    ctx.clone(),
+                    sync_metrics.clone(),
+                )
             });
 
         // Register on this context, the same one `BeaconMetrics` uses inside
@@ -2672,6 +2854,29 @@ impl DposLayer {
             staking_config.clone(),
         );
 
+        // One frozen committee record per epoch at one anchor, over this node's own
+        // executor cursor. Built the moment the geometry is known — inside the entry
+        // march, because the march's own committee reads go through it — with the
+        // watch created already frozen, so there is no freeze wake-up to publish; the
+        // verify-only scheme is filled the moment `beacon::build_follower` returns.
+        let beacon_slot: crate::committee::BeaconSlot = Arc::new(std::sync::OnceLock::new());
+        let build_committee =
+            |activation: u64, interval: u64| -> Arc<dyn crate::committee::Committee> {
+                Arc::new(crate::committee::CommitteeStore::new(
+                    RethStakingStateReader::new(
+                        provider.clone(),
+                        evm_config.clone(),
+                        staking_config.clone(),
+                    ),
+                    Arc::new(crate::committee::RethAnchor::new(
+                        finalized_cursor.clone(),
+                        provider.clone(),
+                    )),
+                    tokio::sync::watch::Sender::new(Some((activation, interval))).subscribe(),
+                    crate::committee::epoch_verifier(chain_id, beacon_slot.clone()),
+                ))
+            };
+
         // The geometry read is pinned to one hash, but the arm below re-reads reth's
         // finalized tag on every turn of its own loop. On a restart both geometry and
         // anchor are local, so no `sync_to` runs; a fresh datadir has nothing local, so
@@ -2688,9 +2893,16 @@ impl DposLayer {
             )
         };
 
-        let (activation, interval, anchor_height, anchor_hash) =
+        let (activation, interval, anchor_height, anchor_hash, committee) =
             match read_geometry(&reader, geometry_at_hash)? {
                 Some((activation, interval)) => {
+                    let committee = build_committee(activation, interval);
+                    // The march's two committee reads — the `e_max` probe and the entry
+                    // certificate — go through the module at its own anchor, which is
+                    // reth's finalized tag here (the cursor is not seeded yet): the same
+                    // `(number, hash)` `derive_cold_start_heights` reads each turn.
+                    let committees =
+                        crate::cert_inlet::ModuleCommitteeSource::new(committee.clone(), chain_id);
                     // The checkpoint is consumed at most once: a checkpoint on a pre-DPoS
                     // batch lands below activation, and re-driving it would spin on
                     // `sync_to_checkpoint`'s already-canonical short-circuit.
@@ -2729,14 +2941,6 @@ impl DposLayer {
                                 // down, and the landing hash comes from the attested result.
                                 let latest_height =
                                     up.get_latest().await.map(|latest| latest.block.height);
-                                let committees = crate::cert_inlet::RethCommitteeSource::new(
-                                    RethStakingStateReader::new(
-                                        provider.clone(),
-                                        evm_config.clone(),
-                                        staking_config.clone(),
-                                    ),
-                                    chain_id,
-                                );
                                 // The readable window at `rf_hash`: devnet genesis has only
                                 // `committee[0]`; a pre-activation prod block reaches
                                 // `MAX_COMMITTEE_LOOKAHEAD_EPOCHS`.
@@ -2770,7 +2974,7 @@ impl DposLayer {
                         match entry {
                             FollowerEntry::Local => {
                                 if rf_num >= activation {
-                                    break (activation, interval, rf_num, rf_hash);
+                                    break (activation, interval, rf_num, rf_hash, committee);
                                 }
                                 // `Local` below activation is returned only for
                                 // `holds_activation == activation_hash.is_some()`, so a
@@ -2791,7 +2995,7 @@ impl DposLayer {
                                     "cert-follow: anchoring at the DPoS activation block reth \
                                      already holds"
                                 );
-                                break (activation, interval, activation, hash);
+                                break (activation, interval, activation, hash, committee);
                             }
                             FollowerEntry::WaitLocal => {
                                 // The activation block is produced on this chain, so there
@@ -2804,7 +3008,7 @@ impl DposLayer {
                                     &sync_metrics,
                                 )
                                 .await?;
-                                break (activation, interval, activation, hash);
+                                break (activation, interval, activation, hash, committee);
                             }
                             FollowerEntry::Checkpoint => {
                                 // `Checkpoint` is returned only for `has_checkpoint`,
@@ -2834,7 +3038,7 @@ impl DposLayer {
                                         )
                                     })?;
                                 if h >= activation {
-                                    break (activation, interval, h, hash);
+                                    break (activation, interval, h, hash, committee);
                                 }
                                 // A checkpoint landing below activation is legal but not a
                                 // DPoS anchor; re-run the march without sleeping — the local
@@ -2878,14 +3082,6 @@ impl DposLayer {
                                          certificate entry with no upstream configured"
                                     )
                                 })?;
-                                let committees = crate::cert_inlet::RethCommitteeSource::new(
-                                    RethStakingStateReader::new(
-                                        provider.clone(),
-                                        evm_config.clone(),
-                                        staking_config.clone(),
-                                    ),
-                                    chain_id,
-                                );
                                 let mut fetch_ctx = ctx.clone();
                                 let verified = fetch_verified_entry(
                                     up,
@@ -2956,7 +3152,7 @@ impl DposLayer {
                                     "cert-follow: entered below the activation block by an \
                                      authenticated certificate"
                                 );
-                                break (activation, interval, landing, hash);
+                                break (activation, interval, landing, hash, committee);
                             }
                         }
                     }
@@ -3031,7 +3227,13 @@ impl DposLayer {
                         },
                     )
                     .await?;
-                    (activation, interval, h, hash)
+                    (
+                        activation,
+                        interval,
+                        h,
+                        hash,
+                        build_committee(activation, interval),
+                    )
                 }
             };
 
@@ -3109,124 +3311,36 @@ impl DposLayer {
         let executor_metrics = crate::executor::ExecutorMetrics::default();
         executor_metrics.register(&ctx);
 
-        // One frozen committee record per epoch at one anchor, over this node's own
-        // executor cursor. A follower's geometry is known here, so the watch is created
-        // already frozen and there is no freeze wake-up to publish; the verify-only
-        // scheme is filled the moment `beacon::build_follower` returns below.
-        let beacon_slot: crate::committee::BeaconSlot = Arc::new(std::sync::OnceLock::new());
-        let committee: Arc<dyn crate::committee::Committee> =
-            Arc::new(crate::committee::CommitteeStore::new(
-                RethStakingStateReader::new(
-                    provider.clone(),
-                    evm_config.clone(),
-                    staking_config.clone(),
-                ),
-                Arc::new(crate::committee::RethAnchor::new(
-                    finalized_cursor.clone(),
-                    provider.clone(),
-                )),
-                tokio::sync::watch::Sender::new(Some((activation, interval))).subscribe(),
-                crate::committee::epoch_verifier(chain_id, beacon_slot.clone()),
-            ));
-
-        // The follower's executor reaction to its own `Update::Tip`, and its only jump:
-        // the target is a pair out of this follower's own marshal archive, so no
-        // committee source is involved. A follower always has an upstream.
-        //
-        // Epoch-relative: the defer deadlock is "≥2 epochs behind", so recovery fires at
-        // `min(serving-window, 1 epoch)`.
+        // The follower's executor reaction to its own `Update::Tip`, and its only jump.
+        // The follower's WS inlet is a subscription to current finalizations and
+        // replays no intermediate height, so without the ladder step a node whose
+        // tip freezes at `last(epoch(fin)+2)` stays parked; a follower runs no
+        // `EpochTransition`, so `T` is computed locally.
         let re_jump_threshold = crate::cold_start_jump::JUMP_THRESHOLD.min(interval);
         let re_jump: Option<crate::executor::ReJump> = upstream.as_ref().map(|up| {
-            let up = up.clone();
-            let rotate = up.rotate_callback();
-            let provider = provider.clone();
-            let beacon_engine_handle = beacon_engine_handle.clone();
-            let ctx = ctx.clone();
-            let peer_count = peer_count.clone();
-            let cb: crate::executor::ReJumpFn = Arc::new(
-                move |from: u64, target: crate::cert_follow::UpstreamFinalized| {
-                    let provider = provider.clone();
-                    let beacon_engine_handle = beacon_engine_handle.clone();
-                    let peer_count = peer_count.clone();
-                    let jump_ctx = ctx.clone();
-                    Box::pin(async move {
-                        let el = crate::cold_start_jump::RethElSync::new(
-                            jump_ctx,
-                            provider.clone(),
-                            beacon_engine_handle,
-                            activation,
-                            peer_count,
-                        );
-                        // The target is a pair out of this follower's own marshal archive,
-                        // so no committee source and no verify RNG are involved.
-                        crate::cold_start_jump::jump_to_target(
-                            from,
-                            target,
-                            &el,
-                            l1_checkpoint_hash,
-                            activation,
-                            re_jump_threshold,
-                        )
-                        .await
-                    }) as futures::future::BoxFuture<'static, _>
-                },
-            );
-            crate::executor::ReJump {
-                call: cb,
-                threshold: re_jump_threshold,
-                rotate: Some(rotate),
-                // The follower's WS inlet is a subscription to current finalizations and
-                // replays no intermediate height, so without the ladder step a node whose
-                // tip freezes at `last(epoch(fin)+2)` stays parked: the step pulls
-                // `Finalized{last(T+1)}` by number and re-arms the ordinary trigger.
-                probe: Some(frontier_probe(up.clone(), committee.clone())),
-                // A follower runs no `EpochTransition`, so `T` is computed locally from
-                // the module's geometry and the ordering-finalized cursor.
-                tracked_epoch: Some(local_tracked_epoch(
-                    committee.clone(),
-                    finalized_cursor.clone(),
-                )),
-            }
+            re_jump_seam(
+                up,
+                committee.clone(),
+                provider.clone(),
+                beacon_engine_handle.clone(),
+                ctx.clone(),
+                peer_count.clone(),
+                activation,
+                l1_checkpoint_hash,
+                re_jump_threshold,
+                local_tracked_epoch(committee.clone(), finalized_cursor.clone()),
+            )
         });
 
-        // A follower runs the same jump and leaves the same below-floor hole, and an
-        // upstream-configured node can later be promoted to a seated validator without
-        // restarting, so it wires the same seeding seam.
         let boundary_fetch: Option<crate::cert_follow::BoundaryFetchFn> =
             upstream.as_ref().map(|up| {
-                let up = up.clone();
-                let provider = provider.clone();
-                let evm_config = evm_config.clone();
-                let staking_config = staking_config.clone();
-                let ctx = ctx.clone();
-                let sync_metrics = sync_metrics.clone();
-                Arc::new(move |height: u64, at_hash: B256| {
-                    let up = up.clone();
-                    let provider = provider.clone();
-                    let evm_config = evm_config.clone();
-                    let staking_config = staking_config.clone();
-                    let sync_metrics = sync_metrics.clone();
-                    let mut fetch_ctx = ctx.clone();
-                    Box::pin(async move {
-                        let committees = crate::cert_inlet::RethCommitteeSource::new(
-                            RethStakingStateReader::new(
-                                provider.clone(),
-                                evm_config,
-                                staking_config,
-                            ),
-                            chain_id,
-                        );
-                        crate::cert_follow::fetch_verified_boundary(
-                            &up,
-                            &committees,
-                            &mut fetch_ctx,
-                            &sync_metrics,
-                            at_hash,
-                            height,
-                        )
-                        .await
-                    }) as futures::future::BoxFuture<'static, _>
-                }) as crate::cert_follow::BoundaryFetchFn
+                boundary_fetch_seam(
+                    up,
+                    committee.clone(),
+                    chain_id,
+                    ctx.clone(),
+                    sync_metrics.clone(),
+                )
             });
 
         // `boundary_hook` fires synchronously inside the marshal's reporter for every
@@ -3372,17 +3486,17 @@ impl DposLayer {
         .await?;
 
         // The cold-start committee read goes through the module, which installs the
-        // record and its verify-only scheme in one slot. A permanent refusal is a fact
-        // about the chain and stays the loud startup error; a retryable miss is this
-        // process's startup order, and the follower's boundary trigger re-delivers the
-        // epoch until the module can read it.
-        match committee.committee(initial_epoch_u64) {
-            Ok(record) => info!(
+        // record and its verify-only scheme in one slot. An impossible or below-window
+        // refusal is a fact about the chain and stays the loud startup error; a
+        // retryable miss is this process's startup order, and the follower's boundary
+        // trigger re-delivers the epoch until the module can read it.
+        match cold_start_committee_read(&ctx, committee.as_ref(), initial_epoch_u64).await {
+            Ok(ColdStartRead::Ready(record)) => info!(
                 epoch = initial_epoch_u64,
                 members = record.members.len(),
                 "follower cold-start committee read through the committee module"
             ),
-            Err(e) if !e.is_transient() => {
+            Err(ColdStartRefusal::Impossible(e) | ColdStartRefusal::BelowWindow(e)) => {
                 return Err(eyre!(
                     "committee[{initial_epoch_u64}] is REFUSED PERMANENTLY at this follower's \
                      committee anchor: {e}. This is a statement about chain state — the \
@@ -3391,7 +3505,16 @@ impl DposLayer {
                      would follow certificates it can never verify."
                 ));
             }
-            Err(e) => warn!(
+            Err(ColdStartRefusal::Permanent { error, attempts }) => {
+                return Err(eyre!(
+                    "committee[{initial_epoch_u64}] read FAILED PERMANENTLY {attempts} times at \
+                     this follower's committee anchor: {error}. This class is a revert or this \
+                     node's own storage fault, not a statement about the committed state — \
+                     repair the cause (the staking module at GENESIS_STAKING, or this node's \
+                     reth database) and restart."
+                ));
+            }
+            Ok(ColdStartRead::Deferred(e)) => warn!(
                 epoch = initial_epoch_u64,
                 error = %e,
                 "follower cold-start committee not readable at this node's anchor YET — a \
@@ -4849,7 +4972,7 @@ mod replay_seed_tests {
 mod refetch_hole_tests {
     use super::refetch_verified_archive_hole;
     use crate::{
-        cert_follow::{CertUpstream, UpstreamFinalized},
+        cert_follow::{CertUpstream, UpstreamFinalized, WalkOutcome},
         cert_inlet::CommitteeSource,
         digest::Digest,
         order_block::OrderBlock,
@@ -4940,37 +5063,35 @@ mod refetch_hole_tests {
         }
     }
 
-    /// The two answers are independent fields, and conflating them is the defect under
-    /// test: `height` is what the by-height pull serves, `latest` is what `get_latest`
-    /// serves — the only positive proof that an upstream answered us at all. A fake that
-    /// derived one from the other could not express "reachable, and it does not hold the
-    /// height" apart from "nothing answered", the pair this function separates.
+    /// The walk's three verdicts, stated directly: `height` is what the by-height pull
+    /// serves; with none, `answered` says whether an upstream rendered that negative
+    /// or nothing answered at all — the pair this function separates.
     #[derive(Clone)]
     struct FakeUpstream {
         height: Option<UpstreamFinalized>,
-        latest: Option<UpstreamFinalized>,
+        answered: bool,
     }
     impl FakeUpstream {
         /// Serves the height (and is therefore reachable).
         fn serving(uf: UpstreamFinalized) -> Self {
             Self {
-                height: Some(uf.clone()),
-                latest: Some(uf),
+                height: Some(uf),
+                answered: true,
             }
         }
         /// Answers, and says it does not hold the height — the only shape that is
         /// evidence about the record, and the only one that may exit fatal.
-        fn reachable_but_missing(latest: UpstreamFinalized) -> Self {
+        fn reachable_but_missing() -> Self {
             Self {
                 height: None,
-                latest: Some(latest),
+                answered: true,
             }
         }
         /// Nothing answers at all. Evidence about the link, about nothing else.
         fn unreachable() -> Self {
             Self {
                 height: None,
-                latest: None,
+                answered: false,
             }
         }
     }
@@ -4978,8 +5099,15 @@ mod refetch_hole_tests {
         async fn get_finalization(&self, _height: Height) -> Option<UpstreamFinalized> {
             self.height.clone()
         }
+        async fn get_finalization_everywhere(&self, _height: Height) -> WalkOutcome {
+            match (&self.height, self.answered) {
+                (Some(uf), _) => WalkOutcome::Got(Box::new(uf.clone())),
+                (None, true) => WalkOutcome::MissedEverywhere,
+                (None, false) => WalkOutcome::NoneAnswered,
+            }
+        }
         async fn get_latest(&self) -> Option<UpstreamFinalized> {
-            self.latest.clone()
+            self.height.clone()
         }
         async fn rotate(&self) {}
     }
@@ -5009,10 +5137,16 @@ mod refetch_hole_tests {
             }
             (lap > self.silent_laps).then(|| self.served.clone())
         }
+        async fn get_finalization_everywhere(&self, height: Height) -> WalkOutcome {
+            // An upstream nobody can reach renders no verdict: silence is
+            // `NoneAnswered`, never a miss.
+            match self.get_finalization(height).await {
+                Some(uf) => WalkOutcome::Got(Box::new(uf)),
+                None => WalkOutcome::NoneAnswered,
+            }
+        }
         async fn get_latest(&self) -> Option<UpstreamFinalized> {
             use std::sync::atomic::Ordering::SeqCst;
-            // An upstream nobody can reach answers neither pull: the reachability
-            // witness must not be luckier than the pull it corroborates.
             (self.laps.load(SeqCst) > self.silent_laps).then(|| self.served.clone())
         }
         async fn rotate(&self) {}
@@ -5090,7 +5224,7 @@ mod refetch_hole_tests {
     fn upstream_missing_height_is_fatal() {
         deterministic::Runner::default().start(|mut ctx| async move {
             let c = committee(3);
-            let up = FakeUpstream::reachable_but_missing(certify(&c, 0, &sample_order(1)));
+            let up = FakeUpstream::reachable_but_missing();
             let committees = CannedCommittees(c.verifier);
             let err = refetch_verified_archive_hole(
                 Some(&up),
@@ -5112,8 +5246,8 @@ mod refetch_hole_tests {
     /// answer, because the two negatives are different facts. The block path must ask
     /// again rather than tell the operator to re-sync the EL disk.
     ///
-    /// Falsifier: any form where both negatives answer alike — delete the `get_latest`
-    /// witness and this fails with the gone-everywhere error it must not produce.
+    /// Falsifier: any form where both negatives answer alike — collapse the walk's
+    /// two negatives and this fails with the gone-everywhere error it must not produce.
     #[test]
     fn an_unreachable_upstream_is_not_a_data_loss_verdict() {
         deterministic::Runner::default().start(|mut ctx| async move {
@@ -5428,6 +5562,168 @@ mod local_tracked_epoch_tests {
             None,
             "an unfrozen geometry must not be answered with epoch 0"
         );
+    }
+}
+
+#[cfg(test)]
+mod cold_start_read_tests {
+    use super::{
+        cold_start_committee_read, ColdStartRead, ColdStartRefusal, COLD_START_READ_ATTEMPTS,
+        COLD_START_READ_BACKOFF,
+    };
+    use crate::committee::{testing::SchemeCommittee, CommitteeError, CommitteeRecord, Member};
+    use alloy_primitives::{Address, B256};
+    use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
+    use commonware_math::algebra::Random as _;
+    use commonware_runtime::{deterministic, Clock as _, Runner as _};
+    use commonware_utils::{ordered::Set, TryFromIterator as _};
+    use fluentbase_staking_reader::ReadError;
+    use rand_08::rngs::StdRng;
+    use rand_core::SeedableRng as _;
+    use std::sync::Arc;
+
+    const EPOCH: u64 = 5;
+
+    fn record() -> CommitteeRecord {
+        let mut rng = StdRng::seed_from_u64(0xC0);
+        let peers: Vec<_> = (0..4)
+            .map(|_| Ed25519PrivateKey::random(&mut rng).public_key())
+            .collect();
+        let snap = fluentbase_staking_reader::reader::ValidatorSetSnapshot {
+            block_hash: B256::ZERO,
+            block_number: 0,
+            epoch: EPOCH,
+            validators: peers
+                .iter()
+                .enumerate()
+                .map(
+                    |(i, peer)| fluentbase_staking_reader::reader::ValidatorWithKeys {
+                        address: Address::repeat_byte(i as u8),
+                        keys: fluentbase_staking_reader::reader::ConsensusKeys {
+                            peer_pubkey: peer.clone(),
+                            bls_pubkey: {
+                                use commonware_codec::DecodeExt as _;
+                                let mut r = StdRng::seed_from_u64(0xB1 + i as u64);
+                                let kp =
+                                    fluentbase_bls::keys::ValidatorBlsKeypair::generate(&mut r);
+                                fluentbase_bls::BlsPubkey::decode(kp.public_bytes().as_slice())
+                                    .unwrap()
+                            },
+                            activation_epoch: 0,
+                        },
+                        tombstoned: false,
+                    },
+                )
+                .collect(),
+            weights: Some(vec![1; 4]),
+        };
+        CommitteeRecord {
+            epoch: EPOCH,
+            members: snap
+                .validators
+                .iter()
+                .map(|v| Member {
+                    address: v.address,
+                    peer: v.keys.peer_pubkey.clone(),
+                    bls: v.keys.bls_pubkey,
+                })
+                .collect(),
+            weights: vec![1; 4],
+            changed: false,
+            snapshot: (0, B256::ZERO),
+            participants: Set::try_from_iter(peers.iter().cloned()).unwrap(),
+            bls: crate::scheme::epoch_committee_from_snapshot(&snap).unwrap(),
+        }
+    }
+
+    fn module(faults: Vec<ReadError>) -> Arc<SchemeCommittee> {
+        let record = record();
+        let module = SchemeCommittee::with_geometry(|_| None, move |_| Some(record.clone()), None);
+        module.fault_reads(EPOCH, faults);
+        module
+    }
+
+    fn backend() -> ReadError {
+        ReadError::Backend("no state found".into())
+    }
+
+    /// Two faults, then the record: the read is ready on the third attempt, after two
+    /// backoffs on the runtime clock.
+    #[test]
+    fn a_permanent_fault_is_re_asked_and_the_third_answer_is_taken() {
+        deterministic::Runner::default().start(|ctx| async move {
+            let module = module(vec![backend(), ReadError::CallReverted("revert".into())]);
+            let t0 = ctx.current();
+            let out = cold_start_committee_read(&ctx, module.as_ref(), EPOCH).await;
+            assert!(
+                matches!(out, Ok(ColdStartRead::Ready(ref r)) if r.epoch == EPOCH),
+                "the record after the faults"
+            );
+            assert_eq!(
+                ctx.current().duration_since(t0).unwrap(),
+                COLD_START_READ_BACKOFF * 2,
+                "one pause per failed attempt"
+            );
+        });
+    }
+
+    /// Every attempt faults: fatal after the last one, naming the class and the count.
+    #[test]
+    fn a_fault_that_survives_every_attempt_is_fatal_after_the_last() {
+        deterministic::Runner::default().start(|ctx| async move {
+            let module = module((0..COLD_START_READ_ATTEMPTS).map(|_| backend()).collect());
+            let t0 = ctx.current();
+            let out = cold_start_committee_read(&ctx, module.as_ref(), EPOCH).await;
+            match out {
+                Err(ColdStartRefusal::Permanent { error, attempts }) => {
+                    assert_eq!(attempts, COLD_START_READ_ATTEMPTS);
+                    assert!(matches!(error, CommitteeError::Read(ReadError::Backend(_))));
+                }
+                Err(other) => panic!("wrong refusal: {other:?}"),
+                Ok(_) => panic!("the read must not succeed"),
+            }
+            assert_eq!(
+                ctx.current().duration_since(t0).unwrap(),
+                COLD_START_READ_BACKOFF * (COLD_START_READ_ATTEMPTS - 1),
+                "no pause after the last attempt"
+            );
+        });
+    }
+
+    /// A transient miss and an impossible answer are neither retried nor paused: the
+    /// first is deferred to the launch's own retry, the second is refused at once.
+    #[test]
+    fn a_transient_miss_is_deferred_and_an_impossible_answer_refused_without_a_pause() {
+        deterministic::Runner::default().start(|ctx| async move {
+            let t0 = ctx.current();
+            let transient = module(vec![ReadError::StateNotMaterialized { hash: B256::ZERO }]);
+            assert!(matches!(
+                cold_start_committee_read(&ctx, transient.as_ref(), EPOCH).await,
+                Ok(ColdStartRead::Deferred(CommitteeError::Read(
+                    ReadError::StateNotMaterialized { .. }
+                )))
+            ));
+            let impossible = module(vec![ReadError::PeerKey]);
+            assert!(matches!(
+                cold_start_committee_read(&ctx, impossible.as_ref(), EPOCH).await,
+                Err(ColdStartRefusal::Impossible(CommitteeError::Read(
+                    ReadError::PeerKey
+                )))
+            ));
+            let below =
+                SchemeCommittee::with_window(|_| None, |_| None, None, (EPOCH + 1, EPOCH + 3));
+            assert!(matches!(
+                cold_start_committee_read(&ctx, below.as_ref(), EPOCH).await,
+                Err(ColdStartRefusal::BelowWindow(
+                    CommitteeError::OutOfWindow { .. }
+                ))
+            ));
+            assert_eq!(
+                ctx.current().duration_since(t0).unwrap(),
+                std::time::Duration::ZERO,
+                "no attempt above waits"
+            );
+        });
     }
 }
 

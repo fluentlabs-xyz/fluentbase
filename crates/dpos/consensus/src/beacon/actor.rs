@@ -41,8 +41,8 @@
 use crate::beacon::{
     artifact::{value_digest, ChangedAt},
     ceremony::{
-        log_hash, recompute_scoped, CeremonyOutput, DealerEquivocation, DkgCeremony, LogId,
-        Outgoing, Step, Target,
+        log_hash, recompute_scoped, CeremonyOutput, DealerEquivocation, DkgCeremony, FinalizeError,
+        LogId, Outgoing, Step, Target,
     },
     confirmations::{ConfirmTrigger, Confirmations},
     dkg_agree::{AgreedArtifact, ConfirmPool, DkgProposal, PinnedDerive, PinnedLogs, ShareConfirm},
@@ -51,7 +51,9 @@ use crate::beacon::{
     log_store::DealerLogStore,
     metrics::StallReason,
     outcome::{validate_share_on_poly, DkgOutcome},
-    share_state::{self, ConflictMarker, JournalLoad, JournalRecord, ShareState},
+    share_state::{
+        self, ceremony_retain_floor, ConflictMarker, JournalLoad, JournalRecord, ShareState,
+    },
     wire::BeaconMessage,
     JOURNAL_RETENTION_EPOCHS,
 };
@@ -454,28 +456,6 @@ pub type CeremonyStore = Arc<RwLock<BTreeMap<u64, Share>>>;
 /// state it. `idx` is the position in the agreed on-chain `committee[epoch]`
 /// (`u8`, `n ≤ MAX_COMMITTEE_SIZE`).
 pub type DkgLogIndex = Arc<RwLock<BTreeMap<u64, BTreeMap<u8, B256>>>>;
-
-/// The retain floor for the shared insert-only [`CeremonyStore`]: the greatest mint
-/// epoch `<= now - window`, i.e. the mint in force for the oldest cert inside the
-/// scheme-retention window. Every entry `>= floor` must be kept — a reader resolves
-/// the share at the minting epoch the chain names, which on a stable committee is an
-/// older mint, so a size cap would demote a legitimate signer — while entries below
-/// the floor are superseded mints no cert in the window can select. `0` (no mint old
-/// enough to be a floor) retains everything: a stable committee prunes nothing,
-/// churn bounds growth to the trailing window.
-///
-/// Correctness depends on an invariant this function cannot see, written down here:
-/// above `DETERMINISTIC_BOOTSTRAP_EPOCH`, a mint in the store implies `dkgQual[e]`
-/// is set. A mint under a clear bit puts the floor above the mint the chain names,
-/// and the prune deletes the key this node serves — `NoUsableMint` forever, with no
-/// recompute path and no artifact carrying a share. The contract sets that bit from
-/// `committee[target] != committee[target−1]` in `commitEpochCommittee`, the same
-/// comparison the node makes over the same committed arrays; rosters read at
-/// different states, or a bit redefined as "the DKG qualified", breaks it.
-fn ceremony_retain_floor(keys: impl Iterator<Item = u64>, now: u64, window: u64) -> u64 {
-    let cutoff = now.saturating_sub(window);
-    keys.filter(|&k| k <= cutoff).max().unwrap_or(0)
-}
 
 /// Resolves `committee[epoch]` (the Commonware-ordered peer set) at the plane's
 /// current state read — the ceremony roster and its `idx → pubkey` mapping. `None`
@@ -2319,7 +2299,7 @@ where
                         ),
                     }
                 }
-                Err(DkgError::MissingPlayerDealing) => {
+                Err(FinalizeError::Dkg(DkgError::MissingPlayerDealing)) => {
                     // This node acked a dealing it no longer holds; the dealer does not
                     // reveal an acked point and a sealed log cannot be re-opened, so no
                     // fetch can produce the missing input. Terminal — a share-less member
@@ -13157,7 +13137,8 @@ mod clock_tests {
 
 #[cfg(test)]
 mod retain_floor_tests {
-    use super::{ceremony_retain_floor, ChangedAt, CommitteeFor};
+    use super::{ChangedAt, CommitteeFor};
+    use crate::beacon::share_state::ceremony_retain_floor;
     use commonware_cryptography::ed25519::PublicKey as PeerPubkey;
     use commonware_utils::ordered::Set;
     use std::sync::Arc;

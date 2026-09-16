@@ -70,9 +70,9 @@ pub use application::{
     ExecutedChain, FinalizedCursor, FluentApp, OrderingAssembler, ParentHeaderMissing,
     VERIFY_EXEC_BUDGET,
 };
-pub use cert_follow::{CertUpstream, UpstreamFinalized};
+pub use cert_follow::{CertUpstream, UpstreamFinalized, WalkOutcome};
 pub use cert_inlet::{
-    CertInlet, CommitteeSource, MarshalSink, NoopResolver, RethCommitteeSource, RotateUpstream,
+    CertInlet, CommitteeSource, MarshalSink, ModuleCommitteeSource, NoopResolver, RotateUpstream,
     MAX_UPSTREAM_FAULTS,
 };
 pub use cold_start_jump::{assert_l1_checkpoint, ElSync, RethElSync, JUMP_THRESHOLD};

@@ -1467,7 +1467,7 @@ where
         let et = et_arc.clone();
         let geometry_tx = geometry_tx.clone();
         // The committee module, for ONE call: the freeze below is the second of
-        // the two events `Committee::subscribe` promises (the other being the
+        // the two events `Committee::anchor_advances` promises (the other being the
         // anchor advance the executor drives). Before it every epoch answers
         // `NotReadable { ready_at: 0 }`, so a consumer parked on the watch would
         // sleep through the moment the whole window became readable.
@@ -1998,6 +1998,19 @@ impl fluentbase_consensus::CertUpstream for ValidatorUpstream {
             match this {
                 Self::Ws(u) => u.get_finalization(height).await,
                 Self::Plane(u) => u.get_finalization(height).await,
+            }
+        }
+    }
+
+    fn get_finalization_everywhere(
+        &self,
+        height: Height,
+    ) -> impl std::future::Future<Output = fluentbase_consensus::WalkOutcome> + Send {
+        let this = self.clone();
+        async move {
+            match this {
+                Self::Ws(u) => u.get_finalization_everywhere(height).await,
+                Self::Plane(u) => u.get_finalization_everywhere(height).await,
             }
         }
     }

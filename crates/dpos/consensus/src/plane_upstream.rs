@@ -36,7 +36,7 @@
 //! at once; the executor's frozen-tip probe asks again on its next tick.
 
 use crate::{
-    cert_follow::{CertUpstream, UpstreamFinalized},
+    cert_follow::{CertUpstream, UpstreamFinalized, WalkOutcome},
     cert_inlet::MarshalSink,
     committee::{Committee, CommitteeError},
     digest::Digest,
@@ -99,11 +99,22 @@ pub type FrontierResolverMailbox = commonware_resolver::p2p::Mailbox<FrontierKey
 /// keyed by the epoch it was built for — see [`FrontierHandler::verify_scheme`].
 type VerifySchemeSlot = Arc<Mutex<Option<(u64, Arc<BlsScheme>)>>>;
 
-/// Per-key correlation map: a delivered `(cert, block)` is fanned to every waiting
+/// What the serve side tells a waiting `get_latest`/`get_finalization` call.
+#[derive(Clone)]
+pub enum Delivery {
+    /// The answer passed all five checks of `deliver`.
+    Admitted(Box<UpstreamFinalized>),
+    /// An answer arrived and this node could not authenticate it, for `reason`
+    /// (the `dpos_frontier_dropped_total` label). Nothing downstream sees it; the
+    /// waiter learns why it has nothing rather than timing out.
+    Dropped(&'static str),
+}
+
+/// Per-key correlation map: a [`Delivery`] is fanned to every waiting
 /// `get_latest`/`get_finalization` call for that key. Shared between the client
 /// [`PlaneUpstreamHandle`] (registers waiters) and the serve-side [`FrontierHandler`]
 /// (resolves them on `deliver`).
-type Waiters = Arc<Mutex<HashMap<FrontierKey, Vec<oneshot::Sender<UpstreamFinalized>>>>>;
+type Waiters = Arc<Mutex<HashMap<FrontierKey, Vec<oneshot::Sender<Delivery>>>>>;
 
 /// How long a single `get_latest`/`get_finalization` awaits a plane delivery before
 /// returning `None`. Bounds the ladder probe so an isolated node is a no-op rather
@@ -386,13 +397,16 @@ where
         // below the commit height or a faulted read are statements about this node, and
         // excluding an honest peer would cost the channel for this node's own lag.
         //
-        // The waiter is answered now rather than left to time out: removing the entry
-        // drops its sender, so `fetch_one` resolves `None` immediately. No `cancel` is
+        // The waiter is answered now rather than left to time out, and told why: the
+        // entry is removed and every sender gets `Dropped(reason)`. No `cancel` is
         // issued and none is needed — the `true` returned below already completes the
         // fetch commonware-side. The retry driver is the executor's frozen-tip probe.
         if let Some(reason) = unauthenticated {
             metrics::counter!(FRONTIER_DROPPED, "reason" => reason).increment(1);
-            drop(self.waiters.lock().unwrap().remove(&key));
+            let waiting = self.waiters.lock().unwrap().remove(&key);
+            for tx in waiting.into_iter().flatten() {
+                let _ = tx.send(Delivery::Dropped(reason));
+            }
             return true;
         }
         // The admitted answer is not written into the marshal from here: on every path
@@ -401,10 +415,11 @@ where
         // stores it through `store_finalization` — the single writer. Reporting here as
         // well would make this file a second writer of the same finalization.
         let waiting = self.waiters.lock().unwrap().remove(&key);
-        // Only a five-step-verified answer reaches the waiters; an unauthenticatable
-        // one was dropped above, so nothing downstream consumes an unchecked frontier.
+        // Only a five-step-verified answer reaches the waiters as `Admitted`; an
+        // unauthenticatable one was dropped above, so nothing downstream consumes an
+        // unchecked frontier.
         for tx in waiting.into_iter().flatten() {
-            let _ = tx.send(uf.clone());
+            let _ = tx.send(Delivery::Admitted(Box::new(uf.clone())));
         }
         true
     }
@@ -507,22 +522,32 @@ impl<E: Clock> PlaneUpstreamHandle<E> {
         // The bound runs on the runtime `Clock`: a tokio timer would need a tokio
         // reactor, which the deterministic runner does not provide.
         let answer = tokio::select! {
-            answer = rx => answer.ok(),
+            answer = rx => Some(answer),
             () = self.context.sleep(FRONTIER_FETCH_TIMEOUT) => None,
         };
         match answer {
-            Some(uf) => {
+            Some(Ok(Delivery::Admitted(uf))) => {
                 tracing::debug!(%key, height = uf.block.height, "frontier fetch delivered");
-                Some(uf)
+                Some(*uf)
+            }
+            // `deliver` removed the whole entry, so there is nothing to prune and no
+            // `cancel` to send — its `true` already closed that fetch.
+            Some(Ok(Delivery::Dropped(reason))) => {
+                tracing::debug!(
+                    %key,
+                    reason,
+                    "frontier answer dropped — this node could not authenticate it"
+                );
+                None
+            }
+            Some(Err(_)) => {
+                tracing::debug!(%key, "frontier fetch abandoned (the serve side is gone)");
+                None
             }
             None => {
                 tracing::debug!(%key, "frontier fetch timed out (no tracked peer served it)");
                 // Timed out: prune the closed waiter and, if no waiters remain, cancel the
                 // in-flight fetch so the resolver stops probing peers for it.
-                //
-                // A `deliver` drop takes neither branch: it removed the whole entry, so
-                // `get_mut` is `None`, `empty` stays false and no `cancel` is sent —
-                // `deliver` returned `true`, which already closed that fetch.
                 let empty = {
                     let mut waiters = self.waiters.lock().unwrap();
                     let empty = match waiters.get_mut(&key) {
@@ -557,6 +582,27 @@ impl<E: Clock> CertUpstream for PlaneUpstreamHandle<E> {
                 height: height.get(),
             })
             .await
+        }
+    }
+
+    /// One plane fetch; the resolver walks peers by itself, and its silence — a
+    /// timeout, or an answer this node could not authenticate — is never evidence
+    /// about the record.
+    fn get_finalization_everywhere(
+        &self,
+        height: Height,
+    ) -> impl Future<Output = WalkOutcome> + Send {
+        let this = self.clone();
+        async move {
+            match this
+                .fetch_one(FrontierKey::Finalized {
+                    height: height.get(),
+                })
+                .await
+            {
+                Some(uf) => WalkOutcome::Got(Box::new(uf)),
+                None => WalkOutcome::NoneAnswered,
+            }
         }
     }
 
@@ -876,7 +922,7 @@ mod tests {
 
     /// Register a waiter for `key` and hand back the receiving half, so a test can
     /// assert whether the answer was fanned out or dropped.
-    fn waiter(waiters: &Waiters, key: FrontierKey) -> oneshot::Receiver<UpstreamFinalized> {
+    fn waiter(waiters: &Waiters, key: FrontierKey) -> oneshot::Receiver<Delivery> {
         let (tx, rx) = oneshot::channel();
         waiters.lock().unwrap().entry(key).or_default().push(tx);
         rx
@@ -927,7 +973,10 @@ mod tests {
                 )
                 .await;
             assert!(ok, "an honest answer must not cost the peer the channel");
-            assert!(rx.await.is_ok(), "the awaiting call was not resolved");
+            assert!(
+                matches!(rx.await, Ok(Delivery::Admitted(_))),
+                "the awaiting call was not resolved"
+            );
             assert!(
                 marshal.calls().is_empty(),
                 "deliver drove the marshal — a second writer of the same finalization: {:?}",
@@ -1003,8 +1052,8 @@ mod tests {
             );
             assert!(marshal.calls().is_empty(), "the marshal was driven");
             assert!(
-                rx.await.is_err(),
-                "the answer reached the caller — an unauthenticatable certificate was admitted"
+                matches!(rx.await, Ok(Delivery::Dropped(REASON_OUT_OF_WINDOW))),
+                "the waiter must learn the answer was dropped, and why"
             );
         });
     }
@@ -1033,8 +1082,8 @@ mod tests {
             );
             assert!(marshal.calls().is_empty(), "the marshal was driven");
             assert!(
-                rx.await.is_err(),
-                "the answer reached the caller — an unauthenticatable certificate was admitted"
+                matches!(rx.await, Ok(Delivery::Dropped(REASON_OUT_OF_WINDOW))),
+                "the waiter must learn the answer was dropped, and why"
             );
         });
     }
@@ -1070,8 +1119,8 @@ mod tests {
             );
             assert!(marshal.calls().is_empty(), "the marshal was driven");
             assert!(
-                rx.await.is_err(),
-                "the answer reached the caller — an unauthenticatable certificate was admitted"
+                matches!(rx.await, Ok(Delivery::Dropped(REASON_NOT_READABLE))),
+                "the waiter must learn the answer was dropped, and why"
             );
         });
     }
@@ -1171,7 +1220,10 @@ mod tests {
                  key is stale — the peer loses the frontier channel for good"
             );
             assert!(marshal.calls().is_empty(), "the marshal was driven");
-            assert!(rx.await.is_ok(), "the answer was withheld");
+            assert!(
+                matches!(rx.await, Ok(Delivery::Admitted(_))),
+                "the answer was withheld"
+            );
         });
     }
 

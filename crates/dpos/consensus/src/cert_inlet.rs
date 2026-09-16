@@ -11,27 +11,23 @@
 use crate::{
     beacon::{Beacon, Observed, ObservedCertificate, PinEffort},
     cert_follow::UpstreamFinalized,
+    committee::Committee,
     digest::Digest,
-    scheme::epoch_committee_from_snapshot,
 };
-use alloy_consensus::Header;
 use alloy_primitives::B256;
 use commonware_consensus::simplex::types::Activity;
 use commonware_parallel::Sequential;
+use commonware_runtime::Handle;
 use eyre::{ensure, eyre};
 use fluentbase_bls::{
     fluent_namespace, oracle::SeedOracle, scheme::build_verifier, Scheme as BlsScheme,
 };
-use fluentbase_staking_reader::RethStakingStateReader;
 use futures::future::BoxFuture;
 use prometheus_client::{
     encoding::EncodeLabelSet,
     metrics::{counter::Counter, family::Family},
 };
 use rand_core::CryptoRngCore;
-use reth_ethereum_primitives::EthPrimitives;
-use reth_evm::ConfigureEvm;
-use reth_storage_api::{HeaderProvider, StateProviderFactory};
 use std::sync::Arc;
 use tracing::warn;
 
@@ -93,61 +89,52 @@ pub trait CommitteeSource: Send + Sync + 'static {
     ) -> eyre::Result<BlsScheme>;
 }
 
-/// [`CommitteeSource`] over a node's own reth state: committee snapshot at the
-/// given executed hash to BLS verifier.
-pub struct RethCommitteeSource<Provider, EvmConfig> {
-    reader: RethStakingStateReader<Provider, EvmConfig>,
+/// [`CommitteeSource`] over the committee module: the verifier is built from the
+/// module's frozen record, so every by-height seam reads the committee the rest
+/// of the process reads.
+///
+/// `at_hash` must be the module's own anchor hash ([`Committee::anchor_hash`]);
+/// any other hash is refused, so this adapter cannot be used to read the contract
+/// at an arbitrary block. The scheme is built here rather than taken from
+/// [`Committee::scheme`] because the caller chooses the oracle: the seams pass
+/// `None` for a vote-only verify, while the module's scheme carries the beacon's.
+pub struct ModuleCommitteeSource {
+    committee: Arc<dyn Committee>,
     namespace: Vec<u8>,
 }
 
-impl<Provider, EvmConfig> RethCommitteeSource<Provider, EvmConfig>
-where
-    Provider:
-        StateProviderFactory + HeaderProvider<Header = Header> + Clone + Send + Sync + 'static,
-    EvmConfig: ConfigureEvm<Primitives = EthPrimitives> + Clone + Send + Sync + 'static,
-{
-    pub fn new(reader: RethStakingStateReader<Provider, EvmConfig>, chain_id: u64) -> Self {
+impl ModuleCommitteeSource {
+    pub fn new(committee: Arc<dyn Committee>, chain_id: u64) -> Self {
         Self {
-            reader,
+            committee,
             namespace: fluent_namespace(chain_id),
         }
     }
-
-    fn build_at(
-        &self,
-        epoch: u64,
-        at_hash: B256,
-        oracle: Option<Arc<dyn SeedOracle>>,
-    ) -> eyre::Result<BlsScheme> {
-        let snap = self.reader.epoch_committee_snapshot(epoch, at_hash)?;
-        ensure!(
-            !snap.validators.is_empty(),
-            "epoch {epoch} has no committed committee at {at_hash}"
-        );
-        let committee = epoch_committee_from_snapshot(&snap)
-            .map_err(|e| eyre!("epoch {epoch} committee has non-unique participants: {e:?}"))?;
-        Ok(build_verifier(
-            &self.namespace,
-            committee.bimap,
-            epoch,
-            oracle,
-        ))
-    }
 }
 
-impl<Provider, EvmConfig> CommitteeSource for RethCommitteeSource<Provider, EvmConfig>
-where
-    Provider:
-        StateProviderFactory + HeaderProvider<Header = Header> + Clone + Send + Sync + 'static,
-    EvmConfig: ConfigureEvm<Primitives = EthPrimitives> + Clone + Send + Sync + 'static,
-{
+impl CommitteeSource for ModuleCommitteeSource {
     fn scheme_at(
         &self,
         epoch: u64,
         at_hash: B256,
         oracle: Option<Arc<dyn SeedOracle>>,
     ) -> eyre::Result<BlsScheme> {
-        self.build_at(epoch, at_hash, oracle)
+        let anchor = self
+            .committee
+            .anchor_hash()
+            .ok_or_else(|| eyre!("the committee module's anchor is not executed yet"))?;
+        ensure!(
+            at_hash == anchor,
+            "committee[{epoch}] asked at {at_hash}, but the module reads only at its own \
+             anchor {anchor}"
+        );
+        let record = self.committee.committee(epoch)?;
+        Ok(build_verifier(
+            &self.namespace,
+            record.bls.bimap.clone(),
+            epoch,
+            oracle,
+        ))
     }
 }
 
@@ -567,7 +554,7 @@ mod tests {
     use commonware_codec::DecodeExt as _;
     use commonware_consensus::{
         simplex::types::{Finalization, Finalize, Proposal},
-        types::{Epoch, Round, View},
+        types::{Epoch, Height, Round, View},
     };
     use commonware_cryptography::{
         bls12381::{
@@ -696,6 +683,75 @@ mod tests {
         async fn report_finalization(&mut self, _f: Finalization<BlsScheme, Digest>) {
             self.calls.lock().unwrap().push("report");
         }
+    }
+
+    /// The module adapter builds the verifier from the module's record and refuses
+    /// any hash but the module's own anchor, so no seam can read the contract at a
+    /// hash of its choosing through it.
+    #[test]
+    fn the_module_adapter_answers_at_the_anchor_and_refuses_any_other_hash() {
+        use crate::committee::{CommitteeRecord, Member};
+        use commonware_utils::TryFromIterator as _;
+
+        let c = committee(41);
+        let epoch = 7u64;
+        let record = CommitteeRecord {
+            epoch,
+            members: c
+                .bimap
+                .iter_pairs()
+                .map(|(peer, bls)| Member {
+                    address: alloy_primitives::Address::ZERO,
+                    peer: peer.clone(),
+                    bls: *bls,
+                })
+                .collect(),
+            weights: vec![1u128; COMMITTEE_N],
+            changed: false,
+            snapshot: (0, B256::ZERO),
+            participants: Set::try_from_iter(c.bimap.iter().cloned()).unwrap(),
+            bls: fluentbase_bls::scheme::EpochCommittee {
+                epoch,
+                bimap: c.bimap.clone(),
+            },
+        };
+        let module = crate::committee::testing::SchemeCommittee::with_geometry(
+            |_| None,
+            move |_| Some(record.clone()),
+            None,
+        );
+        let anchor = B256::repeat_byte(0xA7);
+        let elsewhere = B256::repeat_byte(0xB8);
+        let adapter = ModuleCommitteeSource::new(module.clone(), CHAIN_ID);
+
+        let unexecuted = adapter
+            .scheme_at(epoch, anchor, None)
+            .expect_err("no anchor hash yet, so nothing can be read");
+        assert!(
+            format!("{unexecuted:#}").contains("anchor is not executed"),
+            "{unexecuted:#}"
+        );
+
+        module.set_anchor_hash(Some(anchor));
+        let refused = adapter
+            .scheme_at(epoch, elsewhere, None)
+            .expect_err("a hash other than the anchor must be refused");
+        assert!(
+            format!("{refused:#}").contains("reads only at its own anchor"),
+            "{refused:#}"
+        );
+
+        let scheme = adapter
+            .scheme_at(epoch, anchor, None)
+            .expect("the anchor hash reads the record");
+        let block = sample_order(Digest(B256::repeat_byte(0x11)), 40);
+        let uf = certify(&c, epoch, &block);
+        deterministic::Runner::default().start(|mut ctx| async move {
+            assert!(
+                uf.finalization.verify(&mut ctx, &scheme, &Sequential),
+                "the scheme built from the module's record verifies the committee's cert"
+            );
+        });
     }
 
     /// Recorded `epoch` committee reads the canned module observed.
@@ -1128,9 +1184,9 @@ mod tests {
         // The in-flight height is removed even when the fetch task unwinds; the RAII
         // guard is the mechanism, since a trailing remove would be skipped on unwind
         // and wedge the resolver on a height it never re-fetches.
-        let inflight: std::sync::Arc<std::sync::Mutex<std::collections::BTreeSet<u64>>> =
-            std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeSet::new()));
-        inflight.lock().unwrap().insert(42);
+        let inflight: super::Inflight =
+            std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
+        inflight.lock().unwrap().insert(42, None);
 
         let inflight_for_panic = inflight.clone();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1142,12 +1198,12 @@ mod tests {
         }));
         assert!(result.is_err(), "the closure must have panicked");
         assert!(
-            !inflight.lock().unwrap().contains(&42),
+            !inflight.lock().unwrap().contains_key(&42),
             "the in-flight height must be de-registered on panic-unwind (else the \
              resolver wedges on a height it can never re-fetch)"
         );
 
-        inflight.lock().unwrap().insert(7);
+        inflight.lock().unwrap().insert(7, None);
         {
             let _guard = super::InflightGuard {
                 inflight: &inflight,
@@ -1155,8 +1211,99 @@ mod tests {
             };
         }
         assert!(
-            !inflight.lock().unwrap().contains(&7),
+            !inflight.lock().unwrap().contains_key(&7),
             "the in-flight height must be de-registered on a normal drop too"
+        );
+    }
+
+    /// A cancelled height's pull is aborted, not merely forgotten: an upstream that
+    /// answers after the cancel must not deliver into the marshal.
+    #[test]
+    fn a_cancelled_fetch_aborts_the_pull_in_flight() {
+        use commonware_resolver::Resolver as _;
+        use commonware_runtime::{Clock as _, Metrics as _, Spawner as _};
+
+        /// Parks every by-height pull on `gate`, and counts the pulls that came back
+        /// from it — the ones that would have delivered.
+        #[derive(Clone)]
+        struct ParkedUpstream {
+            gate: Arc<tokio::sync::Notify>,
+            served: Arc<std::sync::atomic::AtomicUsize>,
+            uf: UpstreamFinalized,
+        }
+        impl crate::cert_follow::CertUpstream for ParkedUpstream {
+            async fn get_finalization(&self, _height: Height) -> Option<UpstreamFinalized> {
+                self.gate.notified().await;
+                self.served
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Some(self.uf.clone())
+            }
+            async fn get_latest(&self) -> Option<UpstreamFinalized> {
+                None
+            }
+            async fn rotate(&self) {}
+        }
+
+        let c = committee(9);
+        let block = sample_order(Digest(B256::repeat_byte(0xaa)), 41);
+        let uf = certify(&c, 0, &block);
+        let served = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let served_probe = served.clone();
+        let delivered = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let delivered_probe = delivered.clone();
+        deterministic::Runner::default().start(|ctx| async move {
+            let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+            drop(ctx.with_label("fake_marshal").spawn(move |_| async move {
+                while let Some(msg) = rx.recv().await {
+                    if let commonware_consensus::marshal::resolver::handler::Message::Deliver {
+                        response,
+                        ..
+                    } = msg
+                    {
+                        delivered.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        let _ = response.send(true);
+                    }
+                }
+            }));
+            let gate = Arc::new(tokio::sync::Notify::new());
+            let mut resolver = UpstreamResolver::new(
+                ctx.clone(),
+                ParkedUpstream {
+                    gate: gate.clone(),
+                    served,
+                    uf,
+                },
+                commonware_consensus::marshal::resolver::handler::Handler::<Digest>::new(tx),
+                Arc::new(crate::beacon::testing::Canned::new()),
+            );
+            let key = super::MarshalRequest::Finalized {
+                height: Height::new(41),
+            };
+            resolver.fetch(key.clone()).await;
+            ctx.sleep(std::time::Duration::from_millis(1)).await;
+            assert!(
+                matches!(resolver.inflight.lock().unwrap().get(&41), Some(Some(_))),
+                "the pull's handle is held while it is in flight"
+            );
+            resolver.cancel(key).await;
+            assert!(
+                resolver.inflight.lock().unwrap().is_empty(),
+                "the cancelled height is forgotten"
+            );
+            // The upstream answers now (a stored permit, so the wake does not depend on
+            // the pull having registered); an aborted pull never comes back from it.
+            gate.notify_one();
+            ctx.sleep(std::time::Duration::from_millis(5)).await;
+        });
+        assert_eq!(
+            served_probe.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the cancelled pull must not return from the upstream"
+        );
+        assert_eq!(
+            delivered_probe.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the cancelled pull must not deliver into the marshal"
         );
     }
 
@@ -2258,12 +2405,18 @@ where
 /// as a `Standard<OrderBlock>` commitment.
 type MarshalRequest = commonware_consensus::marshal::resolver::handler::Request<Digest>;
 
+/// In-flight `Finalized` pulls by height. A slot is `None` between the dedup
+/// insert and the spawn, and holds the task's handle from then on, so `cancel`,
+/// `clear` and `retain` can abort the pull rather than only forget it.
+type Inflight =
+    std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<u64, Option<Handle<()>>>>>;
+
 /// RAII de-register for one in-flight [`UpstreamResolver`] fetch height. Removing
 /// the height in `Drop` rather than as a trailing statement keeps the cleanup
 /// panic-safe: if the spawned fetch task panics mid-pull, the height is still
 /// removed and the marshal can re-request it on its next repair sweep.
 struct InflightGuard<'a> {
-    inflight: &'a std::sync::Arc<std::sync::Mutex<std::collections::BTreeSet<u64>>>,
+    inflight: &'a Inflight,
     height: u64,
 }
 
@@ -2299,9 +2452,9 @@ pub struct UpstreamResolver<E, U> {
     upstream: U,
     /// Deliver channel into the marshal actor; a resolved fetch lands here.
     handler: commonware_consensus::marshal::resolver::handler::Handler<Digest>,
-    /// In-flight `Finalized` heights, so repeated repair bursts for the same gap do
-    /// not spawn duplicate pulls.
-    inflight: std::sync::Arc<std::sync::Mutex<std::collections::BTreeSet<u64>>>,
+    /// In-flight `Finalized` pulls, so repeated repair bursts for the same gap do
+    /// not spawn duplicate pulls, and so a cancelled height's pull is aborted.
+    inflight: Inflight,
     /// The seed-capture seam for the plane arm: this resolver is the door a
     /// plane-native validator's certificates come through, since the live-stream
     /// inlet stands up only with WS upstreams configured.
@@ -2339,7 +2492,7 @@ where
             ctx,
             upstream,
             handler,
-            inflight: std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeSet::new())),
+            inflight: std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
             randomness,
         }
     }
@@ -2358,65 +2511,82 @@ where
     /// window from the highest epoch it holds.
     fn spawn_finalized(&self, height: commonware_consensus::types::Height) {
         let h = height.get();
-        if !self.inflight.lock().unwrap().insert(h) {
-            return; // already in flight
+        {
+            let mut inflight = self.inflight.lock().unwrap();
+            if inflight.contains_key(&h) {
+                return; // already in flight
+            }
+            inflight.insert(h, None);
         }
         let upstream = self.upstream.clone();
         let mut handler = self.handler.clone();
         let inflight = self.inflight.clone();
         let randomness = self.randomness.clone();
-        drop(
-            self.ctx
-                .with_label("upstream_resolver_fetch")
-                .spawn(move |_| async move {
-                    use commonware_codec::Encode as _;
-                    use commonware_resolver::Consumer as _;
-                    // RAII de-register: the height is removed on every exit of this
-                    // task, completion and panic-unwind alike. A trailing `remove`
-                    // would be skipped on unwind, leaving the height in `inflight`
-                    // forever, so the marshal could never re-fetch it and contiguous
-                    // dispatch would wedge permanently.
-                    let _guard = InflightGuard {
-                        inflight: &inflight,
-                        height: h,
-                    };
-                    // Deliberately the single-shot pull: this is the marshal's gap
-                    // repair, up to `MAX_REPAIR` concurrent by-height pulls per sweep.
-                    // A wider walk here would be that many short-lived connections per
-                    // second, forever, for a height nobody holds; the escape from a
-                    // permanently unservable gap is the re-jump.
-                    if let Some(uf) = upstream.get_finalization(height).await {
-                        let round = uf.finalization.proposal.round;
-                        let captured = uf.finalization.clone();
-                        let key = MarshalRequest::Finalized { height };
-                        let value = (uf.finalization, uf.block).encode();
-                        // `deliver` routes into the marshal actor, which decodes and
-                        // BLS-verifies the cert before storing it; a `false` return
-                        // just leaves the height for the next repair sweep.
-                        //
-                        // The sigma capture rides that verdict: a held sigma is keyed
-                        // on a round the responder chose, so taking it from an
-                        // unverified pull would let one peer name any round it liked.
-                        // After `true` the multisig has been checked against
-                        // `committee[epoch]`, so the round came from a quorum.
-                        if handler.deliver(key, value).await
-                            && randomness.observe_certificate(ObservedCertificate::Finalization(
-                                round, &captured,
-                            )) == Observed::Refused
-                        {
-                            // A witness with no lever: this door holds no
-                            // `RotateUpstream`, so the refusal is only logged here.
-                            warn!(
-                                height = h,
-                                %round,
-                                "upstream resolver: the certificate's σ is REFUSED under this \
-                                 epoch's attested key — this door cannot rotate away from the \
-                                 upstream that served it"
-                            );
-                        }
+        let handle = self
+            .ctx
+            .with_label("upstream_resolver_fetch")
+            .spawn(move |_| async move {
+                use commonware_codec::Encode as _;
+                use commonware_resolver::Consumer as _;
+                // RAII de-register: the height is removed on every exit of this
+                // task, completion and panic-unwind alike. A trailing `remove`
+                // would be skipped on unwind, leaving the height in `inflight`
+                // forever, so the marshal could never re-fetch it and contiguous
+                // dispatch would wedge permanently.
+                let _guard = InflightGuard {
+                    inflight: &inflight,
+                    height: h,
+                };
+                // Deliberately the single-shot pull: this is the marshal's gap
+                // repair, up to `MAX_REPAIR` concurrent by-height pulls per sweep.
+                // A wider walk here would be that many short-lived connections per
+                // second, forever, for a height nobody holds; the escape from a
+                // permanently unservable gap is the re-jump.
+                if let Some(uf) = upstream.get_finalization(height).await {
+                    let round = uf.finalization.proposal.round;
+                    let captured = uf.finalization.clone();
+                    let key = MarshalRequest::Finalized { height };
+                    let value = (uf.finalization, uf.block).encode();
+                    // `deliver` routes into the marshal actor, which decodes and
+                    // BLS-verifies the cert before storing it; a `false` return
+                    // just leaves the height for the next repair sweep.
+                    //
+                    // The sigma capture rides that verdict: a held sigma is keyed
+                    // on a round the responder chose, so taking it from an
+                    // unverified pull would let one peer name any round it liked.
+                    // After `true` the multisig has been checked against
+                    // `committee[epoch]`, so the round came from a quorum.
+                    if handler.deliver(key, value).await
+                        && randomness.observe_certificate(ObservedCertificate::Finalization(
+                            round, &captured,
+                        )) == Observed::Refused
+                    {
+                        // A witness with no lever: this door holds no
+                        // `RotateUpstream`, so the refusal is only logged here.
+                        warn!(
+                            height = h,
+                            %round,
+                            "upstream resolver: the certificate's σ is REFUSED under this \
+                             epoch's attested key — this door cannot rotate away from the \
+                             upstream that served it"
+                        );
                     }
-                }),
-        );
+                }
+            });
+        // The task may already have finished and had its guard remove the slot; a
+        // handle stored then would outlive the pull it names, so only an occupied
+        // slot takes it. A dropped handle detaches, it does not abort.
+        if let Some(slot) = self.inflight.lock().unwrap().get_mut(&h) {
+            *slot = Some(handle);
+        }
+    }
+}
+
+/// Abort every pull in `slots` whose handle was stored; a slot still `None` was
+/// never spawned past its dedup insert.
+fn abort_pulls(slots: impl IntoIterator<Item = Option<Handle<()>>>) {
+    for handle in slots.into_iter().flatten() {
+        handle.abort();
     }
 }
 
@@ -2551,19 +2721,29 @@ where
 
     async fn cancel(&mut self, key: Self::Key) {
         if let MarshalRequest::Finalized { height } = key {
-            self.inflight.lock().unwrap().remove(&height.get());
+            let removed = self.inflight.lock().unwrap().remove(&height.get());
+            abort_pulls(removed);
         }
     }
 
     async fn clear(&mut self) {
-        self.inflight.lock().unwrap().clear();
+        let removed: Vec<_> = std::mem::take(&mut *self.inflight.lock().unwrap())
+            .into_values()
+            .collect();
+        abort_pulls(removed);
     }
 
     async fn retain(&mut self, predicate: impl Fn(&Self::Key) -> bool + Send + 'static) {
-        self.inflight.lock().unwrap().retain(|&h| {
-            predicate(&MarshalRequest::Finalized {
+        let mut removed = Vec::new();
+        self.inflight.lock().unwrap().retain(|&h, handle| {
+            let keep = predicate(&MarshalRequest::Finalized {
                 height: commonware_consensus::types::Height::new(h),
-            })
+            });
+            if !keep {
+                removed.push(handle.take());
+            }
+            keep
         });
+        abort_pulls(removed);
     }
 }

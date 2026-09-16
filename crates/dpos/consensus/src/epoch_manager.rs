@@ -12,7 +12,7 @@
 use crate::{
     application::{ExecutedChain, FluentApp, OrderingAssembler},
     beacon::{constant_fallback_seed, witness_fallback_seed},
-    beacon::{Beacon, PinEffort, ShareProbe, SignerVerdict},
+    beacon::{Beacon, PinEffort, ShareProbe, SignerVerdict, WithheldReason},
     committee::Committee,
     engine::{EpochEngine, EpochEngineConfig},
     epocher::OriginEpocher,
@@ -314,9 +314,9 @@ where
     /// for one marshal block, while an epoch here has run none of it. The module's
     /// wake-up drains this set, which is the only retry such an epoch gets.
     ///
-    /// Only a retryable miss is remembered
-    /// ([`crate::committee::CommitteeError::is_transient`]), which also bounds the
-    /// set: an epoch below the read window can never be read again.
+    /// Every miss but two is remembered ([`committee_miss`]): an epoch below the
+    /// read window can never be read again, and an impossible committee halts. That
+    /// bounds the set to the read window.
     deferred_reconciles: BTreeSet<Epoch>,
     cfg: Config<B, XC, A>,
 }
@@ -442,7 +442,7 @@ where
         // The committee module's own wake-up, and the only retry a reconcile parked
         // on `NotReadable` has. Subscribed once, before the loop, so a wake-up fired
         // between the first read and the first `changed()` is held.
-        let mut committee_readable = self.cfg.committee.subscribe();
+        let mut committee_wake = self.cfg.committee.anchor_advances();
         // The marshal tip's edge: a second receiver on the same channel `self.tip`
         // reads the value from, because `changed()` needs a `&mut` the value-reading
         // arms cannot lend it. This is the only edge that fires when the tip moves
@@ -528,7 +528,7 @@ where
                 // contract is "wake and re-ask", so re-run the live epoch's reconcile:
                 // if it was parked on an unreadable committee it now proceeds, and if it
                 // was not, `reconcile_roles` is idempotent.
-                _ = committee_readable.changed() => {
+                _ = committee_wake.changed() => {
                     let live = self.live_epoch();
                     let targets =
                         committee_wake_targets(&mut self.deferred_reconciles, live);
@@ -649,52 +649,11 @@ where
                 record
             }
             Err(e) => {
-                // Remember the epoch so the module's wake-up re-runs this reconcile.
-                // Only a retryable miss: a permanent refusal is a debt no wake-up can
-                // settle.
-                if e.is_transient() {
-                    self.deferred_reconciles.insert(epoch);
-                    debug!(
-                        ?epoch,
-                        %e,
-                        "reconcile deferred — committee[E] not readable at this node's anchor yet"
-                    );
-                    return;
-                }
-                // The one site that turns an impossible committee into a halt. This
-                // reconcile was owed — the epoch arrived on a boundary this node's own
-                // execution reached, on the live-epoch edge, or on the module's wake-up
-                // — never as a lookahead or a stranger's claim, which is why the halt
-                // lives here and not in the module.
-                //
-                // `Impossible` and not `!is_transient()`: a revert keeps its prior
-                // behaviour (the epoch is refused, the node stays up, an operator repairs
-                // the module), because a revert says the read could not be served, not
-                // that the committed state is contradictory. An impossible answer is the
-                // chain contradicting its own invariants, which every validator reads the
-                // same way; skipping it would stop the network in silence. The latch
-                // aborts every running engine and keeps this node a Verifier.
-                if e.is_contract_impossible() {
-                    if !self.cfg.safety_halt.is_engaged() {
-                        error!(
-                            ?epoch,
-                            %e,
-                            reason = SyncReason::ContractFork.as_str(),
-                            "committee[E] of an epoch this node must enter is IMPOSSIBLE — the \
-                             contract contradicted its own invariants; SafetyHalt: this node \
-                             stops signing, proposing and voting (marshal keeps serving). \
-                             Recovery is a repaired chain and a fresh start."
-                        );
-                    }
-                    // Idempotent, and the first verdict is the one recorded.
-                    self.cfg.safety_halt.engage(SyncReason::ContractFork);
-                    return;
-                }
-                debug!(
-                    ?epoch,
-                    %e,
-                    "reconcile refused — committee[E] is permanently unreadable at this node's \
-                     anchor (a revert, this node's storage, or an epoch below the window)"
+                park_committee_miss(
+                    &mut self.deferred_reconciles,
+                    &self.cfg.safety_halt,
+                    epoch,
+                    &e,
                 );
                 return;
             }
@@ -877,35 +836,40 @@ where
                 let Some(keypair) = self.cfg.signer_keypair.clone() else {
                     unreachable!("Role::Signer requires is_member, which requires a signer keypair")
                 };
-                let scheme = match self.cfg.randomness.signer(epoch, &snap, &keypair) {
-                    SignerVerdict::Signs(scheme) => scheme,
-                    // Misconfiguration safety net, not a wedge path: this node's BLS key
-                    // is not in the committee BiMap. Spawn verify-only; the next reconcile
-                    // aborts it.
-                    SignerVerdict::RotatedKey(scheme) => {
-                        metrics::counter!("epoch_engine_rotated_out_total").increment(1);
-                        warn!(
-                            ?epoch,
-                            "validator BLS key not in committee BiMap — verify-only \
-                                 (reconciler aborts this engine on its next reconcile)"
-                        );
-                        scheme
-                    }
-                    SignerVerdict::Withheld(reason) => {
-                        info!(?epoch, ?reason, "withheld from signing — verify-only");
-                        self.soft_enter(epoch).await;
-                        return;
-                    }
-                    // The engine's own decode failed: warn and skip the epoch.
-                    SignerVerdict::InvalidCommittee(e) => {
-                        warn!(
-                            ?epoch,
-                            ?e,
-                            "skipping epoch spawn — invalid committee snapshot"
-                        );
-                        return;
-                    }
-                };
+                let scheme =
+                    match signer_decision(self.cfg.randomness.signer(epoch, &snap, &keypair)) {
+                        SignerDecision::Spawn(scheme) => *scheme,
+                        SignerDecision::SoftEnter(reason) => {
+                            match reason {
+                                // Misconfiguration safety net, not a wedge path: this node's
+                                // BLS key is not in the committee BiMap, so the scheme it was
+                                // handed cannot sign and an engine over it would only be
+                                // aborted by the next reconcile.
+                                SoftEnterReason::RotatedKey => {
+                                    metrics::counter!("epoch_engine_rotated_out_total")
+                                        .increment(1);
+                                    warn!(
+                                        ?epoch,
+                                        "validator BLS key not in committee BiMap — verify-only"
+                                    );
+                                }
+                                SoftEnterReason::Withheld(reason) => {
+                                    info!(?epoch, ?reason, "withheld from signing — verify-only");
+                                }
+                            }
+                            self.soft_enter(epoch).await;
+                            return;
+                        }
+                        // The engine's own decode failed: warn and skip the epoch.
+                        SignerDecision::Skip(e) => {
+                            warn!(
+                                ?epoch,
+                                ?e,
+                                "skipping epoch spawn — invalid committee snapshot"
+                            );
+                            return;
+                        }
+                    };
                 // Raise the module's verify-only entry to this node's signer half — the
                 // one upgrade path. A refusal preserves the stronger entry and is not a
                 // spawn gate: the engine holds its own instance either way.
@@ -1260,12 +1224,134 @@ async fn repair_keyless_schemes(
     upgraded
 }
 
+/// What a reconcile does with a committee it could not read.
+#[derive(Debug, PartialEq, Eq)]
+enum CommitteeMiss {
+    /// Park the epoch in `deferred_reconciles`; the module's wake-up retries it.
+    Defer,
+    /// Engage the fork-safety latch: the chain contradicted its own invariants.
+    Halt,
+    /// Nothing to do: the epoch is below the read window and can never be read.
+    Refuse,
+}
+
+/// The reconcile's verdict on a committee read failure.
+///
+/// A [`fluentbase_staking_reader::ReadClass::Permanent`] failure — a revert, or
+/// this node's own storage — is deferred exactly like a transient miss: the store
+/// re-reads on every call, so the next anchor advance is a retry, and the failure
+/// says nothing about the committed state. Only an epoch below the read window is
+/// refused outright, because the window never moves down.
+fn committee_miss(e: &crate::committee::CommitteeError) -> CommitteeMiss {
+    use crate::committee::CommitteeError;
+    match e {
+        CommitteeError::NotReadable { .. } => CommitteeMiss::Defer,
+        CommitteeError::OutOfWindow { epoch, hi, .. } if epoch > hi => CommitteeMiss::Defer,
+        CommitteeError::OutOfWindow { .. } => CommitteeMiss::Refuse,
+        CommitteeError::Read(read) if read.is_contract_impossible() => CommitteeMiss::Halt,
+        CommitteeError::Read(_) => CommitteeMiss::Defer,
+    }
+}
+
+/// Act on a committee read failure inside `reconcile_roles`: park the epoch for the
+/// module's wake-up, engage the fork-safety latch, or refuse it. Free so the arm
+/// itself is unit-testable without an actor.
+///
+/// The halt is the one site that turns an impossible committee into a node halt.
+/// The reconcile that reaches it was owed — the epoch arrived on a boundary this
+/// node's own execution reached, on the live-epoch edge, or on the module's
+/// wake-up — never as a lookahead or a stranger's claim, which is why the halt
+/// lives here and not in the module. `Impossible` and not `!is_transient()`: a
+/// revert or a storage fault is deferred like a transient miss (the read could not
+/// be served, which says nothing about the committed state), while an impossible
+/// answer is the chain contradicting its own invariants, which every validator
+/// reads the same way; skipping it would stop the network in silence. The latch
+/// aborts every running engine and keeps this node a Verifier.
+fn park_committee_miss(
+    deferred: &mut BTreeSet<Epoch>,
+    safety_halt: &crate::sync_metrics::SafetyHalt,
+    epoch: Epoch,
+    e: &crate::committee::CommitteeError,
+) {
+    match committee_miss(e) {
+        CommitteeMiss::Defer => {
+            deferred.insert(epoch);
+            debug!(
+                ?epoch,
+                %e,
+                "reconcile deferred — committee[E] not readable at this node's anchor yet, \
+                 or its read failed; retried on the module's wake-up"
+            );
+        }
+        CommitteeMiss::Halt => {
+            if !safety_halt.is_engaged() {
+                error!(
+                    ?epoch,
+                    %e,
+                    reason = SyncReason::ContractFork.as_str(),
+                    "committee[E] of an epoch this node must enter is IMPOSSIBLE — the \
+                     contract contradicted its own invariants; SafetyHalt: this node stops \
+                     signing, proposing and voting (marshal keeps serving). Recovery is a \
+                     repaired chain and a fresh start."
+                );
+            }
+            // Idempotent, and the first verdict is the one recorded.
+            safety_halt.engage(SyncReason::ContractFork);
+        }
+        CommitteeMiss::Refuse => debug!(
+            ?epoch,
+            %e,
+            "reconcile refused — committee[E] is below this node's read window"
+        ),
+    }
+}
+
+/// Why a member at the live frontier registers verify-only instead of spawning.
+#[derive(Debug)]
+enum SoftEnterReason {
+    /// This node's BLS key is not in the committee BiMap ([`SignerVerdict::RotatedKey`]).
+    RotatedKey,
+    /// The beacon withheld the signing material ([`SignerVerdict::Withheld`]).
+    Withheld(WithheldReason),
+}
+
+/// What the manager does with a [`SignerVerdict`] at the live frontier.
+#[derive(Debug)]
+enum SignerDecision {
+    /// Raise the epoch's scheme to this signer half and spawn its engine.
+    Spawn(Box<BlsScheme>),
+    /// Register verify-only and return; no engine.
+    SoftEnter(SoftEnterReason),
+    /// Neither: the snapshot could not be decoded.
+    Skip(commonware_utils::ordered::Error),
+}
+
+/// Map the beacon's verdict to the manager's decision.
+///
+/// `RotatedKey` soft-enters: the scheme it carries cannot sign (this node's key is
+/// absent from the BiMap), so an engine over it would only ever be aborted by the
+/// next reconcile, and the verify-only registration is what that engine would have
+/// amounted to.
+fn signer_decision(verdict: SignerVerdict) -> SignerDecision {
+    match verdict {
+        SignerVerdict::Signs(scheme) => SignerDecision::Spawn(Box::new(scheme)),
+        SignerVerdict::RotatedKey(_) => SignerDecision::SoftEnter(SoftEnterReason::RotatedKey),
+        SignerVerdict::Withheld(reason) => {
+            SignerDecision::SoftEnter(SoftEnterReason::Withheld(reason))
+        }
+        SignerVerdict::InvalidCommittee(e) => SignerDecision::Skip(e),
+    }
+}
+
 /// The live epoch for a marshal tip, over the frozen geometry — the body of
 /// [`Actor::live_epoch`], free so the rule is unit-testable.
 ///
 /// Its only inputs are the geometry and a height the marshal has verified, so no
 /// epoch tag off the wire can name the live epoch.
-fn live_epoch_of(geometry: &crate::committee::Geometry, tip: u64) -> Epoch {
+///
+/// Also the follower's `T` (`dpos::local_tracked_epoch`): a node that runs no
+/// `EpochTransition` computes the epoch it tracks by this same rule.
+pub(crate) fn live_epoch_of(geometry: &crate::committee::Geometry, tip: u64) -> Epoch {
     let e = geometry.epoch_of(tip);
     // `tip == last(e)` means epoch `e` is finished and `e + 1` is live.
     Epoch::new(if geometry.last(e) == tip { e + 1 } else { e })
@@ -2300,6 +2386,144 @@ mod tests {
             vec![Epoch::new(4)],
             "an unfrozen geometry names no live epoch, and owes the deferred set anyway"
         );
+    }
+
+    /// A committee read that fails permanently — this node's own storage faulted
+    /// under the anchor — is a deferral, not a refusal: the store re-reads on every
+    /// call, so the module's next wake-up is the retry, and the epoch has to be in
+    /// the deferred set for that wake-up to reach it. Driven through the same three
+    /// pieces `reconcile_roles` runs: the read, the miss verdict that parks the epoch,
+    /// and the wake-up's target list that drains it.
+    #[test]
+    fn a_permanent_read_fault_is_deferred_and_the_epoch_is_entered_on_the_next_wake() {
+        use crate::committee::{Committee as _, CommitteeError};
+        use fluentbase_staking_reader::ReadError;
+
+        let epoch = Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH + 3);
+        let (snap, _) = repair_fixture(epoch);
+        let record = crate::committee::CommitteeRecord {
+            epoch: epoch.get(),
+            members: snap
+                .validators
+                .iter()
+                .map(|v| crate::committee::Member {
+                    address: v.address,
+                    peer: v.keys.peer_pubkey.clone(),
+                    bls: v.keys.bls_pubkey,
+                })
+                .collect(),
+            weights: vec![1; snap.validators.len()],
+            changed: false,
+            snapshot: (snap.block_number, snap.block_hash),
+            participants: commonware_utils::ordered::Set::from_iter_dedup(
+                snap.validators.iter().map(|v| v.keys.peer_pubkey.clone()),
+            ),
+            bls: epoch_committee_from_snapshot(&snap).expect("valid committee"),
+        };
+        let module = crate::committee::testing::SchemeCommittee::with_geometry(
+            |_| None,
+            move |_| Some(record.clone()),
+            crate::committee::Geometry::new(0, 1),
+        );
+        module.fault_reads(
+            epoch.get(),
+            [ReadError::Backend("block_hash(..) is None".into())],
+        );
+        let mut deferred: BTreeSet<Epoch> = BTreeSet::new();
+        let halt =
+            crate::sync_metrics::SafetyHalt::new(crate::sync_metrics::SyncMetrics::default());
+
+        // First pass: the fault. Permanent, not impossible — parked, not halted.
+        let first = module
+            .committee(epoch.get())
+            .expect_err("the fault is handed out once");
+        assert!(matches!(first, CommitteeError::Read(ReadError::Backend(_))));
+        assert!(!first.is_transient() && !first.is_contract_impossible());
+        assert_eq!(
+            committee_miss(&first),
+            CommitteeMiss::Defer,
+            "a permanent-but-not-impossible read fault must be parked for the wake-up"
+        );
+        park_committee_miss(&mut deferred, &halt, epoch, &first);
+        assert!(deferred.contains(&epoch), "the arm must park the epoch");
+        assert!(!halt.is_engaged(), "a permanent read fault is not a fork");
+
+        // The wake-up drains the parked epoch and the second read succeeds.
+        let targets = committee_wake_targets(&mut deferred, None);
+        assert_eq!(
+            targets,
+            vec![epoch],
+            "the wake-up must reach the parked epoch"
+        );
+        let entered = module
+            .committee(epoch.get())
+            .expect("the second read answers the record");
+        assert_eq!(entered.epoch, epoch.get());
+
+        // And the other two classes keep their verdicts — the impossible one engages
+        // the latch and parks nothing.
+        let impossible = CommitteeError::Read(ReadError::PeerKey);
+        assert_eq!(committee_miss(&impossible), CommitteeMiss::Halt);
+        park_committee_miss(&mut deferred, &halt, epoch, &impossible);
+        assert!(
+            halt.is_engaged(),
+            "an impossible committee must engage SafetyHalt"
+        );
+        assert!(
+            deferred.is_empty(),
+            "a halted epoch is not parked for a retry"
+        );
+        assert_eq!(
+            committee_miss(&CommitteeError::OutOfWindow {
+                epoch: 1,
+                lo: 4,
+                hi: 6
+            }),
+            CommitteeMiss::Refuse
+        );
+        assert_eq!(
+            committee_miss(&CommitteeError::OutOfWindow {
+                epoch: 9,
+                lo: 4,
+                hi: 6
+            }),
+            CommitteeMiss::Defer,
+            "above the window the anchor will grow into the epoch"
+        );
+    }
+
+    /// A member whose BLS key is not in the committee BiMap gets a verify-only scheme
+    /// from the beacon. That scheme cannot sign, so the manager registers verify-only
+    /// and spawns nothing — an engine over it would only be aborted by the next
+    /// reconcile.
+    #[test]
+    fn a_rotated_key_soft_enters_and_spawns_no_engine() {
+        use commonware_cryptography::certificate::Scheme as _;
+
+        let epoch = Epoch::new(9);
+        let (snap, _) = repair_fixture(epoch);
+        let bimap = epoch_committee_from_snapshot(&snap)
+            .expect("valid committee")
+            .bimap;
+        let verify_only = fluentbase_bls::scheme::build_verifier(
+            &fluentbase_bls::fluent_namespace(1),
+            bimap,
+            epoch.get(),
+            None,
+        );
+        assert!(
+            verify_only.me().is_none(),
+            "fixture: the scheme cannot sign"
+        );
+
+        match signer_decision(SignerVerdict::RotatedKey(verify_only)) {
+            SignerDecision::SoftEnter(SoftEnterReason::RotatedKey) => {}
+            other => panic!("RotatedKey must soft-enter, got {other:?}"),
+        }
+        assert!(matches!(
+            signer_decision(SignerVerdict::Withheld(WithheldReason::NoUsableShare)),
+            SignerDecision::SoftEnter(SoftEnterReason::Withheld(_))
+        ));
     }
 
     // An overflow is returned too: the run that was dropped may have held either

@@ -286,12 +286,12 @@ fn without_a_frozen_geometry_every_epoch_is_not_readable_without_a_single_read()
         Calls::default(),
         "an unfrozen geometry must not cost a staticcall"
     );
-    let mut readable = store.subscribe();
-    assert_eq!(*readable.borrow_and_update(), 0);
+    let mut advances = store.anchor_advances();
+    assert_eq!(*advances.borrow_and_update(), 400);
     store.anchor_advanced();
     assert!(
-        !readable.has_changed().expect("sender alive"),
-        "no geometry, no readable epoch"
+        !advances.has_changed().expect("sender alive"),
+        "no geometry, no wake-up"
     );
 
     // The freeze lands: the same store answers, with no rebuild.
@@ -300,11 +300,11 @@ fn without_a_frozen_geometry_every_epoch_is_not_readable_without_a_single_read()
         .committee(5)
         .expect("readable once the geometry is frozen");
     store.anchor_advanced();
-    assert_eq!(
-        *readable.borrow_and_update(),
-        geometry().epoch_of(400) + 2,
-        "the first advance after the freeze publishes the real ceiling"
+    assert!(
+        advances.has_changed().expect("sender alive"),
+        "the first advance after the freeze is a wake-up"
     );
+    assert_eq!(*advances.borrow_and_update(), 400);
 }
 
 #[test]
@@ -743,15 +743,15 @@ fn an_epoch_at_the_window_floor_keeps_its_first_value() {
 }
 
 #[test]
-fn the_wake_up_carries_the_highest_readable_epoch_as_the_anchor_grows() {
+fn the_wake_up_fires_on_every_advance_and_carries_the_anchor_height() {
     let anchor = FakeAnchor::at(0, hash(11));
     let store = new_store(
         anchor.clone(),
         FakeReads::new(four_members(), BTreeMap::new()),
     );
 
-    let mut rx = store.subscribe();
-    assert_eq!(*rx.borrow_and_update(), 2, "epoch(0) + 2");
+    let mut rx = store.anchor_advances();
+    assert_eq!(*rx.borrow_and_update(), 0, "the anchor at birth");
 
     let target = geometry().commit_height(5);
     assert_eq!(target, geometry().start(3));
@@ -759,26 +759,20 @@ fn the_wake_up_carries_the_highest_readable_epoch_as_the_anchor_grows() {
     store.anchor_advanced();
 
     assert!(rx.has_changed().unwrap(), "the wake-up fired");
-    assert_eq!(*rx.borrow_and_update(), 5, "epoch(anchor) + 2");
+    assert_eq!(
+        *rx.borrow_and_update(),
+        target,
+        "the height the anchor holds"
+    );
 
-    // Every advance fires the event even when the value does not move: the other way a
+    // Every advance fires the event even when the height does not move: the other way a
     // consumer parks is an unexecuted anchor, and only a later advance can wake it.
     store.anchor_advanced();
     assert!(
         rx.has_changed().unwrap(),
-        "an advance that does not raise the ceiling is still a wake-up"
+        "an advance that leaves the height where it was is still a wake-up"
     );
-    assert_eq!(
-        *rx.borrow_and_update(),
-        5,
-        "and the VALUE is still monotone — the hint never goes backwards"
-    );
-
-    // Monotone in the value, proved against a lower anchor rather than an equal one: the hint
-    // is recomputed from the anchor on every advance, so a regression would show here.
-    anchor.advance(geometry().start(1), hash(13));
-    store.anchor_advanced();
-    assert!(*rx.borrow_and_update() >= 5, "the hint never decreases");
+    assert_eq!(*rx.borrow_and_update(), target);
 }
 
 #[test]

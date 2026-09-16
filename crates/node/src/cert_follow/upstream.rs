@@ -19,7 +19,7 @@ use std::{
 
 use commonware_consensus::types::Height;
 use commonware_runtime::{tokio::Context, Clock as _, Handle, Metrics as _, Spawner as _};
-use fluentbase_consensus::{CertUpstream, UpstreamFinalized};
+use fluentbase_consensus::{CertUpstream, UpstreamFinalized, WalkOutcome};
 use jsonrpsee::{
     core::client::{Error as ClientError, Subscription},
     ws_client::{WsClient, WsClientBuilder},
@@ -48,7 +48,7 @@ enum UpstreamMsg {
     /// [`Self::GetFinalization`] on purpose — see [`walk_for_height`].
     GetFinalizationEverywhere {
         height: Height,
-        response: oneshot::Sender<Option<UpstreamFinalized>>,
+        response: oneshot::Sender<WalkOutcome>,
     },
     /// Off-path pull of an epoch-key artifact. Spawned like every other pull so
     /// it can never stall the live subscription, and answered `None` on every
@@ -87,13 +87,18 @@ impl CertUpstream for UpstreamHandle {
     fn get_finalization_everywhere(
         &self,
         height: Height,
-    ) -> impl Future<Output = Option<UpstreamFinalized>> + Send {
+    ) -> impl Future<Output = WalkOutcome> + Send {
         let tx = self.tx.clone();
         async move {
             let (response, rx) = oneshot::channel();
-            tx.send(UpstreamMsg::GetFinalizationEverywhere { height, response })
-                .ok()?;
-            rx.await.ok().flatten()
+            // A closed mailbox is the actor gone: nothing asked, nothing answered.
+            if tx
+                .send(UpstreamMsg::GetFinalizationEverywhere { height, response })
+                .is_err()
+            {
+                return WalkOutcome::NoneAnswered;
+            }
+            rx.await.unwrap_or(WalkOutcome::NoneAnswered)
         }
     }
 
@@ -302,41 +307,6 @@ impl UpstreamActor {
                     },
 
                     msg = self.mailbox_rx.recv() => match msg {
-                        Some(UpstreamMsg::GetFinalization { height, response }) => {
-                            // Spawn so an in-flight gap fetch never stalls the live stream.
-                            let client = client.clone();
-                            drop(self.ctx.with_label("get_finalization").spawn(move |_| async move {
-                                let _ = response.send(fetch_finalization(&client, Query::Height(height.get())).await);
-                            }));
-                        }
-                        Some(UpstreamMsg::GetFinalizationEverywhere { height, response }) => {
-                            // Same spawn as the plain pull — the walk must never
-                            // stall the live stream — plus the URL list and the
-                            // actor's own cursor, so it visits every OTHER upstream
-                            // and never re-asks the one that just missed.
-                            let client = client.clone();
-                            let urls = self.urls.clone();
-                            let next_url = self.next_url;
-                            drop(self.ctx.with_label("get_finalization_everywhere").spawn(move |_| async move {
-                                let _ = response.send(
-                                    walk_for_height(Some(&client), &urls, next_url, height)
-                                        .await
-                                        .into_option(),
-                                );
-                            }));
-                        }
-                        Some(UpstreamMsg::GetLatest { response }) => {
-                            let client = client.clone();
-                            drop(self.ctx.with_label("get_latest").spawn(move |_| async move {
-                                let _ = response.send(fetch_finalization(&client, Query::Latest).await);
-                            }));
-                        }
-                        Some(UpstreamMsg::GetEpochArtifact { epoch, response }) => {
-                            let client = client.clone();
-                            drop(self.ctx.with_label("get_epoch_artifact").spawn(move |_| async move {
-                                let _ = response.send(fetch_epoch_artifact(&client, epoch).await);
-                            }));
-                        }
                         Some(UpstreamMsg::Rotate { response }) => {
                             warn!(url = %url, "cert-follow: rotating upstream on engine request (data fault)");
                             let _ = response.send(());
@@ -348,44 +318,14 @@ impl UpstreamActor {
                             // outer loop iterates), so any pull that interleaved the
                             // rotate burst is served on it — never dropped.
                             for msg in deferred {
-                                match msg {
-                                    UpstreamMsg::GetFinalization { height, response } => {
-                                        let client = client.clone();
-                                        drop(self.ctx.with_label("get_finalization").spawn(move |_| async move {
-                                            let _ = response.send(
-                                                fetch_finalization(&client, Query::Height(height.get())).await);
-                                        }));
-                                    }
-                                    UpstreamMsg::GetLatest { response } => {
-                                        let client = client.clone();
-                                        drop(self.ctx.with_label("get_latest").spawn(move |_| async move {
-                                            let _ = response.send(fetch_finalization(&client, Query::Latest).await);
-                                        }));
-                                    }
-                                    UpstreamMsg::GetFinalizationEverywhere { height, response } => {
-                                        let client = client.clone();
-                                        let urls = self.urls.clone();
-                                        let next_url = self.next_url;
-                                        drop(self.ctx.with_label("get_finalization_everywhere").spawn(move |_| async move {
-                                            let _ = response.send(
-                                                walk_for_height(Some(&client), &urls, next_url, height)
-                                        .await
-                                        .into_option(),
-                                );
-                                        }));
-                                    }
-                                    UpstreamMsg::GetEpochArtifact { epoch, response } => {
-                                        let client = client.clone();
-                                        drop(self.ctx.with_label("get_epoch_artifact").spawn(move |_| async move {
-                                            let _ = response.send(fetch_epoch_artifact(&client, epoch).await);
-                                        }));
-                                    }
-                                    UpstreamMsg::Rotate { .. } => {
-                                        unreachable!("drain_after_rotate kept no Rotate")
-                                    }
+                                if dispatch(&self.ctx, &client, &self.urls, self.next_url, msg).is_some() {
+                                    unreachable!("drain_after_rotate kept no Rotate")
                                 }
                             }
                             break;
+                        }
+                        Some(msg) => {
+                            drop(dispatch(&self.ctx, &client, &self.urls, self.next_url, msg));
                         }
                         None => return, // mailbox dropped → engine gone → shut down
                     },
@@ -393,6 +333,62 @@ impl UpstreamActor {
             }
         }
     }
+}
+
+/// Answer one pull on the live connection, spawned so an in-flight fetch never
+/// stalls the live stream. The walk additionally takes the URL list and the actor's
+/// own cursor, so it visits every OTHER upstream and never re-asks the one that
+/// just missed.
+///
+/// A `Rotate` is not a pull and is handed back untouched: rotation is the actor
+/// loop's own decision (it breaks the connection), never a spawned task's.
+fn dispatch(
+    ctx: &Context,
+    client: &Arc<WsClient>,
+    urls: &[String],
+    next_url: usize,
+    msg: UpstreamMsg,
+) -> Option<oneshot::Sender<()>> {
+    match msg {
+        UpstreamMsg::GetFinalization { height, response } => {
+            let client = client.clone();
+            drop(
+                ctx.with_label("get_finalization")
+                    .spawn(move |_| async move {
+                        let _ = response
+                            .send(fetch_finalization(&client, Query::Height(height.get())).await);
+                    }),
+            );
+        }
+        UpstreamMsg::GetFinalizationEverywhere { height, response } => {
+            let client = client.clone();
+            let urls = urls.to_vec();
+            drop(
+                ctx.with_label("get_finalization_everywhere")
+                    .spawn(move |_| async move {
+                        let _ = response
+                            .send(walk_for_height(Some(&client), &urls, next_url, height).await);
+                    }),
+            );
+        }
+        UpstreamMsg::GetLatest { response } => {
+            let client = client.clone();
+            drop(ctx.with_label("get_latest").spawn(move |_| async move {
+                let _ = response.send(fetch_finalization(&client, Query::Latest).await);
+            }));
+        }
+        UpstreamMsg::GetEpochArtifact { epoch, response } => {
+            let client = client.clone();
+            drop(
+                ctx.with_label("get_epoch_artifact")
+                    .spawn(move |_| async move {
+                        let _ = response.send(fetch_epoch_artifact(&client, epoch).await);
+                    }),
+            );
+        }
+        UpstreamMsg::Rotate { response } => return Some(response),
+    }
+    None
 }
 
 /// Drain all immediately-queued mailbox messages after a `Rotate`: ACK + discard every
@@ -441,11 +437,7 @@ fn answer_while_disconnected(ctx: &Context, urls: &[String], next_url: usize, ms
             drop(
                 ctx.with_label("get_finalization_everywhere")
                     .spawn(move |_| async move {
-                        let _ = response.send(
-                            walk_for_height(None, &urls, next_url, height)
-                                .await
-                                .into_option(),
-                        );
+                        let _ = response.send(walk_for_height(None, &urls, next_url, height).await);
                     }),
             );
         }
@@ -567,36 +559,6 @@ async fn pull(client: &WsClient, query: Query) -> Pull {
 /// NOT fall back on `WsClientBuilder::default()`, whose 10 s connect timeout on
 /// the boot path costs a measured 2 heights × 10 s per dead URL of startup delay.
 const WALK_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(8);
-
-/// How a by-height walk ended. THE TWO NEGATIVES ARE DIFFERENT FACTS and the
-/// walk is the only place in the system that can tell them apart: it is what
-/// asked. Collapsing them is not a cosmetic loss — `dpos`'s crash-survivor
-/// recovery reads "nobody holds it" as local consensus data loss and tells the
-/// operator to re-sync the EL disk from a snapshot, which is irreversible. It may
-/// only ever be told that by a walk that actually got ANSWERS (R-131 review,
-/// `4.4а-Д-9`).
-enum WalkOutcome {
-    Got(Box<UpstreamFinalized>),
-    /// Every configured upstream ANSWERED, and none of them holds the height.
-    /// This — and only this — is evidence about the RECORD.
-    MissedEverywhere,
-    /// Not one configured upstream answered at all: unreachable, or a transport
-    /// failure on the live link. Evidence about the LINK, and about nothing else.
-    NoneAnswered,
-}
-
-impl WalkOutcome {
-    /// The mailbox channel is `Option`-typed ([`CertUpstream`] lives in the
-    /// consensus crate and is not this file's to widen), so the three-way verdict
-    /// collapses HERE — after the walk has NAMED which negative it is in the
-    /// operator's log.
-    fn into_option(self) -> Option<UpstreamFinalized> {
-        match self {
-            Self::Got(uf) => Some(*uf),
-            Self::MissedEverywhere | Self::NoneAnswered => None,
-        }
-    }
-}
 
 /// Ask every configured upstream for `height`, in order, until one serves it.
 ///
@@ -1058,10 +1020,10 @@ mod tests {
                 let answers = (
                     handle.get_latest().await.is_none(),
                     handle.get_finalization(Height::new(7)).await.is_none(),
-                    handle
-                        .get_finalization_everywhere(Height::new(7))
-                        .await
-                        .is_none(),
+                    matches!(
+                        handle.get_finalization_everywhere(Height::new(7)).await,
+                        WalkOutcome::MissedEverywhere | WalkOutcome::NoneAnswered
+                    ),
                     handle.get_epoch_artifact(3).await.is_none(),
                 );
                 // A `Rotate` that is not ACKed hangs `rotate().await` for exactly the

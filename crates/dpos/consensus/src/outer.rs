@@ -33,6 +33,7 @@ use commonware_consensus::{
 };
 use commonware_cryptography::{certificate::Provider as CertProvider, ed25519::PublicKey};
 use commonware_p2p::{utils::mux::MuxHandle, Blocker, Provider as PeerProvider, Receiver, Sender};
+use eyre::WrapErr as _;
 use tracing::{info, warn};
 
 /// A plane-owned `Muxer` broker handle shared across promotions. `register` takes
@@ -258,7 +259,7 @@ pub type MarshalMailbox = marshal::core::Mailbox<BlsScheme, Standard<OrderBlock>
 pub(crate) async fn init_finalized_blocks_archive<E>(
     context: &E,
     partition_prefix: &str,
-) -> FinalizedBlocksArchive<E>
+) -> eyre::Result<FinalizedBlocksArchive<E>>
 where
     E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork,
 {
@@ -290,7 +291,7 @@ where
         },
     )
     .await
-    .expect("init finalized blocks archive")
+    .map_err(|e| eyre::eyre!("init finalized blocks archive: {e}"))
 }
 
 /// Init the by-height finalizations (certificate) archive. Shared by the
@@ -302,7 +303,7 @@ pub(crate) async fn init_finalizations_archive<E>(
     context: &E,
     partition_prefix: &str,
     page_cache: CacheRef,
-) -> FinalizationsArchive<E>
+) -> eyre::Result<FinalizationsArchive<E>>
 where
     E: BufferPooler + Clock + CryptoRngCore + Spawner + Storage + Metrics + RNetwork,
 {
@@ -336,7 +337,7 @@ where
         },
     )
     .await
-    .expect("init finalizations archive")
+    .map_err(|e| eyre::eyre!("init finalizations archive: {e}"))
 }
 
 type ExecutorActor<E, BE, D, XC> = executor::Actor<E, BE, D, XC, MarshalMailbox>;
@@ -617,10 +618,13 @@ where
         let page_cache = CacheRef::from_pooler(&context, PAGE_CACHE_PAGE_SIZE, PAGE_CACHE_CAPACITY);
 
         let finalizations_by_height =
-            init_finalizations_archive(&context, &self.partition_prefix, page_cache.clone()).await;
+            init_finalizations_archive(&context, &self.partition_prefix, page_cache.clone())
+                .await
+                .wrap_err("outer engine: opening the marshal finalizations archive")?;
 
-        let finalized_blocks =
-            init_finalized_blocks_archive(&context, &self.partition_prefix).await;
+        let finalized_blocks = init_finalized_blocks_archive(&context, &self.partition_prefix)
+            .await
+            .wrap_err("outer engine: opening the marshal finalized_blocks archive")?;
 
         // One cross-epoch `FixedEpocher` + scheme provider, threaded into both
         // `marshal::Config` and `epoch_manager::Config` so no two subsystems can

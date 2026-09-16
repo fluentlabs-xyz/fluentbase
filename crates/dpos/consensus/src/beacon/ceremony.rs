@@ -1062,20 +1062,28 @@ impl DkgCeremony {
     /// derived over every mappable pinned body, not a locally held subset. On the
     /// dealing branch [`seal_dealings`](Self::seal_dealings) must have run first; a
     /// node resumed at or after the seal deadline is player-only and calls this
-    /// directly. The player is consumed either way, so this runs at most once.
+    /// directly. The player is consumed either way, so a second call answers
+    /// [`FinalizeError::PlayerConsumed`].
     pub fn finalize_over_pinned<R: CryptoRngCore>(
         &mut self,
         rng: &mut R,
         committee: &Set<PeerPubkey>,
         pinned: &BTreeMap<u8, B256>,
-    ) -> Result<(CeremonyOutput, Share), DkgError> {
+    ) -> Result<(CeremonyOutput, Share), FinalizeError> {
         let (logs, _missing) = self.scoped_pinned_logs(committee, pinned);
-        let player = self
-            .player
-            .take()
-            .expect("Agreed holds an unconsumed player");
-        player.finalize::<N3f1, ed25519::Batch>(rng, logs, &Sequential)
+        let player = self.player.take().ok_or(FinalizeError::PlayerConsumed)?;
+        Ok(player.finalize::<N3f1, ed25519::Batch>(rng, logs, &Sequential)?)
     }
+}
+
+/// Why [`DkgCeremony::finalize_over_pinned`] produced no share.
+#[derive(Debug, thiserror::Error)]
+pub enum FinalizeError {
+    /// The ceremony's player was already consumed by an earlier finalize.
+    #[error("the ceremony's player was already consumed")]
+    PlayerConsumed,
+    #[error(transparent)]
+    Dkg(#[from] DkgError),
 }
 
 /// Locally recompute this node's share for a finalized epoch from its journal,
@@ -1277,6 +1285,25 @@ mod tests {
 
     /// Two different nodes that finalize over the identical pinned set derive the
     /// identical `PK_E`, for the full set and for a proper subset.
+    /// The player is consumed by the first finalize; a second call over the same
+    /// ceremony answers an error rather than stopping the actor.
+    #[test]
+    fn a_second_finalize_over_a_consumed_player_is_an_error_not_a_panic() {
+        let mut rng = StdRng::seed_from_u64(0xF1);
+        let (committee, mut ceremonies) = run_to_all_sealed(0xF1);
+        let (first, cer) = ceremonies.iter_mut().next().expect("a node");
+        let pinned = pinned_over_recorded(cer, &committee);
+        cer.finalize_over_pinned(&mut rng, &committee, &pinned)
+            .expect("the first finalize");
+        assert!(
+            matches!(
+                cer.finalize_over_pinned(&mut rng, &committee, &pinned),
+                Err(FinalizeError::PlayerConsumed)
+            ),
+            "node {first}: a second finalize must answer PlayerConsumed"
+        );
+    }
+
     #[test]
     fn finalize_over_pinned_is_pure_in_the_finalized_set() {
         let mut rng = StdRng::seed_from_u64(101);

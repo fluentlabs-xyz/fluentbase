@@ -171,8 +171,8 @@ pub trait Beacon: Send + Sync {
     /// The core reconciled `reconciled` while its highest registered epoch is
     /// `entered_frontier`.
     ///
-    /// A default no-op: nothing on the beacon reacts to this any more. It is still
-    /// on the trait only because callers outside this module name it.
+    /// A default no-op; [`LiveBeacon`] runs the artifact store's retention on it,
+    /// because this edge is the one epoch clock both node classes drive.
     fn observe_epoch(&self, _reconciled: Epoch, _entered_frontier: Epoch) {}
 
     /// The cert-inlet ingested a verified certificate for `epoch`.
@@ -446,6 +446,10 @@ where
         Randomness::artifact_bytes(self, epoch)
     }
 
+    fn observe_epoch(&self, reconciled: Epoch, entered_frontier: Epoch) {
+        Randomness::observe_epoch(self, reconciled, entered_frontier)
+    }
+
     fn subscribe(&self) -> broadcast::Receiver<BeaconEvent> {
         Randomness::events(self).subscribe()
     }
@@ -548,6 +552,10 @@ pub(super) trait Randomness: Send + Sync {
     fn artifact_bytes(&self, _epoch: u64) -> Option<Vec<u8>> {
         None
     }
+
+    /// The core's epoch edge, see [`Beacon::observe_epoch`]. Defaults to a no-op;
+    /// only a provider that holds an artifact store has anything to age out.
+    fn observe_epoch(&self, _reconciled: Epoch, _entered_frontier: Epoch) {}
 
     /// The late-`Refused` channel's receiver, at most once. Defaults to "this
     /// provider never files a late verdict".
@@ -1288,6 +1296,43 @@ mod tests {
         );
     }
 
+    /// The core's epoch edge is where the artifact store ages out, on both node
+    /// classes: mints at {2, 5, 55} with the frontier at 60 keep {5, 55} (52 resolves
+    /// to 5), and the live mint of a stable committee survives any frontier.
+    #[test]
+    fn the_epoch_edge_retains_the_artifacts_the_window_resolves_to() {
+        let mints = super::super::artifact::MintFixture::new();
+        for (mint, seed) in [(2u64, 0xA1u64), (5, 0xA2), (55, 0xA3)] {
+            let (_, _, _, outcome, _) = signer_fixture(Epoch::new(seed));
+            mints.mint(mint, outcome);
+        }
+        let randomness = LiveBeacon::build(LiveBeaconConfig {
+            seeds: super::super::seed_index::SeedIndex::new(),
+            keys: mints.keys.clone(),
+            ceremony: keyless_ceremony(),
+            acquire: None,
+            metrics: BeaconMetrics::default(),
+            chain_id: 1,
+            artifacts: mints.artifacts.clone(),
+            geometry: watch::channel(Some((0, 1))).1,
+        });
+        assert_eq!(mints.artifacts.epochs(), vec![2, 5, 55]);
+
+        Beacon::observe_epoch(&*randomness, Epoch::new(60), Epoch::new(60));
+        assert_eq!(
+            mints.artifacts.epochs(),
+            vec![5, 55],
+            "the mint no epoch in the window resolves to must go, the others stay"
+        );
+
+        Beacon::observe_epoch(&*randomness, Epoch::new(10_000), Epoch::new(10_000));
+        assert_eq!(
+            mints.artifacts.epochs(),
+            vec![55],
+            "on a committee stable since 55 the live mint outlives every window"
+        );
+    }
+
     /// The misconfiguration safety net: a keypair the committee does not contain
     /// gets a verify-only scheme, not a withhold. The caller still spawns on it
     /// (and aborts on its next reconcile), which is the behaviour the engine used
@@ -1742,9 +1787,10 @@ pub(crate) struct LiveBeacon {
     reported_refusal: Arc<Mutex<std::collections::BTreeSet<u64>>>,
     metrics: BeaconMetrics,
     chain_id: u64,
-    /// The per-epoch artifact store, for [`Beacon::artifact_bytes`] alone. Held as
-    /// the store and re-encoded per call: serving is a rare off-path request, and a
-    /// second copy of every artifact in RAM would be paid on every node forever.
+    /// The per-epoch artifact store, for [`Beacon::artifact_bytes`] and the
+    /// retention on [`Beacon::observe_epoch`]. Held as the store and re-encoded per
+    /// call: serving is a rare off-path request, and a second copy of every
+    /// artifact in RAM would be paid on every node forever.
     artifacts: ArtifactStore,
     /// The plane's frozen `(dpos_activation, epoch_interval)`, read only to name
     /// the [`WithheldReason::GeometryUnfrozen`] state. `None` means no ceremony has
@@ -2104,6 +2150,16 @@ impl Randomness for LiveBeacon {
         self.artifacts
             .get(epoch)
             .map(|a| super::artifact::encode_artifact(&a))
+    }
+
+    /// The artifact store's one retention owner, on both node classes: the
+    /// follower has no `DkgActor` to sweep from, and the frontier the core
+    /// reports is the same epoch clock either way.
+    fn observe_epoch(&self, _reconciled: Epoch, entered_frontier: Epoch) {
+        self.artifacts.retain_mints_for_window(
+            entered_frontier.get(),
+            crate::SCHEME_RETENTION_EPOCHS as u64,
+        );
     }
 
     fn faults(&self) -> Option<mpsc::UnboundedReceiver<DataFault>> {

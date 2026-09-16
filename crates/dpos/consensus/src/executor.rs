@@ -11327,9 +11327,11 @@ mod tests {
                     "halt-liveness",
                     page_cache.clone(),
                 )
-                .await;
-                let blocks =
-                    crate::outer::init_finalized_blocks_archive(&ctx, "halt-liveness").await;
+                .await
+                .expect("init finalizations archive");
+                let blocks = crate::outer::init_finalized_blocks_archive(&ctx, "halt-liveness")
+                    .await
+                    .expect("init finalized blocks archive");
                 let module = crate::committee::testing::SchemeCommittee::new({
                     let verifier = c.verifier.clone();
                     move |_| Some(verifier.clone())
@@ -11479,9 +11481,11 @@ mod tests {
                     "seed-below-floor",
                     page_cache.clone(),
                 )
-                .await;
-                let blocks =
-                    crate::outer::init_finalized_blocks_archive(&ctx, "seed-below-floor").await;
+                .await
+                .expect("init finalizations archive");
+                let blocks = crate::outer::init_finalized_blocks_archive(&ctx, "seed-below-floor")
+                    .await
+                    .expect("init finalized blocks archive");
                 let module = crate::committee::testing::SchemeCommittee::new({
                     let verifier = c.verifier.clone();
                     move |_| Some(verifier.clone())
