@@ -87,6 +87,8 @@ fn test_evm_create_large_wasm_contract() {
 
 #[test]
 fn test_locals_amplification_find_limit() {
+    // Every function fills the whole rWasm value-stack window with locals, so this deploys the
+    // largest frames the compiler accepts, `num_funcs` times over.
     let test_cases: &[(u32, bool)] = &[
         (1, true),
         (10, true),
@@ -145,15 +147,27 @@ fn leb128(mut n: u32) -> Vec<u8> {
     out
 }
 
-/// Build WASM module with N functions, each with 32767 i64 locals
+/// Number of `i64` locals that exactly fill the rWasm value-stack window of one frame.
+///
+/// An `i64` local takes two slots. Since rwasm 0.6.0 the compiler rejects a function whose frame
+/// needs more than `N_MAX_STACK_SIZE` slots (`CompilationError::StackHeightExceeded`), so this is
+/// the largest locals count that still deploys.
+const MAX_I64_LOCALS_PER_FUNC: u32 = (rwasm::N_MAX_STACK_SIZE / 2) as u32;
+
+/// Build WASM module with N functions, each with `MAX_I64_LOCALS_PER_FUNC` i64 locals
 fn build_max_locals_module(num_funcs: u32) -> Vec<u8> {
     let num_funcs_leb = leb128(num_funcs);
 
     let func_section_size = num_funcs_leb.len() + num_funcs as usize;
     let func_section_size_leb = leb128(func_section_size as u32);
 
-    // Each function body: size=6, 1 local decl, 32767 (0xFF 0xFF 0x01), i64, end
-    let body: &[u8] = &[0x06, 0x01, 0xff, 0xff, 0x01, 0x7e, 0x0b];
+    // Each function body: size, 1 local decl, MAX_I64_LOCALS_PER_FUNC, i64, end
+    let mut body = vec![0x01];
+    body.extend_from_slice(&leb128(MAX_I64_LOCALS_PER_FUNC));
+    body.extend_from_slice(&[0x7e, 0x0b]);
+    let mut sized_body = leb128(body.len() as u32);
+    sized_body.extend_from_slice(&body);
+    let body = sized_body.as_slice();
     let code_section_size = num_funcs_leb.len() + (num_funcs as usize * body.len());
     let code_section_size_leb = leb128(code_section_size as u32);
 
@@ -182,6 +196,23 @@ fn build_max_locals_module(num_funcs: u32) -> Vec<u8> {
     }
 
     wasm
+}
+
+/// A frame above the rWasm value-stack window is rejected when the contract is deployed.
+///
+/// The function declares 32767 `i64` locals, 65534 slots against the 8192-slot window. Before
+/// rwasm 0.6.0 such a module compiled and every call into it trapped with `StackOverflow`; the
+/// compiler now reports `StackHeightExceeded`, so the deployment fails instead of installing code
+/// that can never run.
+#[test]
+fn test_locals_above_stack_window_fail_to_deploy() {
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    let result =
+        ctx.deploy_evm_tx_with_gas_result(Address::ZERO, SINGLE_FUNC_MAX_LOCALS_WASM.into());
+    assert!(
+        result.is_err(),
+        "a 65534-slot frame must be rejected at deploy time"
+    );
 }
 
 /// Single function with 32767 i64 locals
