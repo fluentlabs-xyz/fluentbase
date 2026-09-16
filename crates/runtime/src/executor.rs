@@ -413,8 +413,14 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
             }
         } else {
             let engine = ExecutionEngine::acquire_shared();
-            // We always execute untrusted contracts with rWasm VM
-            let strategy = StrategyDefinition::Rwasm { engine, module };
+            // We always execute untrusted contracts with rWasm VM. Contracts are routed by state
+            // (`deploy`/`main` through the state router), so they carry no compile-time entrypoint
+            // name and accept whichever name the contract runtime resolves.
+            let strategy = StrategyDefinition::Rwasm {
+                engine,
+                module,
+                entrypoint_name: None,
+            };
             let runtime =
                 ContractRuntime::new(strategy, self.import_linker.clone(), ctx, fuel_limit);
             // This is an extraordinary case where we fail during resource init inside the entrypoint,
@@ -666,7 +672,11 @@ mod tests {
         let module = RwasmModule::default();
         let ctx = RuntimeContext::default();
         let strategy_runtime = ContractRuntime::new(
-            StrategyDefinition::Rwasm { module, engine },
+            StrategyDefinition::Rwasm {
+                module,
+                engine,
+                entrypoint_name: None,
+            },
             executor.import_linker.clone(),
             ctx,
             None,
@@ -856,6 +866,7 @@ mod tests {
             StrategyDefinition::Rwasm {
                 module,
                 engine: ExecutionEngine::acquire_shared(),
+                entrypoint_name: None,
             },
             executor.import_linker.clone(),
             RuntimeContext::default(),
