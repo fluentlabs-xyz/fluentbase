@@ -1,71 +1,31 @@
 //! Durable backing for the in-memory [`SeedIndex`](crate::beacon::seed_index::SeedIndex):
-//! a `Round → σ` store plus the startup rehydration that refills the RAM map
-//! from it.
+//! a `Round → σ` store plus the startup rehydration that refills the RAM map from
+//! it.
 //!
-//! ## Why the durable write may be asynchronous when the RAM write may not
+//! `SeedIndex::record` must stay synchronous — never behind an await, never in a
+//! spawned task. The voter awaits `report()` inline before advancing the view, so a
+//! synchronous record happens-before the next view exists; the block just notarized
+//! is finalized moments later and derived from σ at that same round, and a miss is a
+//! held height waiting on the beacon's wake-up rather than a wrong derive. Durability
+//! is only ever read by a later process, so it may lag: the store hands each fresh
+//! record to [`spawn_writer`] over a non-blocking unbounded channel and all disk work
+//! happens on the spawned task.
 //!
-//! `SeedIndex::record` is ORDERING-CRITICAL (`crate::spec_exec`, the comment at
-//! `spec_exec.rs:56-85` is where that contract is derived): it must stay
-//! SYNCHRONOUS — never behind an await, never in a spawned task. The justification
-//! this paragraph used to carry is DEAD: it cited the certify gate's
-//! `false`-on-missing-seed verdict, and the gate went with `certify.rs`. What the
-//! synchronous record protects now is the propose path's LIVENESS. The voter
-//! awaits `report()` inline before it advances the view, so a record made
-//! synchronously there happens-before the next view exists; the block just
-//! notarized is finalized moments later and the executor derives it from σ at that
-//! same round, and a miss is not a wrong derive but a HELD height waiting on the
-//! beacon's wake-up. Deferring the record would lose that race against the very
-//! next finalization and put the whole execution pipeline one wake behind
-//! consensus.
+//! One `commonware_storage::ordinal::Ordinal<E, BlsSignature>`, indexed by the packed
+//! round (see [`index_of`]). `Ordinal` writes `value ‖ crc32(value)` and verifies the
+//! CRC on every read, so σ carries its own integrity check with no hand-rolled tag.
 //!
-//! The OTHER half of the old rule — "and precede the executor send" — is NOT
-//! load-bearing, and `spec_exec.rs:77-85` says why: the executor consults the
-//! index only on a spin-round mismatch and then for the CANONICAL round, one an
-//! earlier report filed. Both statements are synchronous anyway, so the order
-//! between them is unobservable.
-//!
-//! That contract constrains *in-RAM visibility within this process*. Durability
-//! is only ever read by a LATER process, after a restart, so it is free to lag.
-//! The store therefore hands each fresh record to [`spawn_writer`] over a
-//! non-blocking unbounded channel and returns immediately; all disk work happens
-//! on the spawned task.
-//!
-//! ## Layout
-//!
-//! One `commonware_storage::ordinal::Ordinal<E, BlsSignature>`, indexed by the
-//! packed round (see [`index_of`]). `Ordinal` writes `value ‖ crc32(value)` at
-//! `index * RECORD_SIZE` and verifies that CRC on every read, so σ carries its
-//! own integrity check with no hand-rolled tag and no hand-rolled codec.
-//!
-//! ## Why not `journal::segmented::fixed`
-//!
-//! It was the original pick and it is the wrong shape for this data. Two
-//! measured reasons:
-//!
-//! 1. **Blast radius.** The fixed journal's replay stream marks a blob `done` at
-//!    the first decode error and abandons the rest of it
-//!    (`journal/segmented/fixed.rs` replay unfold), and the paged buffer under
-//!    it checksums whole 4 KiB pages: a page that fails its CRC is dropped
-//!    wholesale, and if it is the last page the blob is silently truncated to
-//!    the last valid one (`runtime/.../paged/append.rs::read_last_valid_page`).
-//!    Measured on this code before the move: 8 rounds appended into one section,
-//!    one bit flipped in record #3, **0 of 8 survived the reopen and the replay
-//!    stream yielded no error at all**. Section = epoch, so one bad byte cost a
-//!    whole epoch of σ, silently. `Ordinal` drops exactly the one record whose
-//!    CRC fails and keeps scanning (`ordinal/storage.rs` interval rebuild).
-//! 2. **Lookup shape.** `Ordinal` gives O(1) point lookup plus `has` /
-//!    `next_gap` / `ranges` — the "which rounds can I serve, which am I missing"
-//!    API the seed transport step needs — where the journal only offers a scan.
-//!
-//! ## Retention
-//!
-//! Expressed in ROUNDS, not blobs. Epoch length is not a constant (production
-//! epochs are 86 400 blocks, devnet epochs are hundreds), so "keep the last K
+//! Retention is expressed in rounds, not blobs: epoch length is not a constant
+//! (production epochs are 86 400 blocks, devnet epochs hundreds), so "keep the last K
 //! blobs" would under-retain on short epochs and over-retain on long ones.
-//! [`SeedJournal::prune_to_window`] walks the interval map newest-first
-//! accumulating range lengths and keeps everything from the EPOCH at which the
-//! accumulation first reaches the target. Right after an epoch rolls the new
-//! epoch holds one round, so the previous epoch stays until the window refills.
+//! [`SeedJournal::prune_to_window`] walks the interval map newest-first, keeping
+//! everything from the epoch at which the accumulation first reaches the target.
+//!
+//! A segmented journal is the wrong shape for this data: its replay stream abandons
+//! the rest of a blob at the first decode error and its 4 KiB page checksums drop a
+//! whole page, so one bad byte can cost an epoch of σ silently. `Ordinal` drops
+//! exactly the one record whose CRC fails and keeps scanning, and offers point lookup
+//! plus `ranges`, which the replay and terminal reads need.
 
 use std::{
     collections::BTreeMap,
@@ -80,25 +40,16 @@ use fluentbase_bls::BlsSignature;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tracing::{info, warn};
 
-/// Bits of the packed store index reserved for `view`.
-///
-/// **Why a packing is needed at all:** `Ordinal` is indexed by a bare `u64`, and
-/// the key here is a `Round { epoch, view }`. `view` is NOT globally increasing
-/// in this repo — a separate consensus engine is spawned per epoch
-/// (`crate::engine`, partition `consensus_epoch_{n}`) and each voter starts at
-/// view 1 — so `view` alone would collide across epochs.
+/// Bits of the packed store index reserved for `view`. `Ordinal` is indexed by a bare
+/// `u64` and the key is a `Round { epoch, view }`; a separate consensus engine is
+/// spawned per epoch and each voter starts at view 1, so `view` alone would collide.
 const VIEW_BITS: u32 = 32;
 
-/// Mask for the view half of a packed index.
 const VIEW_MASK: u64 = (1u64 << VIEW_BITS) - 1;
 
-/// Blob granularity.
-///
-/// **INVARIANT: `ITEMS_PER_BLOB == 1 << VIEW_BITS`, so blob section == epoch and
-/// a blob can never straddle an epoch boundary.** `Ordinal::prune(min)` removes
-/// whole blobs (`section < min / items_per_blob`), so this is exactly what makes
-/// `prune(oldest_kept_epoch << VIEW_BITS)` drop whole prior epochs and nothing
-/// else — the same granularity the section-per-epoch journal had. Changing
+/// `ITEMS_PER_BLOB == 1 << VIEW_BITS`, so blob section == epoch and no blob straddles
+/// an epoch boundary. `Ordinal::prune` removes whole blobs, which is what makes
+/// `prune(epoch << VIEW_BITS)` drop whole prior epochs and nothing else; changing
 /// either constant without the other silently changes what `prune` deletes.
 const ITEMS_PER_BLOB: NonZeroU64 = NZU64!(4_294_967_296);
 const _: () = assert!(ITEMS_PER_BLOB.get() == 1u64 << VIEW_BITS);
@@ -123,11 +74,10 @@ const MAX_BATCH: usize = 256;
 pub enum Error {
     #[error("seed store: {0}")]
     Store(#[from] OrdinalError),
-    /// The round cannot be packed into the `u64` store index. Loud by
-    /// construction: a silent wrap would file σ under a DIFFERENT round, and σ
-    /// is an execution input (`prev_randao = keccak256(σ)` lands in `mix_hash`),
-    /// so a σ served for the wrong round moves the state root. Losing the record
-    /// is a store miss; mis-filing it is a fork.
+    /// The round cannot be packed into the `u64` store index. A silent wrap would
+    /// file σ under a different round, and σ is an execution input
+    /// (`prev_randao = keccak256(σ)` lands in `mix_hash`), so a mis-filed σ is a fork
+    /// while a lost record is only a miss.
     #[error(
         "round epoch={epoch} view={view} is not representable in the seed store index: \
          both halves must fit in {VIEW_BITS} bits"
@@ -135,20 +85,12 @@ pub enum Error {
     UnrepresentableRound { epoch: u64, view: u64 },
 }
 
-/// Pack a [`Round`] into the store's `u64` index: `epoch << 32 | view`.
+/// Pack a [`Round`] into the store's `u64` index: `epoch << VIEW_BITS | view`.
+/// Order-preserving with respect to `Round`'s `Ord` (epoch first, then view), which
+/// lets the newest-first walks read the interval map directly.
 ///
-/// Order-preserving with respect to `Round`'s own `Ord` (epoch first, then
-/// view), which is what lets the newest-first walk in [`SeedJournal::window_start`]
-/// and [`SeedJournal::replay_window`] read the interval map directly.
-///
-/// Refuses rather than wraps when either half exceeds 32 bits — see
-/// [`Error::UnrepresentableRound`]. The bound is not tight in practice:
-/// production `epochBlockInterval` is 86 400 blocks
-/// (`staking-reader/src/epoch_transition.rs` `PROD_INTERVAL`), so an epoch is
-/// ~86 400 views plus whatever nullified views it accumulates — five orders of
-/// magnitude below 2^32. The on-chain interval is a `uint32`, so even the
-/// largest settable epoch would need ~2^32 views (≈136 years at 1 s) to reach
-/// the bound.
+/// Refuses rather than wraps when either half exceeds `VIEW_BITS`; the bound is not
+/// tight in practice, since an epoch accumulates far fewer than 2^32 views.
 fn index_of(round: Round) -> Result<u64, Error> {
     let epoch = round.epoch().get();
     let view = round.view().get();
@@ -168,8 +110,8 @@ fn round_of(index: u64) -> Round {
 /// blob the other still holds open.
 pub struct SeedJournal<E: Storage + Metrics + Clock + BufferPooler> {
     store: Ordinal<E, BlsSignature>,
-    /// Highest epoch written to so far, so pruning runs only when an epoch
-    /// actually rolls (blob == epoch ⇒ `prune` is a no-op otherwise).
+    /// Highest epoch written so far, so pruning runs only when an epoch actually
+    /// rolls (blob == epoch, so `prune` is otherwise a no-op).
     newest_epoch: Option<u64>,
 }
 
@@ -213,11 +155,8 @@ impl<E: Storage + Metrics + Clock + BufferPooler> SeedJournal<E> {
 
     /// Load the newest `retention` entries, oldest-first.
     ///
-    /// A record whose CRC failed is not in the interval map at all — `Ordinal`
-    /// excludes it during the startup rebuild and keeps scanning the blob — so it
-    /// is simply absent here, costing ONE round rather than the rest of its
-    /// epoch. That is the whole reason this store is an `Ordinal` and not a
-    /// segmented journal (see the module docs).
+    /// A record whose CRC failed is absent from the interval map rather than
+    /// truncating the read, so it costs one round and not the rest of its epoch.
     pub async fn replay_window(
         &self,
         retention: usize,
@@ -225,10 +164,9 @@ impl<E: Storage + Metrics + Clock + BufferPooler> SeedJournal<E> {
         if retention == 0 {
             return Ok(Vec::new());
         }
-        // Walk the interval map newest-first, collecting at most `retention`
-        // indices. Ranges — not indices — are what is materialised, and a
-        // contiguous range is one unbroken run of rounds, so this is a handful
-        // of entries even for a full epoch.
+        // Walk the interval map newest-first, collecting at most `retention` indices;
+        // ranges, not indices, are materialised, so this is a handful of entries even
+        // for a full epoch.
         let ranges: Vec<(u64, u64)> = self.store.ranges().collect();
         let mut indices: Vec<u64> = Vec::with_capacity(retention.min(4096));
         'walk: for &(start, end) in ranges.iter().rev() {
@@ -251,10 +189,9 @@ impl<E: Storage + Metrics + Clock + BufferPooler> SeedJournal<E> {
         for index in indices {
             match self.store.get(index).await {
                 Ok(Some(signature)) => loaded.push((round_of(index), signature)),
-                // The interval map said the index is present, so both arms mean
-                // the record went bad between the rebuild and now. Skip it: a
-                // missing σ is a store miss, which is the pre-durability
-                // behaviour, and never a wrong σ.
+                // The interval map said the index is present, so both arms mean the
+                // record went bad since the rebuild. Skip it: a missing σ is a store
+                // miss, never a wrong σ.
                 Ok(None) => rejected += 1,
                 Err(e) => {
                     rejected += 1;
@@ -277,13 +214,12 @@ impl<E: Storage + Metrics + Clock + BufferPooler> SeedJournal<E> {
         Ok(())
     }
 
-    /// The lowest index that must be kept: the first index of the epoch holding
-    /// the `retention`-th newest record, or `None` when the store is empty.
+    /// The lowest index that must be kept: the first index of the epoch holding the
+    /// `retention`-th newest record, or `None` when the store is empty.
     ///
-    /// A contiguous index range never straddles an epoch, because consecutive
-    /// epochs are `1 << VIEW_BITS` apart and no epoch reaches that many views
-    /// ([`index_of`] refuses one that would), so `start >> VIEW_BITS` is the
-    /// range's epoch.
+    /// A contiguous index range never straddles an epoch — consecutive epochs are
+    /// `1 << VIEW_BITS` apart and `index_of` refuses more views than that — so
+    /// `start >> VIEW_BITS` is the range's epoch.
     fn window_start(&self, retention: u64) -> Option<u64> {
         let mut accumulated = 0u64;
         let mut oldest_epoch = None;
@@ -297,20 +233,15 @@ impl<E: Storage + Metrics + Clock + BufferPooler> SeedJournal<E> {
         oldest_epoch.map(|epoch| epoch << VIEW_BITS)
     }
 
-    /// The HIGHEST record of every epoch the store still holds, oldest epoch
-    /// first.
+    /// The highest record of every epoch the store still holds, oldest epoch first.
     ///
-    /// The rehydration counterpart of the index's terminal-round eviction rule, and the reason
-    /// it is a separate read: [`replay_window`](Self::replay_window) walks
-    /// newest-first and stops at `retention` RECORDS, so once the current epoch
-    /// is past that count the PREVIOUS epoch's terminal round is not in the
-    /// replayed set — and that is precisely the round a Signer restarting
-    /// mid-epoch needs. The datum is on disk regardless: `prune_to_window` is
-    /// epoch-granular and keeps E-1 for all of E.
+    /// Separate from [`replay_window`](Self::replay_window), which stops at `retention`
+    /// records and so can miss the previous epoch's terminal round — the round a Signer
+    /// restarting mid-epoch needs. The datum is on disk regardless, because
+    /// `prune_to_window` keeps E-1 for all of E.
     ///
-    /// Bounded by construction: one `get` per retained epoch, and `ranges` is a
-    /// handful of entries even for a full epoch. Callable only while `open`
-    /// still owns the journal — this is NOT a per-request read path.
+    /// Bounded by construction (one `get` per retained epoch), and callable only while
+    /// `open` still owns the journal.
     pub async fn terminal_per_epoch(&self) -> Vec<(Round, BlsSignature)> {
         // `ranges` is ascending and a range never spans two epochs (blob section
         // == epoch), so the last range of each epoch ends on that epoch's highest
@@ -336,9 +267,8 @@ impl<E: Storage + Metrics + Clock + BufferPooler> SeedJournal<E> {
         out
     }
 
-    /// Epochs the store still holds records for, oldest-first. Used by the
-    /// pruning tests; also the natural shape for any future "what can I serve"
-    /// query.
+    /// Epochs the store still holds records for, oldest-first; used by the pruning
+    /// tests.
     #[cfg(test)]
     fn retained_epochs(&self) -> Vec<u64> {
         let mut epochs: Vec<u64> = self.store.ranges().map(|(s, _)| s >> VIEW_BITS).collect();
@@ -349,21 +279,12 @@ impl<E: Storage + Metrics + Clock + BufferPooler> SeedJournal<E> {
 
 /// Open the durable seed store, replay its window, and join it to a RAM map.
 ///
-/// The mirror of [`artifact::open_mint_memo`](crate::beacon::artifact::open_mint_memo)
-/// (and of the deleted key journal's `open` before it), and it exists for the same
-/// reason: assembly is knowledge about this store, so it belongs to this store. The caller previously spelled init → replay → channel →
-/// spawn by hand and had to supply `retention` TWICE, once to the replay and once
-/// to the writer, from two independent reads of the same constant. Nothing made
-/// the two agree. Here it is one argument, used for both.
+/// `retention` is one argument used for both the replay and the writer, so the two
+/// cannot disagree.
 ///
-/// `writer_context` MUST be a SIBLING of `journal_context`, never a clone: the
-/// deterministic runtime panics on a duplicate metric registered under the same
-/// label, and both halves register store metrics.
-///
-/// Unlike the key store there is no empty-partition arm. That store has one
-/// because a RAM-only key map is the pre-durability behaviour tests run on; this
-/// one is only ever built by [`crate::beacon::plane`], which always has a
-/// partition. Add the arm when a caller needs it, not before.
+/// `writer_context` MUST be a sibling of `journal_context`, never a clone: the
+/// deterministic runtime panics on a duplicate metric under the same label, and both
+/// halves register store metrics.
 pub async fn open<E>(
     journal_context: E,
     writer_context: E,
@@ -384,10 +305,9 @@ where
         entries = rehydrated.len(),
         "rehydrated the seed store from disk"
     );
-    // Read BEFORE the journal is moved into the writer task — this is the one
-    // point in the process where it is still reachable for reading.
-    // Infallible by construction: an unreadable record is skipped the same way
-    // the window replay skips one — a missing σ is a store miss, never a wrong σ.
+    // Read before the journal is moved into the writer task, the one point where it is
+    // still reachable for reading. An unreadable record is skipped like the window
+    // replay does — a missing σ is a store miss, never a wrong σ.
     let terminals = journal.terminal_per_epoch().await;
     tracing::info!(
         epochs = terminals.len(),
@@ -400,28 +320,18 @@ where
 
 /// Drive a [`SeedJournal`] from the store's record channel.
 ///
-/// Each wakeup drains everything already queued, writes the batch, and issues
-/// ONE sync for it. In steady state (1 round/s) that is one fsync per second of a
-/// 52-byte write; under a catch-up burst the batching makes the fsync rate
-/// self-limiting. The unsynced window is therefore bounded by one drain.
+/// Each wakeup drains everything queued, writes the batch, and issues one sync, so the
+/// unsynced window is bounded by one drain.
 ///
-/// ## What the returned handle guarantees, and what it does not
+/// `recv` yields every buffered item before returning `None`, so once the last
+/// [`SeedIndex`](crate::beacon::seed_index::SeedIndex) clone drops, the loop makes a
+/// final write-and-sync pass before exiting: awaiting the returned [`Handle`] waits for
+/// the tail to be on disk, which the node's shutdown path relies on. It is not a
+/// supervision handle — its resolution means the writer finished, not that something
+/// died.
 ///
-/// `UnboundedReceiver::recv` yields every buffered item before it returns `None`,
-/// so once the LAST [`SeedIndex`](crate::beacon::seed_index::SeedIndex) clone drops
-/// (dropping the sender) this loop makes one final pass — write the remainder,
-/// sync it — and only then exits. Awaiting the returned [`Handle`] therefore
-/// waits for the tail to be ON DISK, and the node's graceful-shutdown path does
-/// exactly that (`crates/node/src/dpos.rs`, `drain_shutdown_tasks`) after the
-/// engine that owns the store is down.
-///
-/// The handle is NOT a supervision handle: its resolution means "the writer
-/// finished its work", the opposite of the `supervised` vec's "something died,
-/// bring the node down". Do not conflate the two.
-///
-/// What is still lost: a hard kill (SIGKILL, power cut) and a drain that exceeds
-/// the shutdown timeout. Both degrade to store MISSES — the pre-4.1 behaviour
-/// after every restart — never to a wrong σ.
+/// A hard kill or a drain that exceeds the shutdown timeout still loses the tail,
+/// which degrades to store misses and never to a wrong σ.
 #[must_use = "the returned handle must be awaited on shutdown or the tail is lost"]
 pub fn spawn_writer<E>(
     context: E,
@@ -453,9 +363,9 @@ where
             metrics::counter!("dpos_seed_journal_appended_total").increment(appended);
             if let Err(e) = journal.sync().await {
                 metrics::counter!("dpos_seed_journal_sync_failed_total").increment(1);
-                // The shutdown drain re-syncs, but a sync that FAILS is not
-                // rescued by waiting for it — this batch is at risk on ANY exit,
-                // clean or not, until a later sync of the same blob succeeds.
+                // The shutdown drain re-syncs, but a failed sync is not rescued by
+                // waiting — this batch is at risk on any exit until a later sync of the
+                // same blob succeeds.
                 warn!(?e, "seed store sync failed; this batch is at risk on exit");
             }
             if rolled {
@@ -486,8 +396,8 @@ mod tests {
     /// On-disk width of one `Ordinal` record: the value plus its CRC32.
     const RECORD_SIZE: u64 = <BlsSignature as FixedSize>::SIZE as u64 + 4;
 
-    /// A distinct, valid signature per round. `BlsSignature` is a curve point, so
-    /// it cannot be fabricated from arbitrary bytes — sign with a per-round key.
+    /// A distinct, valid signature per round; `BlsSignature` is a curve point, so sign
+    /// with a per-round key rather than fabricating bytes.
     fn sig_for(round: Round) -> BlsSignature {
         let mut rng = StdRng::seed_from_u64(round.epoch().get() << 32 | round.view().get());
         ops::sign_message::<MinSig>(&Private::random(&mut rng), b"ns", b"seed-journal-test")
@@ -497,13 +407,10 @@ mod tests {
         Round::new(Epoch::new(0), View::new(view))
     }
 
-    // WHY THE PIN NEEDS ITS OWN READ. `replay_window` walks newest-first and stops
-    // at `retention` RECORDS, so once the newer epoch is past that count the older
-    // epoch's terminal round is not in the replayed set — and that is exactly the
-    // round a Signer restarting mid-epoch asks for. The datum is on disk either
-    // way (`prune_to_window` is epoch-granular), so this is a rehydration gap and
-    // `terminal_per_epoch` is what closes it. Asserted with a TINY retention so
-    // the count bound bites without writing 4096 records.
+    // `replay_window` stops at `retention` records, so once the newer epoch is past
+    // that count the older epoch's terminal round is not in the replayed set — the
+    // round a Signer restarting mid-epoch asks for. `terminal_per_epoch` closes that
+    // gap. A tiny retention makes the count bound bite without writing 4096 records.
     #[test]
     fn the_per_epoch_terminal_is_readable_after_the_window_has_moved_past_it() {
         deterministic::Runner::default().start(|ctx| async move {
@@ -520,9 +427,8 @@ mod tests {
                 journal.append(r, sig_for(r)).await.expect("append");
             }
             journal.sync().await.expect("sync");
-            // The restart is the claim: both reads must answer from a `ranges()`
-            // map rebuilt by a disk scan, not from the handle that wrote the
-            // records. `open` reads the journal at exactly this point.
+            // The restart is the claim: both reads must answer from a `ranges()` map
+            // rebuilt by a disk scan, not the handle that wrote the records.
             drop(journal);
 
             let reopened = SeedJournal::init(ctx.with_label("boot2"), "seeds".into())
@@ -550,11 +456,9 @@ mod tests {
         });
     }
 
-    // The whole loop, end to end and through the real writer task:
-    //   SeedIndex::record  →  channel  →  spawn_writer  →  store + fsync
-    //   →  restart  →  replay_window  →  SeedIndex::with_persistence  →  lookup
-    // This is the claim Band 4.1 exists to make, so it is asserted against the
-    // production path rather than against the store API directly.
+    // The whole loop end to end through the real writer task: record → channel →
+    // spawn_writer → store + fsync → restart → replay_window → with_persistence →
+    // lookup, against the production path rather than the store API directly.
     #[test]
     fn a_recorded_seed_reaches_disk_through_the_writer_and_survives_a_restart() {
         deterministic::Runner::default().start(|ctx| async move {
@@ -568,9 +472,9 @@ mod tests {
             for r in &rounds {
                 store.record(VerifiedSeed::from_journal(*r, sig_for(*r)));
             }
-            // Drop the store so the channel closes; the writer drains what is
-            // queued and exits, which is also the shutdown path in production —
-            // where the node likewise AWAITS this handle rather than sleeping.
+            // Drop the store so the channel closes; the writer drains what is queued
+            // and exits — the production shutdown path, which awaits this handle rather
+            // than sleeping.
             drop(store);
             writer.await.expect("writer exits cleanly");
 
@@ -598,21 +502,13 @@ mod tests {
         });
     }
 
-    /// The shutdown contract `crates/node/src/dpos.rs::drain_shutdown_tasks`
-    /// leans on: records QUEUED BUT NOT YET WRITTEN when the last sender drops
-    /// are still written and fsynced before the writer's handle resolves.
+    /// The shutdown contract: records queued but not yet written when the last sender
+    /// drops are still written and fsynced before the writer's handle resolves.
     ///
-    /// Nothing sleeps here, deliberately — the `.await` of the handle IS the
-    /// assertion, and it is the same await the node performs. Nothing between
-    /// `spawn_writer` and `drop(store)` yields, so the writer task has not been
-    /// polled even once by then: every record below is still sitting in the
-    /// channel, i.e. this is the tail case and not a lucky steady state.
-    ///
-    /// The reopen also pins the SYNC, not just the write: the whole 32-record
-    /// tail (32 × 52 B) fits inside `SEED_WRITE_BUFFER`, and the deterministic
-    /// runtime's storage publishes a blob's bytes into the shared partition map
-    /// only on `sync` (`runtime/src/storage/memory.rs`), so a written-but-
-    /// unsynced tail would replay as zero entries here.
+    /// Nothing between `spawn_writer` and `drop(store)` yields, so every record is
+    /// still in the channel — the tail case, not a steady state. The reopen pins the
+    /// sync too: the deterministic runtime publishes a blob's bytes only on `sync`, so
+    /// a written-but-unsynced tail would replay as zero entries.
     #[test]
     fn dropping_the_last_sender_drains_and_syncs_the_tail_before_the_handle_resolves() {
         deterministic::Runner::default().start(|ctx| async move {
@@ -663,9 +559,8 @@ mod tests {
             journal.sync().await.expect("sync");
             drop(journal);
 
-            // Restart: a fresh handle over the SAME partition, as a new process
-            // would open it. The label differs only because the deterministic
-            // runtime refuses to register the same metric name twice within one
+            // Restart: a fresh handle over the same partition. The label differs only
+            // because the deterministic runtime refuses a duplicate metric name in one
             // process; the storage underneath is the same.
             let reopened = SeedJournal::init(ctx.with_label("boot2"), "seeds".into())
                 .await
@@ -767,12 +662,9 @@ mod tests {
         });
     }
 
-    // ---- the packed index -------------------------------------------------
-
-    /// The reason the packing exists: views RESET per epoch (a fresh consensus
-    /// engine per epoch, `crate::engine`), so view 1 of epoch N+1 must still sort
-    /// after the last view of epoch N. Asserted at the arithmetic level and then
-    /// end to end through the store's own ordering.
+    /// The reason the packing exists: views reset per epoch (a fresh consensus engine
+    /// per epoch, `crate::engine`), so view 1 of epoch N+1 must still sort after the
+    /// last view of epoch N.
     #[test]
     fn the_packed_index_orders_an_epoch_boundary_the_way_round_does() {
         let last_of_n = Round::new(Epoch::new(3), View::new(VIEW_MASK));
@@ -785,7 +677,6 @@ mod tests {
             index_of(last_of_n).unwrap() < index_of(first_of_next).unwrap(),
             "view 1 of epoch N+1 must sort after the LAST view of epoch N"
         );
-        // Round-trip both halves.
         for r in [
             last_of_n,
             first_of_next,
@@ -834,9 +725,8 @@ mod tests {
         });
     }
 
-    /// A view that does not fit the packing must be REFUSED, never wrapped: a
-    /// wrapped index files σ under a different round, and σ is an execution
-    /// input.
+    /// A view that does not fit the packing must be refused, never wrapped: a wrapped
+    /// index files σ under a different round, and σ is an execution input.
     #[test]
     fn a_round_beyond_the_packing_bound_is_refused_not_wrapped() {
         let too_wide = Round::new(Epoch::new(0), View::new(1u64 << VIEW_BITS));
@@ -844,7 +734,7 @@ mod tests {
             matches!(index_of(too_wide), Err(Error::UnrepresentableRound { .. })),
             "a view of 2^32 must not silently become view 0 of epoch 1"
         );
-        // The value it WOULD have wrapped onto is a real, different round.
+        // The value it would have wrapped onto is a real, different round.
         assert_eq!(
             index_of(Round::new(Epoch::new(1), View::new(0))).unwrap(),
             1u64 << VIEW_BITS,
@@ -877,16 +767,10 @@ mod tests {
         });
     }
 
-    // ---- corruption blast radius ------------------------------------------
-
-    /// Flip one bit inside the CRC32 trailer of the record for `round`, in the
-    /// blob `Ordinal` stores it in. Targeting the CRC (not the value) isolates
-    /// the check under test: the 48-byte signature still decodes as a curve
-    /// point, so ONLY the per-record CRC can reject this record.
-    ///
-    /// Blob name is the section big-endian, section == epoch by the
-    /// `ITEMS_PER_BLOB` invariant, and the record sits at `view * RECORD_SIZE`
-    /// within it (`ordinal/storage.rs`).
+    /// Flip one bit inside the CRC32 trailer of the record for `round`, isolating the
+    /// per-record CRC: the 48-byte signature still decodes as a curve point, so only
+    /// the CRC can reject this record. Blob name is the section big-endian, section ==
+    /// epoch, and the record sits at `view * RECORD_SIZE`.
     async fn corrupt_crc_of(ctx: &deterministic::Context, partition: &str, round: Round) {
         use commonware_runtime::Storage as _;
         let section = round.epoch().get();
@@ -919,25 +803,16 @@ mod tests {
         journal.sync().await.expect("sync");
     }
 
-    /// THE regression gate for the move off `journal::segmented::fixed`.
-    ///
-    /// A corrupt record must cost exactly ONE round. Under the segmented journal
-    /// this same fixture lost all 8 (measured before the move: one flipped bit in
-    /// record #3 left 0 of 8 readable, and the replay stream reported no error at
-    /// all, because the paged buffer's 4 KiB page CRC failed and the blob was
-    /// truncated back to the last valid page).
-    ///
-    /// The `control` half is the negative control: identical fixture, no
-    /// corruption. It must yield all 8 — otherwise "7 survived" would be
-    /// consistent with a fixture that simply cannot write 8.
+    /// A corrupt record must cost exactly one round, not the rest of its epoch. The
+    /// control half is the negative control: the identical fixture with no corruption
+    /// must yield all 8, so "7 survived" cannot come from a fixture that cannot write.
     #[test]
     fn a_corrupt_record_costs_exactly_one_round_not_the_rest_of_the_epoch() {
         deterministic::Runner::default().start(|ctx| async move {
             const VIEWS: u64 = 8;
             const VICTIM: u64 = 3;
 
-            // --- negative control: same fixture in its own partition, nothing
-            // corrupted ---
+            // Negative control: the same fixture, uncorrupted, in its own partition.
             seeded_epoch(&ctx, "control1", "seeds_control", VIEWS).await;
             let control_rounds = {
                 let reopened =
@@ -959,7 +834,6 @@ mod tests {
                  so the corrupted run below cannot pass by writing fewer"
             );
 
-            // --- the real case, in its own partition ---
             seeded_epoch(&ctx, "corrupt1", "seeds_corrupt", VIEWS).await;
             corrupt_crc_of(&ctx, "seeds_corrupt", round_at(VICTIM)).await;
 
@@ -988,9 +862,8 @@ mod tests {
         });
     }
 
-    /// The corruption is real, and the CRC is what catches it: the same fixture
-    /// with the flip applied and then UNDONE reads back clean, so the missing
-    /// round above is caused by the flipped bit and nothing else.
+    /// The CRC is what catches the corruption: with the flip applied and then undone,
+    /// the same fixture reads back clean.
     #[test]
     fn undoing_the_flip_restores_the_round() {
         deterministic::Runner::default().start(|ctx| async move {

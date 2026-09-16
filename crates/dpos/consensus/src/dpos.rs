@@ -1,6 +1,5 @@
-//! DPoS layer launcher — assembles 03 (staking-reader), 04 (consensus),
-//! and 05 (p2p) given operator keys, reth handles, and config. Spawned
-//! by the host adapter at `crates/node/src/dpos.rs`.
+//! DPoS layer launcher: assembles the staking reader, consensus, and p2p
+//! layers given operator keys, reth handles, and config.
 
 use crate::{
     application::{
@@ -57,38 +56,26 @@ use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-/// The metric every channel's ingress refusal lands on. ONE counter for all of
-/// them, labelled by channel and by why — no per-peer counter, no penalty, no
-/// timer: the only global ban is the on-chain tombstone (PLAN §8 п.1).
+/// The single counter every channel's ingress refusal lands on, labelled by
+/// channel and reason: peers are not tracked or penalized individually, and the
+/// only ban is the on-chain tombstone.
 pub const INGRESS_DROPPED_TOTAL: &str = "dpos_ingress_dropped_total";
 
-/// Count one refused frame.
 pub fn record_ingress_drop(channel: &'static str, reason: &'static str) {
     metrics::counter!(INGRESS_DROPPED_TOTAL, "channel" => channel, "reason" => reason).increment(1);
 }
 
 /// A `commonware_p2p::Receiver` that refuses a frame before anything decodes it,
-/// on the peer set this node last registered.
+/// based on the peer set this node last registered.
 ///
-/// This is the ONE classification of a sender on the channel, and the only check
-/// that can run before a decode: the sender is either in the tracked window or
-/// it is not, and a tombstoned sender is out regardless. Binding the sender to
-/// the frame's own EPOCH needs the frame's epoch and therefore lives past the
-/// decode, and the two channels do it differently: EVIDENCE re-reads this window
-/// (`slasher::gossip::ingest_batch`, `Ingress::member_of`); the BEACON asks the
-/// window nothing more — its actor keeps an epoch cost gate (`[now, now + 2]`,
-/// `beacon::actor::on_message`) and leaves the seat to the frame's consumer (the
-/// ceremony's roster, `committee[target_epoch]` for a confirmation; refused
-/// `no_seat` there). 5.3-В.
+/// It is the only sender check that can run before a decode: the sender is
+/// either inside the tracked window or it is not, and a tombstoned sender is
+/// refused regardless. Binding a sender to the frame's own epoch needs the
+/// frame's epoch and so happens past the decode, in each channel's consumer.
 ///
-/// `members_only` says which tier the channel serves: BEACON and EVIDENCE are
-/// committee traffic, so a tier-2 (registry) sender has no business on them;
-/// a channel that serves the registry would set it `false` and only lose the
-/// untracked and the tombstoned.
-///
-/// Before the first `track` the window has no opinion and NOTHING is refused —
-/// a node in cold start has not read the chain yet, and turning "I do not know"
-/// into a drop would silence the plane exactly when it is trying to join.
+/// `members_only` selects the tier the channel serves: committee channels set it
+/// and thereby refuse a tier-2 registry sender; a channel that serves the
+/// registry clears it and admits tracked senders.
 #[derive(Debug)]
 pub struct GatedReceiver<R> {
     inner: R,
@@ -112,7 +99,6 @@ impl<R> GatedReceiver<R> {
         }
     }
 
-    /// Whether this frame survives the window check.
     fn admits(&self, from: &fluentbase_bls::PeerPubkey) -> bool {
         let Some(ingress) = self.window.classify(from) else {
             return true; // no peer set registered yet
@@ -146,11 +132,9 @@ where
     }
 }
 
-/// Codeless-tolerant epoch-geometry read: `None` when `ChainConfig` is not
-/// deployed (or DPoS not yet scheduled) at `at` — the launch discriminator
-/// between "restart datadir / genesis-baked devnet" and "fresh datadir on a
-/// runtime-deployed chain", where geometry is only readable AFTER EL-sync. Used
-/// by the follower cold-start in [`DposLayer::launch_follower`].
+/// Epoch-geometry read that tolerates a missing `ChainConfig` (or unscheduled
+/// DPoS) at `at`, returning `None`; this distinguishes a genesis-baked chain
+/// from a runtime-deployed one whose geometry is readable only after EL sync.
 fn read_geometry<Provider, EvmConfig>(
     reader: &RethStakingStateReader<Provider, EvmConfig>,
     at: B256,
@@ -170,57 +154,45 @@ where
     }
 }
 
-/// Re-poke count between successive "boundary still parked" `warn!`s (log-side
-/// external wedge detection alongside the `parked_boundary_height` gauge). At
+/// Pokes between successive "boundary still parked" warnings, the log-side
+/// complement to the `parked_boundary_height` gauge: at
 /// `PENDING_RETRY_BACKOFF = 200 ms`, 150 pokes ≈ 30 s.
 const PARKED_BOUNDARY_WARN_EVERY: u64 = 150;
 
-/// Partition prefix for the commonware marshal's durable storage (finalizations,
-/// finalized blocks, application-metadata). Shared between the cold-start
-/// discriminator peek (`read_consensus_archive_last_finalized`) and the marshal
-/// itself (`OuterBuilder.partition_prefix`) so the two never drift.
+/// Partition prefix for the commonware marshal's durable storage; the cold-start
+/// discriminator peek and the marshal's own `OuterBuilder.partition_prefix` must
+/// match or the peek opens a different store.
 const MARSHAL_PARTITION_PREFIX: &str = "consensus_marshal";
 
-/// Reth handles needed by the DPoS layer. The host adapter at
-/// `crates/node/src/dpos.rs` assembles this from `FullNode<N, AddOns>`;
-/// `transaction_pool`, `chain_spec`, and `data_dir` are intentionally
-/// absent — `slasher_sink` arrives pre-built via `DposLayerConfig` (so
-/// the host owns the `reth-transaction-pool` trait bounds), `chain_spec`
-/// reduces to its only used field `chain_id`, and `data_dir` is set
-/// host-side in `spawn_dpos` before `runner.start()`.
+/// Reth handles needed by the DPoS layer. `transaction_pool`, `chain_spec`, and
+/// `data_dir` are deliberately absent: `slasher_sink` arrives pre-built via
+/// `DposLayerConfig` (so the host owns the `reth-transaction-pool` trait bounds),
+/// `chain_spec` reduces to its only used field `chain_id`, and `data_dir` is set
+/// host-side before `runner.start()`.
 pub struct RethHandle<Provider, EvmConfig, BeaconEngine> {
     pub provider: Provider,
     pub evm_config: EvmConfig,
     pub beacon_engine_handle: BeaconEngine,
     pub chain_id: u64,
-    /// Read-only probe of reth's connected devp2p peer count, built host-side
-    /// from `node.network` (which implements `reth_network_api::PeersInfo`). Drives
-    /// the cold-start / re-jump EL-sync no-peers net (`cold_start_jump::RethElSync`).
-    /// A closure, not a typed handle, keeps the consensus crate free of a
+    /// Read-only probe of reth's connected devp2p peer count, built host-side.
+    /// A closure rather than a typed handle keeps the consensus crate free of a
     /// `reth-network-api` dependency.
     pub peer_count: Arc<dyn Fn() -> usize + Send + Sync>,
-    /// Disk-loaded canonical state snapshot. Reth's
-    /// `BlockchainProvider::with_latest` populates `finalized_block` /
-    /// `safe_block` from `ChainState::LastFinalizedBlock` during node
-    /// init, so on a graceful-shutdown restart
-    /// `get_finalized_num_hash()` returns `Some(disk_finalized.num_hash())`.
-    /// Kept as a struct field rather than a trait method because
-    /// `canonical_in_memory_state()` is a concrete inherent on
-    /// `BlockchainProvider<N>`, not exposed via any reth provider trait.
+    /// Disk-loaded canonical state snapshot; on a graceful-shutdown restart
+    /// `get_finalized_num_hash()` returns the disk finalized. A struct field
+    /// rather than a trait method because `canonical_in_memory_state()` is a
+    /// concrete inherent on `BlockchainProvider<N>`, not exposed via any reth
+    /// provider trait.
     pub canonical_state: reth_chain_state::CanonicalInMemoryState<EthPrimitives>,
-    /// Pristine-network fallback for when
-    /// `canonical_state.get_finalized_num_hash()` returns `None`.
+    /// Pristine-network fallback for when `get_finalized_num_hash()` returns `None`.
     pub genesis_hash: B256,
 }
 
-/// Cold-start `(finalized_num, finalized_hash, head_num, head_hash)` derived
-/// purely from reth's `canonical_state` + `genesis_hash` (the non-migration
-/// path). Reth's `BlockchainProvider::with_latest` repopulates
-/// `canonical_state.finalized_block` on a graceful-restart, so
+/// Cold-start `(finalized_num, finalized_hash, head_num, head_hash)` from reth's
+/// `canonical_state` plus `genesis_hash` on the non-migration path. A graceful
+/// restart repopulates `canonical_state.finalized_block`, so
 /// `get_finalized_num_hash()` returns the disk finalized; the genesis fallback
-/// covers a pristine network (no FCU yet). Extracted from [`DposLayer::launch`]
-/// so the cold-start arithmetic is unit-tested against this production code
-/// rather than a copy.
+/// covers a pristine network with no FCU yet.
 pub fn derive_cold_start_heights(
     canonical_state: &reth_chain_state::CanonicalInMemoryState<EthPrimitives>,
     genesis_hash: B256,
@@ -237,22 +209,17 @@ pub fn derive_cold_start_heights(
     )
 }
 
-/// How often a park on an EXTERNAL activation input re-asks: reth for the
-/// activation block ([`wait_for_activation_block`]) and, in `launch_follower`'s
-/// entry march, the local probe + the upstream + the committee window. ONE constant
-/// because it is one cadence for one reason — "ask again, the answer is somebody
-/// else's to change" — and two copies of it drift apart silently.
+/// How often a park on an external activation input re-asks: reth for the
+/// activation block, and the local probe, upstream, and committee window in the
+/// follower's entry march. One constant so the copies cannot drift apart.
 const ACTIVATION_POLL: Duration = Duration::from_secs(2);
 
-/// Wait for reth to hold the DPoS activation block before adopting it as the
-/// fresh-migration consensus anchor; returns the block's local-canonical hash.
-/// Covers reth still replaying MDBX on restart. There is NO give-up and no
-/// timeout: the anchor is external (the sequencer must finalize the activation
-/// block before DPoS starts), so the wait polls forever and raises
-/// `dpos_sync_degraded{reason=activation_wait}` as the stuck signal instead of
-/// failing. No operator-hash compare — the activation height comes from the on-chain
-/// `ChainConfig.dposActivationBlock` and the hash is local-canonical at a
-/// finalized height (every honest node derives the same hash).
+/// Wait for reth to hold the DPoS activation block, returning its
+/// local-canonical hash. There is no give-up and no timeout: the anchor is
+/// external (the sequencer must finalize the activation block before DPoS
+/// starts), so the wait polls forever and raises
+/// `dpos_sync_degraded{reason=activation_wait}` as the stuck signal. The hash is
+/// local-canonical at a finalized height, so no operator compare is needed.
 pub(crate) async fn wait_for_activation_block<Provider, C>(
     ctx: &C,
     provider: &Provider,
@@ -263,12 +230,6 @@ where
     Provider: BlockHashReader,
     C: commonware_runtime::Clock,
 {
-    // #13 SELF-HEAL (retry-forever, Decision A): the activation anchor is EXTERNAL
-    // — the sequencer may still be producing/persisting it, and a fatal here would
-    // restart-storm every honest joiner at once. Keep polling forever and surface
-    // `dpos_sync_degraded{reason=activation_wait}=1` as the stuck signal (a stuck
-    // gauge, not a crash). A cold restart legitimately shows the block absent for
-    // seconds while reth replays MDBX/static files under multi-node contention.
     let mut waited = false;
     loop {
         if let Some(hash) = provider
@@ -295,23 +256,19 @@ where
 }
 
 /// Peek the marshal's last consensus-finalized height from its durable
-/// application-metadata store WITHOUT building the marshal/engine — the
-/// restart-vs-fresh-migration discriminator. An empty store (fresh migration)
-/// returns 0; a populated store (restart, already migrated) returns the last
-/// DPoS-finalized height so the cold-start resumes at the correct epoch.
+/// application-metadata store without building the marshal or engine — the
+/// restart-vs-fresh-migration discriminator: an empty store returns 0, a
+/// populated one the last DPoS-finalized height, so cold start resumes at the
+/// correct epoch.
 ///
-/// Reads the SAME `{partition_prefix}-application-metadata` Metadata store and
-/// key that commonware `MarshalActor::init` returns as `last_processed_height`
-/// (monorepo `consensus/src/marshal/core/actor.rs:305-317`), so the value is
-/// byte-identical to the one the executor-seed path already consumes. The peek
-/// opens the store, reads, and drops it before `MarshalActor::init` re-opens it.
+/// Reads the same metadata store the marshal opens and drops the handle before
+/// the marshal re-opens it.
 pub(crate) async fn read_consensus_archive_last_finalized(
     ctx: &Context,
     partition_prefix: &str,
 ) -> eyre::Result<u64> {
-    // Wire-format invariant: must match commonware marshal `core/actor.rs:58`
-    // `const LATEST_KEY: U64 = U64::new(0xFF)` (a private const there). It is a
-    // storage-layout constant pinned with the commonware rev in `Cargo.lock`.
+    // Storage-layout invariant: must match the marshal's own private `LATEST_KEY`,
+    // pinned with the commonware rev in `Cargo.lock`.
     const LATEST_KEY: U64 = U64::new(0xFF);
     let metadata: Metadata<Context, U64, Height> = Metadata::init(
         ctx.with_label("cold_start_archive_peek"),
@@ -329,54 +286,31 @@ pub(crate) async fn read_consensus_archive_last_finalized(
         .get())
 }
 
-/// Outcome of the pre-engine crash-survivor recovery (#8/#12 self-heal,
-/// 2026-07-09).
+/// Outcome of the pre-engine crash-survivor recovery.
 #[derive(Debug)]
 enum RecoverOutcome {
     /// reth now holds `target`; carries its local-canonical hash. The pre-engine
-    /// marshal→reth replay bridged the gap — either straight from the local
-    /// `finalized_blocks` archive (σ for each height comes from the seed store at
-    /// the height's OWN round, with the local certificate and the upstream as
-    /// fallbacks — no cert is REQUIRED to exist), or, on a below-floor BLOCK hole
-    /// (#8), by a BLS-verified by-height re-fetch through the cert upstream
-    /// ([`refetch_hole_until_answered`] over [`refetch_verified_archive_hole`])
-    /// spliced into the same replay.
+    /// marshal→reth replay bridged the gap, either from the local
+    /// `finalized_blocks` archive or, for a hole below the marshal's finalized
+    /// floor, by a BLS-verified by-height re-fetch through the cert upstream.
     Recovered(B256),
-    /// reth is `> MAX_COLD_RECOVER` behind its OWN (INTACT) consensus archive (#12):
-    /// the pre-engine replay is capped, so the caller anchors the cold-start at
-    /// `provider.best_block_number()` and the EXECUTOR'S STARTUP BACKFILL DRAIN
-    /// (`executor.rs::finalized_heights_to_backfill`, seeded from the marshal's own
-    /// acked cursor) walks the rest of the tail into reth. NOT the steady-state
-    /// jump: it is gated off while that drain is non-empty and its trigger is 0 at
-    /// boot (both `last_tip_height` and `ordering_finalized` come from the same
-    /// cursor). This is a distance problem, NOT an archive hole — the
-    /// marshal holds every block. Needs an upstream
-    /// (a no-upstream node is FATAL at the recovery site,
-    /// [`crash_recover_defer_or_fatal`]). `gap` = blocks reth is behind `target`
-    /// (`crash_recover_gap_blocks` gauge).
-    ///
-    /// NOTE (why #8 does NOT land here): a #8 hole is BELOW the marshal's finalized
-    /// floor (`target == last_processed_height`, the same `LATEST_KEY` the metadata
-    /// peek reads). The live marshal repairs only `[floor+1 ..]` (monorepo
-    /// `marshal/core/actor.rs:1557` `start = last_processed_height.next()`; it PRUNES
-    /// below floor at `:700`, and `HintFinalized` skips `<= floor` at `:633`), so its
-    /// `UpstreamResolver` would NEVER repopulate a below-floor hole — and the executor
-    /// gap-walk agrees (`executor.rs` "a hole below the floor cannot self-heal"). Nor
-    /// does the steady-state jump help: a #8 gap is `<= MAX_COLD_RECOVER (64) <
-    /// JUMP_THRESHOLD (1024)`, so the jump is always `Lagging` and never fires. #8 is
-    /// therefore healed INLINE by [`refetch_hole_until_answered`], not deferred.
+    /// reth is more than `MAX_COLD_RECOVER` blocks behind its own intact archive,
+    /// beyond what the capped pre-engine replay bridges. The caller anchors the
+    /// cold start at reth's tip and the executor's startup backfill drain walks
+    /// the rest of the tail in. This is a distance problem, not an archive hole:
+    /// the marshal holds every block. Needs an upstream, and a no-upstream node
+    /// is fatal at the recovery site. `gap` is how far reth is behind `target`.
     DeferToElSync { gap: u64 },
 }
 
-/// Provider-only reconnect scan for [`recover_finalized_tail_into_reth`] (factored
-/// out so the #12 too-deep detection is unit-testable without a marshal archive).
-/// Walks `target` downward while reth is missing each parent.
+/// Provider-only reconnect scan for [`recover_finalized_tail_into_reth`]: walks
+/// `target` downward while reth is missing each parent.
 enum ReconnectScan {
     /// reth holds the block at `lowest - 1` (or `lowest == 0`); replay
     /// `lowest..=target` from the marshal archive.
     Reconnect(u64),
     /// reth is missing `>= max_cold_recover` blocks below `target` — beyond a
-    /// flush-race tail; #12 defers to devp2p EL-sync.
+    /// flush-race tail; the caller defers to devp2p EL sync.
     TooDeep,
 }
 
@@ -403,14 +337,13 @@ where
     Ok(ReconnectScan::Reconnect(lowest))
 }
 
-/// The #12 defer-vs-fatal decision for the too-deep trigger (reth `>
-/// MAX_COLD_RECOVER` behind its OWN INTACT archive). WITH an upstream: raise the
-/// crash-recover gauges + counter and DEFER (the caller anchors at reth's tip; the
-/// post-engine devp2p jump backfills the EL — the marshal holds every block, so no
-/// consensus-store repair is needed). WITHOUT an upstream: residual FATAL — there is
-/// nowhere to devp2p-backfill from, so this is real local data loss (Decision A does
-/// not apply to idiosyncratic local corruption). A #8 archive HOLE does NOT route
-/// here — it heals inline via [`refetch_hole_until_answered`].
+/// The defer-vs-fatal decision when reth is more than `MAX_COLD_RECOVER` behind
+/// its own intact archive. With an upstream, raise the gauges and defer: the
+/// caller anchors at reth's tip and the executor's jump backfills the EL, and the
+/// marshal holds every block, so no consensus-store repair is needed. Without an
+/// upstream there is nowhere to backfill from, so this is real local data loss
+/// and stays fatal. A below-floor archive hole does not route here; it heals
+/// inline via [`refetch_hole_until_answered`].
 fn crash_recover_defer_or_fatal<Provider>(
     provider: &Provider,
     target: u64,
@@ -431,14 +364,13 @@ where
     crash_recover_defer(provider, target, sync_metrics, cause)
 }
 
-/// The deferring half alone, for a cause that is NOT local data loss and therefore
+/// The deferring half alone, for a cause that is not local data loss and therefore
 /// has no fatal arm.
 ///
-/// The one caller is [`ReplaySeed::Defer`]: "this node does not hold the epoch key
-/// yet" is a statement about the BEACON's acquisition, which self-heals off the
-/// artifact — the `KeyAvailable` edge settles the σ the replay held — and an
-/// upstream is irrelevant to it in both directions. Making it fatal on a node with
-/// no cert upstream would turn a bounded wait into a re-sync instruction.
+/// Its one caller is [`ReplaySeed::Defer`]: "this node does not hold the epoch key
+/// yet" is about the beacon's acquisition, which self-heals off the artifact, and
+/// an upstream is irrelevant to it either way. Making it fatal on a node with no
+/// cert upstream would turn a bounded wait into a re-sync instruction.
 fn crash_recover_defer<Provider>(
     provider: &Provider,
     target: u64,
@@ -465,59 +397,25 @@ where
     Ok(RecoverOutcome::DeferToElSync { gap })
 }
 
-/// #8 below-floor archive-hole heal: BLS-verified by-height re-fetch of a missing
-/// `finalized_blocks` / `finalizations` entry through the cert upstream.
+/// BLS-verified by-height re-fetch of a marshal archive entry missing below the
+/// finalized floor, which the live marshal never repairs (it starts at
+/// `floor + 1` and prunes below) and the steady-state jump cannot reach.
 ///
-/// A #8 hole sits BELOW the marshal's finalized floor (`target ==
-/// last_processed_height`), which the live marshal's own resolver NEVER re-fetches
-/// — it repairs `[floor+1 ..]` only and prunes below floor (monorepo
-/// `marshal/core/actor.rs:1557`/`:700`/`:633`), and the steady-state jump can't fire
-/// either (a #8 gap `<= MAX_COLD_RECOVER (64) < JUMP_THRESHOLD (1024)` ⇒ always
-/// `Lagging`). So a bare defer would leave reth permanently missing the block.
-/// Instead we pull the finalization+block from the upstream (the SAME by-height seam
-/// the inlet uses) and authenticate it HERE, because this pull reaches neither of the
-/// two writers that would otherwise have done it (`store_finalization` after
-/// `verify_delivered`, or `FrontierHandler::deliver`): `verify_jump_structural`
-/// (payload == digest) + `verify_jump_authenticated` (2f+1 BLS multisig against
-/// `committee[E]` read at `at_hash`, the already-recovered parent's materialized
-/// state). These two functions exist for exactly this seam and for
-/// `cert_follow::fetch_verified_boundary` / [`fetch_verified_entry`] — they are no
-/// longer stages of any jump.
-/// The caller then derives + imports the verified block into reth, splicing the hole
-/// shut in the same replay.
+/// The pull authenticates here because it reaches neither writer that normally
+/// would (`store_finalization` after verification, or `FrontierHandler::deliver`):
+/// a structural check that the payload matches the digest, then 2f+1 BLS
+/// authentication against `committee[E]` read at `at_hash`.
 ///
-/// We do NOT write the re-fetched entry back into the marshal archive, and the
-/// reason is NOT that a below-floor write would be discarded — it would not be.
-/// `MarshalActor::init` runs no prune, immutable-archive `prune` is a no-op, and a
-/// below-floor entry written before the floor rises stays permanently readable
-/// (`get_finalized_block` consults no floor); the boundary-seeding path in
-/// `outer.rs` / `executor::reseed_forward` depends on exactly that. The real reason
-/// is scope: this path runs PRE-engine against a standalone archive handle, and reth
-/// is the only local reader that needs the block at that moment. Peer-serving of
-/// that below-floor height stays a re-fetch-from-elsewhere concern, unchanged.
+/// The re-fetched entry is not written back: this path runs pre-engine against a
+/// standalone archive handle, and reth is the only local reader that needs the
+/// block at that moment.
 ///
-/// `Err` IS A VERDICT: no `--dpos.follower-upstream` is configured, or every
-/// configured upstream answered and none of them holds the record (gone everywhere
-/// — real local consensus data loss), or the answer failed authentication.
-///
-/// `Ok(None)` IS THE ABSENCE OF A VERDICT, and the distinction is the whole point of
-/// this signature: not one configured upstream ANSWERED, so nothing was learned about
-/// the record and the caller must ask again. Before the entry march made a
-/// disconnected WS actor answer its mailbox, this case could not arise — the pull
-/// simply never returned — so a negative here was necessarily a real "nobody holds
-/// it". It can arise now, and folding it back into the `Err` above would print
-/// "re-sync the EL disk from a snapshot" at an operator whose upstream is merely
-/// down. That instruction is irreversible; a retry is free (R-131 review,
-/// `4.4а-Д-9`).
-///
-/// The walk in `cert_follow::upstream` is what separates the two, because it is what
-/// ASKS: it answers `MissedEverywhere` only when servers rendered a verdict on the
-/// height, and `NoneAnswered` when none of them was reachable — and it serves the
-/// `_everywhere` pull with or without a live connection, so its negative is never a
-/// refusal-without-asking. What the `Option`-typed seam cannot carry across the
-/// crate boundary is WHICH of the two it was, so this function asks for the one thing
-/// that settles it positively: `get_latest`, whose `Some` can only come from an
-/// upstream that answered us. Absent that witness nothing is claimed.
+/// `Err` is a verdict: no upstream configured, every upstream answered and none
+/// holds the record, or the answer failed authentication. `Ok(None)` is the
+/// absence of a verdict: not one upstream answered, so the caller must ask again.
+/// Collapsing the two would print "re-sync the EL disk from a snapshot" at an
+/// operator whose upstream is merely down, which is irreversible where a retry
+/// is free.
 async fn refetch_verified_archive_hole<U, C>(
     upstream: Option<&U>,
     committees: &C,
@@ -538,11 +436,11 @@ where
              real local consensus data loss; re-sync the EL disk from a snapshot"
         ));
     };
-    // `_everywhere`: the FATAL below tells the operator to re-sync the EL disk from a
+    // `_everywhere`: the fatal below tells the operator to re-sync the EL disk from a
     // snapshot. Asking ONE upstream before saying that is not enough when the operator
     // configured several and the block sits on the second.
     let Some(uf) = up.get_finalization_everywhere(Height::new(height)).await else {
-        // THE NEGATIVE IS NOT YET A VERDICT. Claim data loss only with positive proof
+        // The negative is not yet a verdict. Claim data loss only with positive proof
         // that an upstream answered us at all; `get_latest` is that proof and nothing
         // else in the seam is (a by-height negative is produced by both cases alike).
         // Fail-safe direction: a wrongly-withheld verdict costs one more lap, a
@@ -559,7 +457,7 @@ where
     // Nothing else binds the response to the request: `verify_jump_structural` ties
     // the cert only to the block it arrived with, and `verify_jump_authenticated`
     // takes the epoch from the cert's own round. Unpinned, a valid finalization for
-    // a DIFFERENT height passes both and is spliced in as if it were this one.
+    // a different height passes both and is spliced in as if it were this one.
     ensure!(
         uf.block.height == height,
         "upstream served height {} for the marshal {which} hole at height {height}",
@@ -580,7 +478,7 @@ where
     Ok(Some(uf))
 }
 
-/// [`refetch_verified_archive_hole`] until it produces a VERDICT: the record, or a
+/// [`refetch_verified_archive_hole`] until it produces a verdict: the record, or a
 /// reasoned refusal. The only thing this adds is patience, and it is the block
 /// path's policy rather than the seam's — the σ path deliberately does not wait
 /// (see `replay_seed`).
@@ -590,10 +488,9 @@ where
 /// sentence, because that verdict is evidence: servers answered and none holds the
 /// record. What may not happen is printing "re-sync the EL disk from a snapshot" at
 /// an operator whose upstream is merely unreachable — the instruction is
-/// irreversible and the condition is transient. This case became reachable only
-/// when the WS actor started answering its mailbox while disconnected (before that
-/// the pull never returned at all), which is why the patience arrives with it
-/// (R-131 review, `4.4а-Д-9`).
+/// irreversible and the condition is transient. The case is reachable because the
+/// WS actor answers its mailbox while disconnected, so a pull returns instead of
+/// hanging.
 ///
 /// Retry-forever on the cadence the other external-input waits use
 /// (`wait_for_activation_block`, Decision A), under the gauge reason this path
@@ -641,12 +538,12 @@ where
 }
 
 /// One element of the crash-survivor replay walk: the block at `h` from the
-/// marshal's OWN `finalized_blocks` archive, or — on a below-floor BLOCK hole
-/// (#8) — a BLS-verified by-height re-fetch through the cert upstream. Under
-/// Design B′ the walk is BLOCKS-ONLY: a locally-present block with a locally
-/// absent finalization cert is a NORMAL state (an ancestry-finalized height may
-/// have NO standalone cert anywhere, ever — the soak7 class), so certs are read
-/// solely to AUTHENTICATE a re-fetched missing block, never per height.
+/// marshal's own `finalized_blocks` archive, or — on a below-floor block hole —
+/// a BLS-verified by-height re-fetch through the cert upstream. The walk is
+/// blocks-only: a locally-present block with a locally absent finalization cert
+/// is a normal state (an ancestry-finalized height may have no standalone cert
+/// anywhere, ever), so certs are read solely to authenticate a re-fetched missing
+/// block, never per height.
 #[allow(clippy::too_many_arguments)] // mirrors its caller: distinct pre-engine deps, not a cluster
 async fn recover_walk_block<A, U, C>(
     archive: &A,
@@ -669,20 +566,10 @@ where
     if let Some(order) = local {
         return Ok(order);
     }
-    // #8: a hole in the marshal's OWN below-floor BLOCK archive. The live
-    // marshal resolver cannot repair below its floor and the deferred jump
-    // can't fire at this `<= 64` gap, so a bare defer would strand reth.
-    // Re-fetch the BLS-verified finalization+block from the cert upstream and
-    // splice the hole shut; no-upstream / gone-everywhere stays fatal.
-    //
-    // ASKING AGAIN IS THE ANSWER TO "NOBODY ANSWERED", and it is not a softening of
-    // the fatal: the fatal is still what a gone-everywhere VERDICT produces (see
-    // `refetch_verified_archive_hole`). What may not happen is telling an operator to
-    // re-sync the EL disk because this node could not reach any upstream for a moment
-    // — that instruction is irreversible and the condition is transient. Retry-forever
-    // is the same policy the other external-input waits run (`wait_for_activation_block`,
-    // Decision A), on the same cadence, under the reason the gauge already has for this
-    // path (`crash_recover`): the node stays observable instead of exiting on a link.
+    // A hole below the marshal's finalized floor: the live resolver cannot repair
+    // below it and the deferred jump cannot fire at this gap, so the block is
+    // re-fetched and BLS-verified through the cert upstream. A gone-everywhere
+    // verdict stays fatal; only "not one upstream answered" is retried.
     let uf = refetch_hole_until_answered(
         upstream,
         committees,
@@ -707,7 +594,7 @@ enum ReplaySeedSource {
     /// The agreed derivation here is `None`: the beacon is not mandatory in this
     /// height's epoch, or the epoch map cannot name an epoch for it at all.
     Inactive,
-    /// σ this node already holds for the height's OWN round.
+    /// σ this node already holds for the height's own round.
     Held(Seed),
     /// Beacon-active and the store missed — σ for this round has to be found.
     Wanted(Round),
@@ -715,38 +602,36 @@ enum ReplaySeedSource {
 
 /// What the crash-survivor replay may derive a height with.
 enum ReplaySeed {
-    /// `None` iff [`ReplaySeedSource::Inactive`] — a beacon-inactive link, where
-    /// `None` is what every node derives. It is NOT reachable from a σ miss: the
-    /// digest fallback on a beacon-active link re-rolls `prev_randao` and forks
-    /// the restart, which is the one outcome this whole path exists to prevent.
+    /// `None` only on a beacon-inactive link, where `None` is what every node
+    /// derives. It is not reachable from a σ miss: the digest fallback on a
+    /// beacon-active link re-rolls `prev_randao` and forks the restart.
     Derive(Option<Seed>),
     /// σ is mandatory here and no source has it. The walk stops and defers.
     Unavailable,
-    /// σ is mandatory here, a certificate for the round CARRIES it, and this node
-    /// cannot check it yet: the epoch key is not resolvable locally. The beacon is
-    /// holding the value (`Observed::Pending`) and will settle it on the
-    /// `KeyAvailable` edge, so the walk defers instead of deriving — and never
-    /// fatally, whatever the upstream configuration.
+    /// σ is mandatory here, a certificate for the round carries it, and this node
+    /// cannot check it yet because the epoch key is not resolvable locally. The
+    /// beacon holds the value and settles it on the `KeyAvailable` edge, so the
+    /// walk defers rather than deriving — never fatally, whatever the upstream
+    /// configuration.
     Defer,
 }
 
 /// σ for `height`'s own round out of this node's own store, or the round to go
-/// looking for. The same rule the live executor derives with
-/// (`Actor::seed_at_own_round`), applied at replay so a restarted node cannot
-/// re-execute a height with a different `prev_randao` than the network.
+/// looking for. The same rule the live executor derives with, applied at replay
+/// so a restarted node cannot re-execute a height with a different `prev_randao`
+/// than the network.
 ///
-/// PREDICATE FIRST, store second: `mandatory_at(epoch(h))` — network-agreed,
-/// independent of anything local — decides BEFORE the store is read. Store-first
-/// would let a σ filed at a round the agreed map calls beacon-INACTIVE be USED,
-/// and the seed journal this store rehydrates from is replayed WITHOUT
-/// re-verification by design (`VerifiedSeed::from_journal`: epoch keys are pruned
-/// on an epoch window while σ is kept on a round window, so a re-check is
-/// impossible). A stray there is ignored and counted — never obeyed, never fatal:
-/// ignoring derives exactly what the rest of the network derives, where halting
+/// The agreed predicate comes first and the store second: `mandatory_at(epoch(h))`
+/// is network-agreed and independent of anything local. Store-first could use a σ
+/// filed at a round the agreed map calls beacon-inactive, and the seed journal
+/// this store rehydrates from is replayed without re-verification by design
+/// (epoch keys are pruned on an epoch window while σ is kept on a round window,
+/// so a re-check is impossible). A stray is ignored and counted, never obeyed or
+/// fatal: ignoring derives exactly what the network derives, whereas halting
 /// would turn one bad record into a node that cannot start.
 ///
 /// A height whose epoch the map cannot name (below the epocher origin) is
-/// INACTIVE and is never unwrapped: the beacon cannot have been mandatory in an
+/// inactive and is never unwrapped: the beacon cannot have been mandatory in an
 /// epoch that does not exist.
 fn replay_seed_source(
     beacon: &dyn Beacon,
@@ -760,7 +645,7 @@ fn replay_seed_source(
     };
     let round = Round::new(info.epoch(), View::new(proposal_view));
     if !beacon.mandatory_at(round.epoch().get()) {
-        // Read ONLY to count it: the value is never handed on.
+        // Read only to count it: the value is never handed on.
         if beacon.seed(round).is_some() {
             sync_metrics.crash_recover_stray_seed.inc();
             warn!(
@@ -785,33 +670,21 @@ enum CertSeed {
     /// The key is not resolvable here yet; the beacon is holding the value.
     Pending,
     /// Nothing usable: a certificate for another round, one carrying no σ, or one
-    /// whose σ was REFUSED under the epoch's attested key.
+    /// whose σ was refused under the epoch's attested key.
     Absent,
 }
 
-/// σ out of a finalization, PINNED to the round the caller named and CHECKED under
-/// the epoch key.
+/// σ out of a finalization, pinned to the round the caller named and checked
+/// under the epoch key.
 ///
 /// σ signs `seed_message(round)`, so a certificate for another round carries a
-/// perfectly valid signature over something else; taking it would be the fork the
-/// caller is avoiding. One implementation for both cert sources — the local
-/// archive and the upstream — because the rule is the same for both.
+/// valid signature over something else; taking it would be the fork the caller is
+/// avoiding. One implementation for both cert sources, local archive and upstream,
+/// because the rule is the same for both.
 ///
-/// THE CHECK IS NEW (E5-03), and what made it possible is that the miss now has an
-/// outcome. This walk used to read σ straight out of the archive with no
-/// verification, justified as "the epoch key needed for the check is also the one
-/// thing a restart may legitimately not have" — true, and the wrong conclusion: the
-/// two cases are distinguishable, and the beacon is what distinguishes them.
-/// `Observed::Pending` IS "no key here yet", and it defers; `Observed::Refused` is a
-/// σ that fails an ATTESTED key, which after П-3 is the only kind there is, so a
-/// corrupted or tampered archive record can no longer be derived from. The trust
-/// this walk extends to the archive's BLOCK BODIES is unchanged — they are what
-/// the derive is of, and the result is cross-checked by consensus.
-///
-/// The verdict is the beacon's for the same reason the two live ingresses use it:
-/// one rule in one place. It also FILES what it checks, so the walk's own read
-/// (`Beacon::seed`) is the answer, and a later height of the same round needs no
-/// second check.
+/// The check is the beacon's, one rule in one place. It also files what it checks,
+/// so the walk's own `Beacon::seed` read is the answer and a later height of the
+/// same round needs no second check.
 fn seed_via_beacon(
     beacon: &dyn Beacon,
     round: Round,
@@ -836,21 +709,18 @@ fn seed_via_beacon(
 /// Resolve σ for one replayed height: this node's store, then the local
 /// certificate at that height, then the cert upstream, then defer.
 ///
-/// TRUST CLASSES, and they differ on purpose. The store and the local
-/// `finalizations` archive are read WITHOUT re-verification, the same trust the
-/// seed journal takes and the same trust this walk already extends to the block
-/// bodies it derives from — both were written by this node's own marshal after it
-/// verified them, and re-checking one while trusting the other from the same disk
-/// would be incoherent (the epoch key needed for the check is also the one thing a
-/// restart may legitimately not have). The UPSTREAM read is the only VERIFIED
-/// one: `refetch_verified_archive_hole` authenticates it exactly like the
-/// cold-start jump landing. Every source is round-pinned by [`seed_via_beacon`],
-/// so no source can substitute a neighbouring round's σ.
+/// The store and the local `finalizations` archive are read without
+/// re-verification, the same trust the seed journal and the block bodies take:
+/// both were written by this node's own marshal after it verified them, and
+/// re-checking one while trusting the other from the same disk would be
+/// incoherent. The upstream read is the only verified one — it is authenticated
+/// exactly like a cold-start jump landing. Every source is round-pinned by
+/// [`seed_via_beacon`], so no source can substitute a neighbouring round's σ.
 ///
 /// A local certificate is often absent and that is normal, not a fault: an
-/// ancestry-finalized height may have no standalone cert anywhere, ever. Its σ is
-/// then the store's to supply, and a store that lost its journal tail falls
-/// through to the upstream — or, failing that, to the caller's defer.
+/// ancestry-finalized height may have no standalone cert anywhere. Its σ is then
+/// the store's to supply, and a store that lost its journal tail falls through
+/// to the upstream, or failing that to the caller's defer.
 #[allow(clippy::too_many_arguments)]
 async fn recover_replay_seed<A, U, C>(
     beacon: &dyn Beacon,
@@ -920,7 +790,7 @@ where
                      this node can use for this round (absent, or refused under the epoch key)"
                 ),
             },
-            // NO VERDICT (not one upstream answered) — and here that is the SAME
+            // No verdict (not one upstream answered) — and here that is the same
             // answer as a verdict, deliberately: this path never claimed data loss,
             // so it has nothing to withhold. It does not wait either, which is the
             // other half of why the block path and the σ path read this differently:
@@ -934,7 +804,7 @@ where
                 "crash-survivor recovery: not one configured upstream answered the by-height \
                  pull for this round's σ; deferring to devp2p and the caller's resume"
             ),
-            // NOT fatal here, where it is fatal for a missing BLOCK: the block is
+            // Not fatal here, where it is fatal for a missing block: the block is
             // already in hand, so a σ that cannot be fetched is a reason to let
             // devp2p carry the EL forward, not evidence of local data loss. The
             // caller's defer is the self-heal; a forged answer is refused by the
@@ -952,24 +822,20 @@ where
 /// Crash-survivor cold-start recovery: reth is missing the
 /// consensus-finalized block at `target` (an ungraceful crash lost reth's
 /// unflushed tail while the marshal persisted the finalization). Read the missing
-/// block(s) from the marshal's own `finalized_blocks` archive and `new_payload`
-/// them into reth, walking ancestors oldest-ward until reth reconnects; return the
-/// recovered `target`'s local hash. Standalone archive open (before the engine is
-/// built), like the metadata peek — dropped before `MarshalActor::init` re-opens it.
+/// blocks from the marshal's own `finalized_blocks` archive and import them into
+/// reth, walking ancestors oldest-ward until reth reconnects; return the recovered
+/// `target`'s local hash. The archive is opened standalone before the engine is
+/// built, like the metadata peek, and dropped before the marshal re-opens it.
 ///
-/// A gap wider than `MAX_COLD_RECOVER` (#12 — reth
-/// deeply behind its INTACT archive) returns [`RecoverOutcome::DeferToElSync`] (WITH
-/// an upstream) for the post-engine devp2p jump. A below-floor HOLE in the marshal's
-/// own archive (#8) is instead healed INLINE by a BLS-verified by-height re-fetch
-/// through `upstream` ([`refetch_verified_archive_hole`]) — the live marshal resolver
-/// cannot repair below its floor and the deferred jump can't fire at a `<= 64` gap, so
-/// deferring would strand reth. Both no-upstream cases stay fatal.
+/// A gap wider than `MAX_COLD_RECOVER` (reth deeply behind its intact archive)
+/// returns [`RecoverOutcome::DeferToElSync`] with an upstream, for the post-engine
+/// devp2p jump. A below-floor hole is instead healed inline by a BLS-verified
+/// by-height re-fetch through `upstream`. Both no-upstream cases stay fatal.
 ///
-/// A height whose σ cannot be resolved ([`recover_replay_seed`]) takes the SAME
-/// defer, mid-walk: the blocks already imported stay, and devp2p carries the EL
-/// from reth's new tip. Deriving that height locally is the one thing this
-/// function may never do, because a `prev_randao` derived from the digest
-/// fallback forks the restart away from the network.
+/// A height whose σ cannot be resolved takes the same defer, mid-walk: the blocks
+/// already imported stay, and devp2p carries the EL from reth's new tip. Deriving
+/// that height locally is the one thing this function may never do, because a
+/// `prev_randao` derived from the digest fallback forks the restart.
 // A single-call pre-engine assembly step: each arg is a distinct reth/consensus
 // dependency (engine, provider, deriver, upstream, committee source, checkpoint,
 // beacon, epoch map), not a bundleable cluster — an args struct would only add
@@ -994,17 +860,13 @@ where
     U: crate::cert_follow::CertUpstream,
     C: crate::cert_inlet::CommitteeSource,
 {
-    // The #8 re-fetch authenticates the upstream cert ITSELF — it is one of the two
-    // by-height seams that reach neither `store_finalization` nor
-    // `FrontierHandler::deliver`, which is the whole reason `verify_jump_authenticated`
-    // still exists after pass Б2. It needs a `&mut Clock + CryptoRngCore`.
     let mut verify_ctx = ctx.clone();
-    // An ungraceful crash loses only reth's unflushed tail (typically 1-2 blocks).
-    // A larger gap is NOT a recoverable flush race — #12 defers to devp2p EL-sync.
+    // An ungraceful crash loses only reth's unflushed tail (typically 1-2 blocks);
+    // a larger gap is not a flush race and defers to devp2p EL sync.
     const MAX_COLD_RECOVER: u64 = 64;
 
-    // Phase 1 (provider-only): find the reconnect point. A gap wider than the
-    // flush-race cap is #12 — the pre-engine marshal→reth replay can't bridge it.
+    // Provider-only: find the reconnect point. A gap wider than the flush-race
+    // cap cannot be bridged by the pre-engine replay.
     let lowest = match recover_reconnect_point(provider, target, MAX_COLD_RECOVER)? {
         ReconnectScan::Reconnect(lowest) => lowest,
         ReconnectScan::TooDeep => {
@@ -1018,17 +880,14 @@ where
         }
     };
 
-    // Phase 2: replay [lowest..=target] from the marshal's OWN finalized_blocks
-    // archive. σ for height `h` is resolved at `h`'s OWN round — the SAME key the
-    // live executor derives with, so a restarted node can never re-execute a
-    // height with a different `prev_randao` than the network (F4).
+    // Replay `[lowest..=target]` from the marshal's own `finalized_blocks` archive.
+    // σ for height `h` is resolved at `h`'s own round, the same key the live
+    // executor derives with, so a restarted node cannot re-execute a height with a
+    // different `prev_randao` than the network.
     //
-    // The finalizations archive is opened as a σ FALLBACK only
-    // ([`recover_replay_seed`]), never as a gate: a present block with an absent
-    // cert is a NORMAL state (an ancestry-finalized height may have no standalone
-    // cert anywhere, ever — pre-B′ this was classified as a re-fetchable hole, the
-    // upstream could not serve it, and the node could NEVER restart). Nothing here
-    // requires a cert to exist.
+    // The finalizations archive is opened as a σ fallback only, never as a gate: a
+    // present block with an absent cert is normal (an ancestry-finalized height may
+    // have no standalone cert anywhere), so nothing here requires a cert to exist.
     let archive = crate::outer::init_finalized_blocks_archive(ctx, MARSHAL_PARTITION_PREFIX).await;
     let certs = crate::outer::init_finalizations_archive(
         ctx,
@@ -1051,9 +910,6 @@ where
             )
         })?;
     for h in lowest..=target {
-        // Each walk element is acquired at the top of its OWN iteration. The
-        // one-height offset that used to sit here existed only to have `h+1` in
-        // hand for its `parent_seed`; nothing reads a child now.
         let order = recover_walk_block(
             &archive,
             upstream,
@@ -1064,14 +920,6 @@ where
             h,
         )
         .await?;
-        // The witness-downgrade refusal that stood here is GONE with the datum it
-        // read: it compared `h`'s own field against `h+1`'s, an archive-internal
-        // monotonicity check over two bodies. Its replacement is stronger, not
-        // absent — beacon-activity is now decided by the AGREED epoch map instead
-        // of by a block's own bytes, so a corrupted archive cannot assert its way
-        // onto either side, and a σ miss on a beacon-active link stops the walk
-        // instead of deriving with the digest fallback: the fork the old refusal
-        // was really guarding against.
         let seed = match recover_replay_seed(
             beacon,
             epocher,
@@ -1125,13 +973,9 @@ where
             status.is_valid() || status.is_syncing(),
             "EL rejected recovered finalized block {h}: {status:?}"
         );
-        // Per-block FCU, awaited — the SAME visibility sync point the live
-        // executor relies on. An InsertExecuted import "adds to canonical
-        // chain" but header-by-hash reads do NOT see the block until an FCU
-        // lands (observed unbounded, not ms-scale: a 10s retry expired
-        // against it), so the next iteration's parent read would fail
-        // without this. The retry above still covers the devp2p-concurrent
-        // import case, where the canonicalizer is not us.
+        // Per-block FCU, awaited: an InsertExecuted import adds to the canonical
+        // chain but header-by-hash reads do not see the block until an FCU lands,
+        // so the next iteration's parent read would fail without this.
         let resp = beacon_engine
             .fork_choice_updated(ForkchoiceState {
                 head_block_hash: parent_hash,
@@ -1140,12 +984,10 @@ where
             })
             .await
             .wrap_err("crash-survivor recovery per-block FCU failed")?;
-        // Judged by the next derive, not by the response code: VALID and "parent
-        // is visible" diverge in BOTH directions — SYNCING during a backfill does
-        // nothing, and INVALID can be returned AFTER canonicalization already
-        // happened. The typed `ParentHeaderMissing` on the following iteration is
-        // the honest signal; `derive_with_visibility_retry` already absorbs the
-        // concurrent-devp2p case here.
+        // Judged by the next derive, not the response code: SYNCING during a
+        // backfill does nothing, and INVALID can arrive after canonicalization.
+        // The typed `ParentHeaderMissing` on the next iteration is the honest
+        // signal.
         if !resp.is_valid() {
             warn!(
                 height = h,
@@ -1168,45 +1010,36 @@ where
     Ok(RecoverOutcome::Recovered(hash))
 }
 
-/// Operator-supplied per-launch configuration. Keys + JSON-parsed
-/// configs arrive pre-loaded (the host crate owns filesystem syscalls
-/// and permission checks); the slasher transport arrives pre-built
-/// because `PoolTxSink<P, Provider>` carries concrete
-/// `reth-transaction-pool` trait bounds that can't compile in this crate.
+/// Operator-supplied per-launch configuration. Keys and JSON-parsed configs
+/// arrive pre-loaded (the host crate owns filesystem syscalls and permission
+/// checks), and the slasher transport arrives pre-built because
+/// `PoolTxSink<P, Provider>` carries concrete `reth-transaction-pool` trait
+/// bounds that cannot compile in this crate.
 pub struct DposLayerConfig<D, XC, A, U> {
     pub bls_keypair: ValidatorBlsKeypair,
     pub peer_keypair: commonware_cryptography::ed25519::PrivateKey,
     /// Every per-epoch committee read the layer makes, as one frozen record per
-    /// epoch at one anchor. Built in the node crate beside the ordering-finalized
-    /// cursor it anchors on (`build_beacon_plane`) and the SAME `Arc` the
-    /// beacon's `CommitteeReads` facade views, so the consensus layer and the
-    /// beacon plane cannot hold two versions of one epoch's committee.
+    /// epoch at one anchor. The same `Arc` the beacon's `CommitteeReads` facade
+    /// views, so the consensus layer and the beacon plane cannot hold two versions
+    /// of one epoch's committee.
     pub committee: Arc<dyn crate::committee::Committee>,
-    /// `T` — `EpochTransition::last_tracked_epoch`, mirrored into ONE cell whose
-    /// single WRITER is this layer's boundary-bridge forwarder (the transition
-    /// advances `last_tracked_epoch` only on a successful `boundary_tx.try_send`,
-    /// `epoch_transition.rs:768-791`, cold start included — so the epochs the
-    /// forwarder drains ARE the epochs that advanced it). Its reader is exactly
-    /// ONE: the executor's frontier probe (`executor.rs:656`, read at
-    /// `:2099-2103`). `PlaneUpstreamHandle` does not read it — see the warning in
-    /// `plane_upstream::PlaneUpstreamHandle::fetch_one`.
-    ///
-    /// A cell and not a read of the transition: the transition sits behind an
-    /// async mutex, and a probe tick must never wait on the epoch machine it is
-    /// asking about. `u64::MAX` = nothing tracked yet.
+    /// `EpochTransition::last_tracked_epoch`, mirrored into one atomic cell whose
+    /// writer is this layer's boundary-bridge forwarder and whose reader is the
+    /// executor's frontier probe. A cell rather than a read of the transition,
+    /// which sits behind an async mutex: a probe tick must never wait on the epoch
+    /// machine it is asking about. `u64::MAX` means nothing tracked yet.
     pub tracked_epoch: Arc<std::sync::atomic::AtomicU64>,
     pub slasher_sink: Arc<dyn SlasherTxSink>,
     /// Evidence-channel bridge to the node's gossip task, which owns both p2p
-    /// halves of `EVIDENCE_CHANNEL` ([`crate::slasher::gossip`]).
+    /// halves of `EVIDENCE_CHANNEL`.
     pub evidence: crate::slasher::EvidenceBridge,
     pub staking_config: StakingReaderConfig,
     /// Cert upstream: the marshal's by-height backfill resolver, the frozen-tip
     /// ladder probe, and the steady-state re-jump's EL work all ride it. `Some` for
-    /// every launched node since the plane-native default (`node/dpos.rs` wraps both
-    /// the `Plane` and the `Ws` branch in `Some`). `None` is a no-upstream validator,
-    /// which `resolve_cold_start_kind` refuses for the empty-archive start (nothing
-    /// would climb the ladder) and which catches up on the consensus-plane treadmill
-    /// otherwise. There is no pre-engine jump any more (pass Б2).
+    /// every launched node; `None` is a no-upstream validator, which
+    /// `resolve_cold_start_kind` refuses for the empty-archive start (nothing would
+    /// climb the ladder) and which otherwise catches up on the consensus-plane
+    /// treadmill.
     pub upstream: Option<U>,
     /// OrderBlock → derived-EVM-block execution (node-built over reth-evm).
     pub deriver: D,
@@ -1223,36 +1056,29 @@ pub struct DposLayerConfig<D, XC, A, U> {
     /// promotion trigger for the role reconciler (the executor is the sole reth
     /// writer on a validator; it follows the chain by local derivation).
     pub spawn_unblocked: std::sync::Arc<tokio::sync::Notify>,
-    /// The always-on beacon/DKG plane, built ONCE per process in the node crate
-    /// (`build_beacon_plane`) and shared across the follower↔signer phase switch.
-    /// The
-    /// signer engine is a CONSUMER of its shared `ceremony_store` (the per-epoch
-    /// `PK_epoch`/share source) and its artifact store plus pull seam, re-uses
-    /// its `oracle` (the single network's peer set) + its already-registered
-    /// `beacon_metrics`, and CLONES its 5 `MuxHandle`s + `subscribe()`s the vote
-    /// backup to wire the OuterEngine's per-promotion sub-channels — it never
-    /// re-builds the network, re-spawns the `DkgActor`, re-registers the metrics, or
-    /// re-binds `listen`.
+    /// The always-on beacon/DKG plane, built once per process and shared across the
+    /// follower↔signer phase switch. The signer engine consumes its shared stores
+    /// and reuses its oracle and metrics, cloning its mux handles per promotion; it
+    /// never rebuilds the network, re-spawns the `DkgActor`, re-registers metrics,
+    /// or re-binds `listen`.
     pub beacon_plane: SharedBeaconPlane,
-    /// DEVNET/TEST-ONLY byzantine behaviour (gated behind `dpos-devnet-byzantine`).
+    /// devnet/test-only byzantine behaviour (gated behind `dpos-devnet-byzantine`).
     /// Absent — and the field does not exist — in a production build.
     #[cfg(feature = "dpos-devnet-byzantine")]
     pub byzantine: Option<crate::byzantine::ByzantineMode>,
 }
 
-/// A plane-owned broker handle for one of the 5 non-beacon channels: the single
-/// network's `(Sender, Receiver)` pair are owned by a persistent `Muxer` in the
-/// always-on plane (node crate); every promotion CLONES this handle (an `Arc`) and
-/// registers fresh sub-channels against the SAME broker. A `SubReceiver`
-/// auto-deregisters on drop, so a demoted engine that drops its `SubReceiver`s frees
-/// the slots and a re-promoted one re-registers — restart-free re-promotion.
+/// A plane-owned broker handle for one of the five non-beacon channels: the single
+/// network's `(Sender, Receiver)` pair is owned by a persistent `Muxer` in the
+/// always-on plane, and every promotion clones this handle and registers fresh
+/// sub-channels against the same broker. A `SubReceiver` auto-deregisters on drop,
+/// so a demoted engine frees the slots and a re-promoted one re-registers.
 ///
 /// `MuxHandle::register` takes `&mut self`, so the shared handle is wrapped in
-/// `Arc<Mutex<_>>`: each `register` (a boundary-rate control-channel round-trip)
-/// locks transiently. The derived `Clone` on `MuxHandle<S, R>` carries a spurious
-/// `R: Clone` bound that the move-only `DiscReceiver` does NOT satisfy, so the bare
-/// `MuxHandle` is itself un-`Clone`able here — the `Arc` is both the sharing
-/// mechanism AND the `Clone` we need for `SharedBeaconPlane`.
+/// `Arc<Mutex<_>>` and each register locks transiently. The derived `Clone` on
+/// `MuxHandle<S, R>` carries a spurious `R: Clone` bound the move-only
+/// `DiscReceiver` does not satisfy, so the `Arc` is both the sharing mechanism and
+/// the `Clone` needed for `SharedBeaconPlane`.
 pub type PlaneMux = Arc<
     Mutex<
         commonware_p2p::utils::mux::MuxHandle<
@@ -1262,24 +1088,21 @@ pub type PlaneMux = Arc<
     >,
 >;
 
-/// The ONE [`EpochTransition`] a validator process runs, handed DOWN from the node
-/// crate's always-on plane (where it is built, before the engine, so the geometry it
-/// freezes is available to the `DkgActor` and the committee module) together with the
-/// receiving half of the boundary bridge it was constructed with.
+/// The one [`EpochTransition`] a validator process runs, handed down from the
+/// node crate's always-on plane (where it is built before the engine, so the
+/// geometry it freezes is available to the `DkgActor` and the committee module)
+/// together with the receiving half of the boundary bridge it was constructed
+/// with.
 ///
-/// It is one instance and not two because two had two `last_tracked_epoch`s, two
-/// `anchor_height`s and two `oracle.track` calls per epoch, driven from two different
-/// heights: the engine's delivery hook fires on every ordering-finalized block, while
-/// the plane's poller reads a COALESCED reth watch — and boundary detection is
-/// pointwise, so the poller's driver skips boundaries outright (proved in
-/// `staking-reader`'s `a_coalesced_driver_skips_the_boundary_a_stepping_one_enters`).
-/// The surviving driver is therefore the delivery hook; the plane keeps only the
-/// GEOMETRY FREEZE (`EpochTransition::freeze_geometry`), which writes none of the
-/// bootstrap state — so the cold start below is the process's ONE bootstrapper, and
-/// the starting epoch is chosen on the ordering scale instead of by a race.
+/// One instance, not two: boundary detection is pointwise, the engine's delivery
+/// hook fires on every ordering-finalized block, and the plane's poller reads a
+/// coalesced reth watch that can skip boundaries outright. The delivery hook is
+/// therefore the driver; the plane keeps only the geometry freeze, which writes
+/// none of the bootstrap state, so the cold start below is the process's one
+/// bootstrapper.
 ///
-/// Both halves travel together because they are one object: `bridge_rx` can only be
-/// drained where `OuterEngine::boundary_sender()` exists, which is after `build`.
+/// Both halves travel together because `bridge_rx` can only be drained where
+/// `OuterEngine::boundary_sender()` exists, which is after `build`.
 pub struct PlaneEpochTransition<Provider, EvmConfig> {
     /// The instance itself. `Arc<Mutex<_>>` because the delivery hook, the
     /// executor's read-floor seam and the plane poller all call into it.
@@ -1301,30 +1124,25 @@ pub(crate) fn step_skip_reason(e: &crate::committee::CommitteeError) -> &'static
     }
 }
 
-/// The executor's frozen-tip frontier probe (see [`crate::executor::ReJump::probe`]),
-/// built ONCE here for BOTH launch paths — the plane-native validator and the
-/// follower.
+/// The executor's frozen-tip frontier probe, built once here for both launch
+/// paths, the plane-native validator and the follower.
 ///
-/// TWO requests per tick (§5.2 "Триггер и лестница"): the untargeted `Latest`,
-/// whose height is the hint driver, and the LADDER STEP `Finalized{last(T+1)}`.
-/// This closure only NAMES the step and its addressees; the executor puts it on
-/// the MARSHAL's own resolver (`marshal.hint_finalization(height, targets)`), and
-/// it is that resolver which carries the targets to `committee[T+1]` — the set
-/// that finalized that height. Both answers are judged by
-/// [`crate::plane_upstream::FrontierHandler`]'s `deliver`; the step's never comes
-/// back here, it goes into the marshal and shows up as the tip moving.
+/// Two requests per tick: the untargeted `Latest`, whose height is the hint
+/// driver, and the ladder step `Finalized{last(T+1)}`. This closure only names the
+/// step and its addressees; the executor puts it on the marshal's own resolver,
+/// which carries the targets to `committee[T+1]` — the set that finalized that
+/// height. The step's answer never comes back here; it goes into the marshal and
+/// shows up as the tip moving.
 ///
-/// `last(T+1)` and `committee[T+1]` both come from the committee module — ONE
-/// geometry and ONE committee map per process. An unreadable `committee[T+1]` is
-/// not a failure, it is "this node cannot name the addressee yet": count it and
-/// ask `Latest` alone.
+/// `last(T+1)` and `committee[T+1]` both come from the committee module, one
+/// geometry and one committee map per process. An unreadable `committee[T+1]` is
+/// not a failure but "this node cannot name the addressee yet": count it and ask
+/// `Latest` alone.
 ///
-/// ONE constructor and not two closures, because the two node classes have to
-/// climb the SAME ladder (review B1-01): the follower used to wire `probe: None`,
-/// which after §5.2 removed `upstream_frontier` left it with no way out of the
-/// "committee[E] not committed" defer at all. Its `Latest`/by-height seam is its
-/// WS upstream instead of the frontier resolver, and that is the only difference
-/// — it is the `U: CertUpstream` argument, not a second body.
+/// One constructor rather than two closures because the two node classes climb the
+/// same ladder; the follower's `Latest`/by-height seam is its upstream instead of
+/// the frontier resolver, which is the `U: CertUpstream` argument, not a second
+/// body.
 pub(crate) fn frontier_probe<U: crate::cert_follow::CertUpstream>(
     up: U,
     committee: Arc<dyn crate::committee::Committee>,
@@ -1391,31 +1209,23 @@ pub(crate) fn frontier_probe<U: crate::cert_follow::CertUpstream>(
     })
 }
 
-/// `T` for a node that runs NO [`fluentbase_staking_reader::EpochTransition`] —
-/// the follower (review B1-01).
+/// `T` for a node that runs no [`fluentbase_staking_reader::EpochTransition`],
+/// the follower.
 ///
 /// A validator mirrors `EpochTransition::last_tracked_epoch` off the boundary
 /// bridge; a follower spawns no per-epoch engine and therefore no transition, so
-/// it computes the SAME number from the two things it does have: the committee
-/// module's geometry and its own ordering-finalized cursor — the very cursor the
-/// module already anchors its reads on (`RethAnchor(finalized_cursor)`), not a
-/// new source.
+/// it computes the same number from the committee module's geometry and its own
+/// ordering-finalized cursor — the same cursor the module anchors its reads on.
 ///
-/// THE RULE IS ET'S, restated over those two, not a second convention
-/// (`staking-reader/src/epoch_transition.rs:550-585`): the transition tracks
-/// `epoch_e + 1` when the finalized block is the LAST block of its epoch (both
-/// the cold-start arm `:558` and the boundary arm `:580`) and `epoch_e`
-/// otherwise. `geometry.last(epoch_of(fin)) == fin` is that boundary test — the
-/// activation-relative one `is_epoch_boundary` makes (`:532`), since
-/// `Geometry::last` is built from the same `(activation, interval)` pair.
+/// The rule is the transition's, restated over those two: it tracks `epoch_e + 1`
+/// when the finalized block is the last block of its epoch and `epoch_e`
+/// otherwise. `geometry.last(epoch_of(fin)) == fin` is that boundary test.
 ///
-/// `None` while the geometry is unfrozen, and ONLY then — the one state with no
-/// step to take, which the probe counts as `no_tracked_epoch`/`no_geometry` and
-/// asks `Latest` alone. A cursor still at its seed below activation is not a
-/// second refusal, though this doc used to promise one: `Geometry::epoch_of`
-/// clamps a pre-activation height to epoch `0` (`epoch_at_block`'s
-/// `saturating_sub`, `types/src/staking_protocol.rs:177`), so the answer there
-/// is `Some(0)`.
+/// `None` only while the geometry is unfrozen — the one state with no step to
+/// take, which the probe counts as `no_tracked_epoch`/`no_geometry` and asks
+/// `Latest` alone. A cursor still at its seed below activation is not a second
+/// refusal: `Geometry::epoch_of` clamps a pre-activation height to epoch `0`, so
+/// the answer there is `Some(0)`.
 pub(crate) fn local_tracked_epoch(
     committee: Arc<dyn crate::committee::Committee>,
     cursor: crate::FinalizedCursor,
@@ -1428,16 +1238,13 @@ pub(crate) fn local_tracked_epoch(
     })
 }
 
-/// The persistent beacon/DKG plane handed DOWN from the node crate's always-on
+/// The persistent beacon/DKG plane handed down from the node crate's always-on
 /// component into each per-promotion signer engine. The node crate owns the single
-/// `FluentP2P` (beacon halves + `DkgActor` consume their channel there; the 5
-/// non-beacon channels are owned by 5 persistent plane `Muxer`s), the
-/// EpochTransition-driven Oracle peer-set, the ordering-tip watch, and reloads the
-/// `ceremony_store` from `<datadir>/beacon/` once at startup; the signer engine
-/// reads the SAME shared `Arc`s and CLONES the 5 `MuxHandle`s per promotion. There is
-/// exactly ONE network / listen bind / peer set / broker set per process — a
-/// demote→re-promote within one process needs no network rebuild (the engine drops
-/// its `SubReceiver`s on demote; the next promotion re-registers fresh ones).
+/// `FluentP2P`, the transition-driven oracle peer set, the ordering-tip watch, and
+/// the ceremony store; the signer engine reads the same shared `Arc`s and clones
+/// the mux handles per promotion. There is exactly one network, listen bind, peer
+/// set, and broker set per process, so a demote→re-promote needs no network
+/// rebuild.
 #[derive(Clone)]
 pub struct SharedBeaconPlane {
     /// The single network's Oracle (the one `Clone` p2p handle), used by the
@@ -1474,12 +1281,12 @@ pub struct SharedBeaconPlane {
     /// sender before the engine existed, and a sender created here would be one
     /// the actor never reads.
     pub beacon_tip: Arc<tokio::sync::watch::Sender<u64>>,
-    /// The self-heal / fork-safety metric family, registered ONCE in the node
+    /// The self-heal / fork-safety metric family, registered once in the node
     /// crate where the beacon plane is built, and the fork-safety latch over it.
     /// Both travel with the plane for the same reason `plane_clock` does: the
     /// beacon's agreement launcher reads the latch (`beacon::ValidatorInputs::
     /// safety_halt`), and the executor, the epoch manager and the OuterEngine
-    /// supervisor must read THE SAME one — a latch built here would be one the
+    /// supervisor must read the same one — a latch built here would be one the
     /// beacon never sees engage. The production latch is restored from the
     /// datadir marker ([`crate::sync_metrics::SafetyHalt::restoring`]) at the
     /// node, before the first consensus event; the latch has no in-process
@@ -1500,14 +1307,13 @@ enum ColdStartKind {
     Restart,
     /// Empty archive but the EL is already past epoch 0 — a node whose consensus
     /// store was lost or never existed while its reth datadir kept going. Anchor at
-    /// reth's OWN finalized tag `(cs_finalized, cs_finalized_hash)` and let the
-    /// ladder + the steady-state jump carry it forward (Д-2(а)).
+    /// reth's own finalized tag `(cs_finalized, cs_finalized_hash)` and let the
+    /// ladder plus the steady-state jump carry it forward.
     ///
-    /// The anchor is NOT the genesis (`archive_finalized`, where a runtime-deployed
-    /// ChainConfig is codeless) and NOT an upstream's `Latest` (nothing local can
-    /// check it). It is the same datum the follower path anchors on (`rf_hash`,
-    /// `derive_cold_start_heights`), written by exactly one thing — an FCU this node
-    /// itself issued, or the pre-DPoS sequencer's.
+    /// The anchor is not the genesis (where a runtime-deployed ChainConfig is
+    /// codeless) and not an upstream's `Latest` (nothing local can check it). It is
+    /// the same datum the follower path anchors on, written by exactly one thing:
+    /// an FCU this node itself issued, or the pre-DPoS sequencer's.
     ElFinalized,
 }
 
@@ -1533,14 +1339,12 @@ fn resolve_cold_start_kind(
     }
     if cs_finalized >= activation + interval {
         // EL past epoch 0 with an empty consensus archive: anchor at reth's own
-        // finalized tag (`ElFinalized`). An UPSTREAM is still required, but the
-        // reason changed with pass Б2 — it is no longer "something has to serve a
-        // frontier to jump to", because this path no longer jumps at boot. It is
-        // that every route out of the gap runs through a peer: the ladder's
-        // `Finalized{last(T+1)}` probe (§5.2), the marshal's by-height pulls, and
-        // the steady-state jump's own target, which only exists once the marshal has
-        // stored something. A node with no upstream at all would anchor here and
-        // never move.
+        // finalized tag (`ElFinalized`). An upstream is still required, not to jump
+        // at boot (this path does not), but because every route out of the gap runs
+        // through a peer: the ladder's `Finalized{last(T+1)}` probe, the marshal's
+        // by-height pulls, and the steady-state jump's own target, which only exists
+        // once the marshal has stored something. A node with no upstream at all would
+        // anchor here and never move.
         ensure!(
             has_upstream,
             "EL is past epoch 0 (finalized {cs_finalized} >= activation {activation} + interval \
@@ -1557,24 +1361,22 @@ fn resolve_cold_start_kind(
     Ok(ColdStartKind::FreshMigration)
 }
 
-/// What a FRESH follower datadir — one with no local `ChainConfig`, so no
-/// geometry, no committee and no archive — is allowed to use as its EL entry
-/// (§5.2 "Правило единое"). The ONE place in the system where nothing local can
-/// check a peer's answer, so the choice is a policy and not a lookup: pure, and
-/// unit-tested as such ([`fresh_follower_entry`] in `cold_start_kind_tests`).
+/// What a fresh follower datadir — one with no local `ChainConfig`, so no
+/// geometry, no committee and no archive — is allowed to use as its EL entry. The
+/// one place in the system where nothing local can check a peer's answer, so the
+/// choice is a policy and not a lookup, and it is pure and unit-tested as such.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FreshFollowerEntry {
     /// The operator named a block: `sync_to_checkpoint(hash)`.
     Checkpoint(B256),
-    /// LOCAL/test network only: take the upstream's word for its own tip. The one
-    /// surviving `get_latest ⇒ sync_to`, and it is named for what it is.
+    /// Local/test network only: take the upstream's word for its own tip. The one
+    /// surviving `get_latest ⇒ sync_to`.
     UpstreamLatest,
 }
 
-/// The policy itself. On a DEPLOYED network (`deployed_network`, evaluated by the
-/// node — `node/dpos.rs::is_deployed_network`) a missing checkpoint is a startup
-/// REFUSAL (E4-05): trusting one peer on first use is exactly the unauthenticated
-/// entry §5.2 removes, and unlike the other two entries there is no local datum to
+/// The policy itself. On a deployed network a missing checkpoint is a startup
+/// refusal: trusting one peer on first use is exactly the unauthenticated entry
+/// this path removes, and unlike the other two entries there is no local datum to
 /// fall back on.
 fn fresh_follower_entry(
     l1_checkpoint: Option<B256>,
@@ -1596,16 +1398,14 @@ fn fresh_follower_entry(
     }
 }
 
-/// What a follower that DOES have a local `ChainConfig` (geometry readable at
+/// What a follower that does have a local `ChainConfig` (geometry readable at
 /// `rf_hash`) uses as its EL entry — the five-way march of `launch_follower`'s
-/// `Some((activation, interval))` arm (R-131 / PLAN row 4.4).
+/// `Some((activation, interval))` arm.
 ///
-/// Deliberately NOT [`ColdStartKind`]: that enum is the VALIDATOR discriminator
-/// (`resolve_cold_start_kind`), it is named by the staking-reader's doc contract
-/// (`fluentbase_staking_reader::reader`, the `activation == 0` sentinel), and its
-/// three variants answer a different question (which anchor a populated/empty
-/// consensus archive resumes at). One enum serving both marches would tie two
-/// unrelated decisions together.
+/// Deliberately not [`ColdStartKind`]: that enum is the validator discriminator,
+/// named by the staking reader's doc contract, and its variants answer a different
+/// question (which anchor a populated/empty consensus archive resumes at). One
+/// enum serving both marches would tie two unrelated decisions together.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FollowerEntry {
     /// reth already holds the activation block (or its finalized tag is already at
@@ -1615,68 +1415,63 @@ enum FollowerEntry {
     /// No entry of any kind: no operator checkpoint and no upstream — the honest
     /// sequencer→DPoS migration, where the block will be produced by the pre-DPoS
     /// sequencer on this very chain, so the node waits for reth to hold it
-    /// (`wait_for_activation_block`, retry-forever). LAST of the three peer-free
+    /// (`wait_for_activation_block`, retry-forever). Last of the three peer-free
     /// steps, not the second: it is what is left when nothing else can be tried.
     WaitLocal,
-    /// An operator checkpoint is configured and not yet consumed. It is the FIRST
-    /// entry tried after the local probe, for two independent reasons:
-    ///
-    /// * before the CERTIFICATE entry, because `assert_l1_checkpoint` runs after the
-    ///   match and is counted FROM THE LANDING, and the certificate entry lands on
-    ///   the LOWEST legal height (`activation`), so the reverse order would turn a
-    ///   survivable park into a fatal refusal (К-73);
-    /// * before [`FollowerEntry::WaitLocal`], because `sync_to_checkpoint` needs no
-    ///   upstream at all — it FCUs to the operator's hash and lets devp2p backfill.
-    ///   Ordering it after the upstream test parked a node that had an entry.
+    /// An operator checkpoint is configured and not yet consumed. Tried first
+    /// after the local probe, for two independent reasons: `assert_l1_checkpoint`
+    /// runs after the match and is counted from the landing, and the certificate
+    /// entry lands on the lowest legal height (`activation`), so the reverse order
+    /// would turn a survivable park into a fatal refusal; and
+    /// `sync_to_checkpoint` needs no upstream at all, so ordering it after the
+    /// upstream test parked a node that had an entry.
     Checkpoint,
     /// The ordering chain is not usable as an entry yet, for either of two reasons
     /// the caller distinguishes in its `warn!`: the upstream serves no `latest` at
     /// or above `activation + K` (no certificate below `activation + K` carries a
     /// real EVM hash — `order_block::result_target`), or no epoch's committee is
-    /// readable at `rf_hash` yet (the window where `setDposActivationBlock` has run
-    /// but `commitEpochCommittee(0)` has not). Both are "ask again", never a fatal:
-    /// the input is external, exactly the `wait_for_activation_block` argument.
+    /// readable at `rf_hash` yet. Both are "ask again", never a fatal: the input is
+    /// external, exactly the `wait_for_activation_block` argument.
     ChainBelowActivation,
     /// Certificate entry: fetch the finalization for `target` from the upstream,
     /// authenticate it under the committee read at `rf_hash`, and EL-sync to its
-    /// attested result. `target` is the HIGHEST height this node can still check —
+    /// attested result. `target` is the highest height this node can still check —
     /// the one a cascading donor's `JUMP_THRESHOLD` window and a jumped validator's
-    /// archive lose LAST — so one request per attempt replaces a by-height walk.
+    /// archive lose last — so one request per attempt replaces a by-height walk.
     Certificate { target: u64 },
 }
 
-/// The two inputs of [`follower_entry`] that cost a PEER ROUND TRIP, so that the
-/// signature says which ones do: everything else in the march is read locally.
-/// [`Default`] (both absent) is the peer-free pass the caller runs first.
+/// The two inputs of [`follower_entry`] that cost a peer round trip: everything
+/// else in the march is read locally. [`Default`] (both absent) is the peer-free
+/// pass the caller runs first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 struct PeerProbes {
-    /// `CertUpstream::get_latest().block.height` — used for ROUTING and as the
+    /// `CertUpstream::get_latest().block.height` — used for routing and as the
     /// height ceiling only; the hash that comes with it is never read.
     latest_height: Option<u64>,
-    /// The HIGHEST epoch whose committee reads `Ok` at `rf_hash`, probed over
+    /// The highest epoch whose committee reads `Ok` at `rf_hash`, probed over
     /// `0..=MAX_COMMITTEE_LOOKAHEAD_EPOCHS`; `None` when none does.
     ///
-    /// "Highest readable" is the right ceiling only because readability is MONOTONIC
-    /// FROM ZERO — `commitEpochCommittee` runs upward from epoch 0 and a
-    /// pre-activation state has pruned none of them. With a hole (epoch 2 readable,
-    /// epoch 0 not) and a tip inside epoch 0, the target would land in the epoch
-    /// whose committee is unreadable and the fetch would refuse it forever. Nothing
-    /// enforces the monotonicity; it is a property of the commit order, recorded
-    /// here because the ceiling depends on it (R-131 review, D-03).
+    /// "Highest readable" is the right ceiling only because readability is
+    /// monotonic from zero: `commitEpochCommittee` runs upward from epoch 0 and a
+    /// pre-activation state has pruned none of them. With a hole and a tip inside
+    /// epoch 0, the target would land in the unreadable epoch and the fetch would
+    /// refuse it forever. Nothing enforces the monotonicity; it is a property of
+    /// the commit order, recorded because the ceiling depends on it.
     e_max: Option<u64>,
 }
 
 /// The march itself: pure, so the order of the five entries is unit-testable
-/// without a node ([`follower_entry`] in `cold_start_kind_tests`).
+/// without a node.
 ///
-/// The [`PeerProbes`] are `Option` because the caller learns them only by ASKING A
-/// PEER, and the first three entries (local anchor, operator checkpoint,
-/// wait-for-sequencer — in that order) must not cost a round trip. The
-/// caller therefore evaluates this twice: once with both `None` (the peer-free
-/// prefix — `Local` / `WaitLocal` / `Checkpoint` are final there), and again with
-/// the probes filled in only when the first verdict was
+/// The [`PeerProbes`] are `Option` because the caller learns them only by asking a
+/// peer, and the first three entries (local anchor, operator checkpoint,
+/// wait-for-sequencer — in that order) must not cost a round trip. The caller
+/// therefore evaluates this twice: once with both `None` (the peer-free prefix,
+/// where `Local` / `WaitLocal` / `Checkpoint` are final), and again with the
+/// probes filled only when the first verdict was
 /// [`FollowerEntry::ChainBelowActivation`]. Re-deciding through the same function
-/// is what keeps the peer-free prefix from being a second copy of the predicate.
+/// keeps the peer-free prefix from being a second copy of the predicate.
 fn follower_entry(
     holds_activation: bool,
     has_upstream: bool,
@@ -1686,17 +1481,17 @@ fn follower_entry(
     interval: u64,
     rf_num: u64,
 ) -> FollowerEntry {
-    // `rf_num >= activation` is today's local path and does not depend on the
-    // probe: reth's own finalized tag already sits at or above the activation
-    // block, so the anchor is `(rf_num, rf_hash)` whatever a concurrent read of
-    // `block_hash(activation)` says.
+    // `rf_num >= activation` does not depend on the probe: reth's own finalized
+    // tag already sits at or above the activation block, so the anchor is
+    // `(rf_num, rf_hash)` whatever a concurrent read of `block_hash(activation)`
+    // says.
     if holds_activation || rf_num >= activation {
         return FollowerEntry::Local;
     }
-    // THE CHECKPOINT COMES BEFORE THE UPSTREAM TEST, and the order is a fix rather
-    // than a preference: `sync_to_checkpoint` needs no `CertUpstream` at all (it FCUs
-    // to the operator's hash and lets devp2p backfill), so gating it behind "an
-    // upstream is configured" parked a node that had a perfectly good entry.
+    // The checkpoint comes before the upstream test: `sync_to_checkpoint` needs no
+    // `CertUpstream` (it FCUs to the operator's hash and lets devp2p backfill), so
+    // gating it behind "an upstream is configured" parked a node that had a good
+    // entry.
     if has_checkpoint {
         return FollowerEntry::Checkpoint;
     }
@@ -1718,17 +1513,13 @@ fn follower_entry(
     let last_readable = activation
         .saturating_add(e_max.saturating_add(1).saturating_mul(interval))
         .saturating_sub(1);
-    // THE READABLE WINDOW CAN END BELOW THE FLOOR — whenever
-    // `(e_max + 1) · interval <= K`, which at `e_max = 0` is any `interval <= K` and
-    // nothing forbids: the contract rejects only a ZERO interval
-    // (`contracts/staking/src/config.rs`, `set_epoch_block_interval`) and
-    // `read_geometry` only `> 0`. There is then no height that is both checkable and
-    // at or above the floor, which is the same state as "the chain is not there yet"
-    // and gets the same answer. Clamping the target UP to the floor instead — the
-    // `.max(floor)` this replaced — asked the upstream for a height in an epoch
-    // whose committee is NOT readable at `rf_hash`, so `fetch_verified_entry`
-    // refused it forever and the node parked on a message about the upstream for a
-    // fault of the geometry (R-131 review, D-03).
+    // The readable window can end below the floor whenever
+    // `(e_max + 1) · interval <= K`, which nothing forbids: the contract rejects
+    // only a zero interval and `read_geometry` only `> 0`. There is then no height
+    // that is both checkable and at or above the floor, the same state as "the chain
+    // is not there yet". Clamping the target up to the floor instead asked the
+    // upstream for a height in an epoch whose committee is not readable at
+    // `rf_hash`, so the fetch refused it forever.
     if last_readable < floor {
         return FollowerEntry::ChainBelowActivation;
     }
@@ -1738,25 +1529,17 @@ fn follower_entry(
     FollowerEntry::Certificate { target }
 }
 
-/// The entry march's OWN by-height fetch: pull the finalization for `height`, PIN it
-/// to the request, bind the certificate to the body it arrived with, and BLS-verify
-/// it under `committee[E]` read at `at_hash` — the three §5.2 properties, applied
-/// where a failure means "this node has no entry yet and will ask again".
+/// The entry march's own by-height fetch: pull the finalization for `height`, pin
+/// it to the request, bind the certificate to the body it arrived with, and
+/// BLS-verify it under `committee[E]` read at `at_hash` — the same checks as
+/// `cert_follow::fetch_verified_boundary`, but with a different failure surface.
+/// That seam increments `jump_boundary_refetch_failed`, a counter shared with the
+/// epoch-boundary seeding, and warns about verify-only admission that does not
+/// apply to a follower still inside `launch_follower`, which is not a committee
+/// member and just parks.
 ///
-/// **Deliberately not `cert_follow::fetch_verified_boundary`, which runs the very
-/// same four checks: what differs is the failure SURFACE, and that surface belongs
-/// to another consequence.** That seam increments `jump_boundary_refetch_failed` —
-/// the epoch-boundary seeding counter two other call sites share — and warns that
-/// "this member stays verify-only (no proposals, no votes) until the next epoch
-/// boundary", which for a follower still inside `launch_follower` is false twice
-/// over: it is not a committee member, it takes no admission, it parks. On a
-/// 2-second cadence that put two contradicting diagnoses in the operator's log
-/// forever and moved a counter about a different event (R-131 review, D-04). The
-/// precedent for a caller owning its own surface over these same two verifiers is
-/// [`refetch_verified_archive_hole`].
-///
-/// The reason comes BACK to the caller instead of being logged here, so the park
-/// prints one diagnosis and re-prints only when the reason CHANGES; the metric is
+/// The reason comes back to the caller instead of being logged here, so the park
+/// prints one diagnosis and re-prints only when the reason changes; the metric is
 /// the arm's own `dpos_sync_degraded{reason=activation_wait}`, already raised for
 /// exactly this park.
 async fn fetch_verified_entry<U, C>(
@@ -1770,19 +1553,16 @@ where
     U: crate::cert_follow::CertUpstream,
     C: crate::cert_inlet::CommitteeSource,
 {
-    // `_everywhere`: ONE ask per `ACTIVATION_POLL`, and a miss costs this node its
-    // entire entry — the shape the method's own doc reserves it for. (The
-    // pathological case it warns against is the marshal's per-sweep fan-out, which
-    // this is not.)
+    // One ask per `ACTIVATION_POLL`, and a miss costs this node its entire entry.
     let Some(uf) = upstream
         .get_finalization_everywhere(Height::new(height))
         .await
     else {
         return Err("no configured upstream serves the height".to_owned());
     };
-    // Nothing else binds the answer to the question: `verify_jump_structural` ties
-    // the cert only to the block it came with, and `verify_jump_authenticated` takes
-    // the epoch from the cert's own round.
+    // Nothing else binds the answer to the question: the structural check ties the
+    // cert only to the block it came with, and authentication takes the epoch from
+    // the cert's own round.
     if uf.block.height != height {
         return Err(format!(
             "an upstream served height {} instead of the one asked for",
@@ -1805,16 +1585,15 @@ where
     Ok(uf)
 }
 
-/// #17 SELF-HEAL visibility belt: a cold-start / follower landing read of a block
-/// reth JUST materialized (via an EL-sync jump / devp2p canonicalization) can
-/// transiently return `None` — reth-2.2 canonicalizes on the engine-tree thread a
-/// few ms before provider reads see the block (the same race
-/// `derive_with_visibility_retry` absorbs on the derive side). Retry `read` on the
-/// same 100 ms/10 s cadence under `dpos_sync_degraded{reason=landing_wait}=1`;
-/// fatal ONLY after the belt expires (a materialized-but-missing read is then the
-/// genuine data-loss fault). Bounded (not retry-forever): unlike an external
-/// peer/anchor wait, a landing that never materializes past its own EL-sync is a
-/// local fault, not a correlated one.
+/// Visibility belt for a cold-start / follower landing read of a block reth just
+/// materialized via an EL-sync jump or devp2p canonicalization: such a read can
+/// transiently return `None`, because reth canonicalizes on the engine-tree thread
+/// a few ms before provider reads see the block. Retry on the same 100 ms / 10 s
+/// cadence under `dpos_sync_degraded{reason=landing_wait}=1`, fatal only after the
+/// belt expires, since a materialized-but-missing read is then the genuine
+/// data-loss fault. Bounded rather than retry-forever: unlike an external peer or
+/// anchor wait, a landing that never materializes past its own EL sync is a local
+/// fault, not a correlated one.
 async fn read_with_visibility_belt<T, F, C>(
     ctx: &C,
     sync_metrics: &SyncMetrics,
@@ -1852,12 +1631,11 @@ where
 }
 
 /// Peek the consensus marshal archive's last-finalized height — the same value
-/// the cold-start discriminator reads. Returns 0 when the archive is
-/// empty/absent (no consensus state ever persisted). The unified supervisor's
-/// entry rule uses this to avoid choosing signer-first for an in-committee node
-/// that has no consensus state to resume (which would otherwise hit the
-/// `resolve_cold_start_kind` "empty archive + EL past epoch 0" fatal instead of
-/// following to build the archive first).
+/// the cold-start discriminator reads. Returns 0 when the archive is empty or
+/// absent. The unified supervisor's entry rule uses this to avoid choosing
+/// signer-first for an in-committee node with no consensus state to resume, which
+/// would hit the `resolve_cold_start_kind` "empty archive + EL past epoch 0" fatal
+/// instead of following to build the archive first.
 pub async fn peek_consensus_archive_last_finalized(ctx: &Context) -> eyre::Result<u64> {
     read_consensus_archive_last_finalized(ctx, MARSHAL_PARTITION_PREFIX).await
 }
@@ -1868,40 +1646,34 @@ pub struct DposLayerHandle {
     /// `get_finalization`+`get_block`). The node calls `feed_handle.set_marshal`
     /// with this once `launch` returns — keeping node types out of consensus.
     pub cert_mailbox: crate::outer::MarshalMailbox,
-    /// Layer-internal tasks the HOST must supervise alongside
-    /// `consensus_handle`, each with the label the host's exit log prints.
+    /// Layer-internal tasks the host must supervise alongside `consensus_handle`,
+    /// each with the label the host's exit log prints.
     ///
-    /// The runtime runs with `with_catch_panics(true)` and a commonware
-    /// `Handle` has NO `Drop` impl, so a DROPPED handle detaches its task: a
-    /// panic in it logs one line, resolves nothing, and the node keeps passing
-    /// liveness checks with the subsystem dead. Handing the handle up instead
-    /// lands it in `dpos.rs::supervise`, where a panic surfaces as
-    /// `Err(Error::Exited)` → shared-token cancel → node down (the SAME fatal
-    /// semantics `("inlet", h)` already gets on the validator path).
+    /// The runtime runs with `with_catch_panics(true)` and a commonware `Handle`
+    /// has no `Drop` impl, so a dropped handle detaches its task: a panic in it logs
+    /// one line, resolves nothing, and the node keeps passing liveness checks with
+    /// the subsystem dead. Handing the handle up lands it in the host supervisor,
+    /// where a panic surfaces as `Err(Error::Exited)` and cancels the node.
     ///
     /// Appended into the host's `Vec<SupervisedHandle>` — same tuple shape.
     pub supervised: Vec<(&'static str, Handle<()>)>,
-    /// Layer-internal tasks the host must LET FINISH on a graceful stop, each
-    /// with the label the host's drain log prints. Today: the durable
-    /// seed-journal writer, whose last act is to append and fsync whatever the
-    /// store queued but had not written yet.
+    /// Layer-internal tasks the host must let finish on a graceful stop, each with
+    /// the label the host's drain log prints. Today: the durable seed-journal
+    /// writer, whose last act is to append and fsync whatever the store queued but
+    /// had not written.
     ///
-    /// Same tuple shape as `supervised`, OPPOSITE semantics, and the two must
-    /// never be merged: a `supervised` handle resolving means "a subsystem
-    /// died, cancel the node", while one of these resolving means "the task
-    /// finished the work it owed, shutdown may proceed". Putting a drain task
-    /// in `supervised` would make its normal completion look like a crash;
-    /// putting a supervised task here would make its crash look like success.
-    ///
-    /// Every one of these tasks is spawned OUTSIDE the consensus engine's
-    /// supervision subtree, because the host awaits them only AFTER aborting
-    /// that engine — see `crate::outer::OuterBuilder::build`.
+    /// Same tuple shape as `supervised` but opposite semantics, and the two must not
+    /// be merged: a `supervised` handle resolving means a subsystem died and the
+    /// node must cancel, while one of these resolving means the task finished the
+    /// work it owed, so shutdown may proceed. Every one of these is spawned outside
+    /// the consensus engine's supervision subtree, because the host awaits them only
+    /// after aborting that engine.
     pub drain_on_shutdown: Vec<(&'static str, Handle<()>)>,
     /// Serve one held epoch-key artifact over `consensus_getEpochArtifact`, so a
-    /// TIER-2 follower obtains `PK_epoch` from this node exactly as it obtains
+    /// Tier-2 follower obtains `PK_epoch` from this node exactly as it obtains
     /// certificates from it.
     ///
-    /// `Some` on the FOLLOWER path only, and the asymmetry is not an oversight:
+    /// `Some` on the follower path only, and the asymmetry is not an oversight:
     /// the follower's beacon is built one frame below this crate boundary, so this
     /// closure over its `Beacon::artifact_bytes` is the only way out. A validator
     /// builds its own beacon and calls that method directly.
@@ -1916,7 +1688,7 @@ pub struct DposLayerHandle {
 pub type ArtifactSource = Arc<dyn Fn(u64) -> Option<Vec<u8>> + Send + Sync>;
 
 /// Whether `committee[epoch]` is readable for the follower's boundary trigger —
-/// the module's own answer, which is also what REGISTERS the epoch's scheme.
+/// the module's own answer, which is also what registers the epoch's scheme.
 /// `false` ⇒ not readable yet — no executed anchor, or the epoch's committee not committed at
 /// it — which the trigger treats as "retry on the next finalized block", never as
 /// an empty committee.
@@ -1928,47 +1700,25 @@ type FollowerBoundaryDeliver =
     Arc<dyn Fn(Epoch) -> futures::future::BoxFuture<'static, bool> + Send + Sync>;
 
 /// One step of the follower's epoch-boundary trigger: deliver the epoch the
-/// finalized stream has entered, at most once per epoch.
-/// Returns whether the trigger should keep running.
+/// finalized stream has entered, at most once per epoch. Returns whether the
+/// trigger should keep running.
 ///
-/// A validator gets its boundary deliveries from `EpochTransition`, which rides
-/// the beacon plane. A follower has no plane, so it derives the same delivery
-/// from the finalized `OrderBlock`s its own marshal reports — the seam
-/// `boundary_hook` already exists for. Three things downstream need it and all
-/// three were dead on a follower without it: `soft_enter` registering the current
-/// epoch's verify-only scheme (without which a resolver-delivered cert for any
-/// epoch above the cold-start one finds NO scheme and the marshal answers the
-/// fetch `true` without storing — a re-request loop that never closes),
-/// `highest_entered_epoch` (the repair sweep's frontier evidence in the window
-/// before the geometry freezes, where the live epoch is not yet defined), and
-/// the reconcile that the live epoch's own edges would otherwise be the only
-/// source of.
+/// A validator gets its boundary deliveries from `EpochTransition` on the beacon
+/// plane; a follower has no plane, so it derives the same delivery from the
+/// finalized `OrderBlock`s its own marshal reports.
 ///
-/// **`last_delivered` advances only after a delivery.** An unreadable committee
-/// must leave the epoch unconsumed: `committee[E]` is committed during `E-1` but
-/// the read runs at the EL-finalized hash, which trails the ordering-finalized
-/// height by `K`, so the first blocks of `E` can legitimately read back nothing.
-/// Consuming the epoch there would skip its registration until the NEXT boundary.
+/// `last_delivered` advances only after a delivery. An unreadable committee must
+/// leave the epoch unconsumed: `committee[E]` is committed during `E-1` but the
+/// read runs at the EL-finalized hash, which trails the ordering-finalized height
+/// by `K`, so the first blocks of `E` can legitimately read back nothing.
 ///
-/// **Epochs this step skipped entirely are deliberately not back-filled**, and
-/// they are skipped two ways. A FLOOR MOVE (a cold start or a re-jump walks the
-/// marshal floor forward) dispatches no block of the skipped epoch, so no
-/// certificate of it is ever fetched and there is nothing to register a scheme
-/// for. DRIVER LAG is the case where blocks WERE dispatched: this step reads one
-/// latest height and derives one epoch from it, so an epoch that both begins and
-/// ends while the step sits inside `committee_at`'s EVM snapshot read is passed
-/// over with its blocks already reported — and the repair sweep cannot cover for
-/// it either, because its work list is the REGISTERED schemes and a skipped epoch
-/// registers none. The cost is the one named above, scoped to that epoch: a
-/// resolver-delivered certificate for it finds no scheme and the marshal answers
-/// the fetch `true` without storing.
-///
-/// Accepted rather than back-filled because reaching it means the finalized
-/// height advancing a whole `interval` of blocks inside one state read — at the
-/// production `epochBlockInterval` of 86 400 that is a day of chain against a
-/// single snapshot read — and a back-fill would pay for that reachability with a
-/// committee read per skipped epoch on exactly the read that is, by hypothesis,
-/// the slow one.
+/// Epochs this step skipped entirely are deliberately not back-filled. A floor move
+/// dispatches no block of the skipped epoch, so nothing needs a scheme; driver lag
+/// is the case where blocks were dispatched but the step saw only the latest
+/// height, and the repair sweep cannot cover it because its work list is the
+/// registered schemes. Reaching lag means the finalized height advanced a whole
+/// `interval` inside one state read, so a back-fill would add a committee read per
+/// skipped epoch on the read that is, by hypothesis, the slow one.
 async fn enter_finalized_epoch(
     last_delivered: &mut Option<u64>,
     finalized_height: u64,
@@ -2001,21 +1751,20 @@ async fn enter_finalized_epoch(
 pub struct DposLayer;
 
 impl DposLayer {
-    /// Launch the DPoS layer end-to-end: build the 03 reader, the 05 p2p network and
-    /// the 04 OuterEngine; cold-start the plane's transition at this node's own
-    /// (post-jump) anchor; spawn forwarder + outer + network; return their
-    /// `Handle<()>`s for the host to supervise.
+    /// Launch the DPoS layer end-to-end: build the staking reader, the p2p network,
+    /// and the `OuterEngine`; cold-start the plane's transition at this node's own
+    /// (post-jump) anchor; spawn forwarder, outer, and network; return their
+    /// handles for the host to supervise.
     ///
-    /// The [`EpochTransition`] is NOT built here: it arrives as
+    /// The [`EpochTransition`] is not built here: it arrives as
     /// [`PlaneEpochTransition`] from the always-on plane, which built it before this
     /// launch so the geometry it freezes was already available to the `DkgActor` and
     /// the committee module. This layer supplies the two things only it has — the
-    /// per-block delivery driver (`boundary_hook`) and the executor's read-floor seam.
+    /// per-block delivery driver (`boundary_hook`) and the executor's read-floor
+    /// seam.
     ///
-    /// Caller (the host adapter at `crates/node/src/dpos.rs`) is responsible
-    /// for the `select!` supervisor over `shutdown` + the two returned
-    /// handles. Caller also performs filesystem key loading
-    /// and `PoolTxSink` construction before calling.
+    /// The caller supervises the returned handles and performs filesystem key
+    /// loading and `PoolTxSink` construction before calling.
     #[allow(clippy::too_many_arguments)]
     pub async fn launch<Provider, EvmConfig, BeaconEngine, D, XC, A, U>(
         ctx: Context,
@@ -2062,10 +1811,6 @@ impl DposLayer {
             byzantine,
         } = cfg;
 
-        // The plane owns the 5 persistent Muxers; this promotion CLONES their handles
-        // (to register fresh per-epoch / subchannel-0 routes against the SAME broker
-        // tasks) and `subscribe()`s a fresh vote-backup receiver. No raw move-only
-        // halves are consumed here, so a later demote→re-promote re-clones cleanly.
         let SharedBeaconPlane {
             oracle,
             randomness,
@@ -2091,17 +1836,6 @@ impl DposLayer {
             peer_count,
         } = reth;
 
-        // The self-heal stuck-detector (`sync_metrics`, cloned into the cold-start +
-        // boundary-hook self-heal loops below; `dpos_sync_degraded{reason}` is the
-        // observable that replaces the removed cold-start/boundary `process::exit`s,
-        // Decision A) and the fork-safety latch (`safety_halt`: shared across the
-        // executor, the epoch manager, the OuterEngine supervisor AND the beacon's
-        // agreement launcher; engaging it — result divergence / EL Invalid / L1
-        // fork / contract fork — halts participation while the node stays up +
-        // observable) both arrive with the plane: they are built and the marker
-        // restored where the beacon is built, before the first consensus event.
-
-        // Build the staking-reader layer: reader + cache + EpochTransition.
         let staking_address = staking_config.staking_address;
         let reader = RethStakingStateReader::new(
             provider.clone(),
@@ -2109,39 +1843,19 @@ impl DposLayer {
             staking_config.clone(),
         );
 
-        // Reth's `BlockchainProvider::with_latest` populates
-        // `canonical_state.finalized_block` from
-        // `ChainState::LastFinalizedBlock` during node init, so on a
-        // graceful-shutdown restart `get_finalized_num_hash()` returns
-        // `Some(disk_finalized.num_hash())`. The genesis fallback
-        // handles the pristine-network case (no FCU yet).
-        // Head (`head_num`/`head_hash`) is re-read AFTER the cold-start JUMP
-        // below (the jump drives reth's canonical head forward), so only the
-        // finalized pair is needed here for the discriminator.
         let (cs_finalized, cs_finalized_hash, _head_num, _head_hash) =
             derive_cold_start_heights(&canonical_state, genesis_hash);
 
-        // Activation origin + epoch length, read EARLY (at the reth-restored
-        // finalized hash) — the cold-start discriminator below needs them before
-        // `initial_epoch`. `dposActivationBlock` is immutable and
-        // `epochBlockInterval` is governance-stable across the short
-        // migration/restart window, so reading at `cs_finalized_hash` matches
-        // reading at the resumed height. The finalized hash is the one reth
-        // pre-populates into `canonical_in_memory_state` during init (via
-        // `with_latest`), so the read hits the ready in-memory state arm — a
-        // by-NUMBER hash would go to the DB historical arm and can revert before
-        // it materializes.
+        // Read at `cs_finalized_hash`, the block reth pre-populates into
+        // `canonical_in_memory_state` during init: a by-number hash would go to the
+        // DB historical arm and can revert before it materializes. Equivalent to
+        // reading at the resumed height because `dposActivationBlock` is immutable
+        // and `epochBlockInterval` is stable across the migration/restart window.
         let dpos_activation_block = reader.dpos_activation_block(cs_finalized_hash)?;
         let interval = reader.epoch_block_interval(cs_finalized_hash)?;
         let epoch_length_blocks =
             NonZeroU64::new(interval).ok_or_eyre("epoch_block_interval must be > 0")?;
 
-        // Cold-start discriminator. The marshal's durable application-metadata is the
-        // signal: an empty store (height <= activation) is a fresh sequencer→DPoS
-        // migration — unless the EL overshot epoch 0, which anchors at reth's own
-        // finalized tag instead (`ElFinalized`). A populated store is a restart of an
-        // already-migrated node, which MUST resume at its real finalized height so the
-        // scheme cascade starts at the correct epoch.
         let archive_finalized =
             read_consensus_archive_last_finalized(&ctx, MARSHAL_PARTITION_PREFIX).await?;
         let kind = resolve_cold_start_kind(
@@ -2153,8 +1867,6 @@ impl DposLayer {
         )?;
         let (latest_finalized, latest_finalized_hash) = match kind {
             ColdStartKind::FreshMigration => {
-                // FRESH MIGRATION: anchor ≡ block@dposActivationBlock; wait for reth
-                // to hold it, hash derived locally (canonical at a finalized height).
                 let hash = wait_for_activation_block(
                     &ctx,
                     &provider,
@@ -2165,24 +1877,6 @@ impl DposLayer {
                 (dpos_activation_block, hash)
             }
             ColdStartKind::ElFinalized => {
-                // EMPTY ARCHIVE, EL PAST EPOCH 0 (§5.2 "Правило единое", Д-2(а)).
-                // Anchor at reth's OWN finalized tag — the pair
-                // `derive_cold_start_heights` already read, which is the same datum the
-                // follower path anchors on (`rf_hash`). It is not state of unknown
-                // provenance: `canonical_in_memory_state`'s finalized slot has exactly
-                // ONE writer, `update_finalized_block` on an FCU
-                // (RETH `crates/engine/tree/src/tree/mod.rs:3109-3140`, reached only from
-                // `ensure_consistent_forkchoice_state`, `:3181-3190`), which refuses a
-                // hash that is not canonical here, and it survives a restart because the
-                // same function stages it to disk and `BlockchainProvider::with_latest`
-                // reloads it (`crates/storage/provider/src/providers/blockchain_provider.rs:87-116`).
-                // The devp2p pipeline never touches it. So the tag was written by an FCU
-                // THIS datadir accepted — this node's own `sync_to`/executor, or the
-                // pre-DPoS sequencer — never by a peer's answer.
-                //
-                // NO jump here (pass Б2): the node boots on this anchor and climbs with
-                // the ladder (§5.2) plus the steady-state tip-only jump, whose target is
-                // a pair out of its own archive.
                 info!(
                     anchor = cs_finalized,
                     anchor_hash = ?cs_finalized_hash,
@@ -2197,25 +1891,12 @@ impl DposLayer {
                 (cs_finalized, cs_finalized_hash)
             }
             ColdStartKind::Restart => {
-                // RESTART (already migrated): resume at the consensus archive's
-                // finalized height.
                 match provider.block_hash(archive_finalized)? {
                     Some(hash) => (archive_finalized, hash),
                     None => {
-                        // CRASH SURVIVOR: an ungraceful crash lost reth's
-                        // unflushed finalized tail while the marshal persisted the
-                        // finalization (the two stores flush independently). reth is
-                        // behind the consensus archive. Recover the missing block(s)
-                        // from the marshal's OWN finalized_blocks archive into reth —
-                        // the cold-start analog of the executor gap-heal, and how tempo
-                        // backfills marshal→reth. fluentbase needs this at cold-start
-                        // (not just in the executor backfill) because the committee
-                        // read at `latest_finalized_hash` and the genesis read both
-                        // require reth to hold the resume block. The later executor
-                        // backfill then becomes a no-op.
-                        //
-                        // The committee source authenticates a #8 below-floor re-fetch
-                        // (`committee[E]` read at the already-recovered parent state).
+                        // Recovery runs here, not only in the executor backfill, because
+                        // the committee read at `latest_finalized_hash` and the genesis
+                        // read both require reth to hold the resume block.
                         let recover_committees = crate::cert_inlet::RethCommitteeSource::new(
                             RethStakingStateReader::new(
                                 provider.clone(),
@@ -2240,28 +1921,6 @@ impl DposLayer {
                         {
                             RecoverOutcome::Recovered(hash) => (archive_finalized, hash),
                             RecoverOutcome::DeferToElSync { gap } => {
-                                // #12 (reth deeply behind an INTACT archive): the pre-engine
-                                // replay is capped, so anchor at reth's ACTUAL tip. WHAT
-                                // CLOSES THE GAP after pass Б2 is the EXECUTOR'S STARTUP
-                                // BACKFILL DRAIN, not a jump: `outer.rs` hands the executor
-                                // `last_consensus_finalized_height` (the marshal's own acked
-                                // cursor, which an INTACT archive leaves far above reth), and
-                                // the executor drains
-                                // `(last_execution_finalized_height .. that cursor]` block by
-                                // block out of the marshal archive through the same
-                                // derive+import path live dispatch uses
-                                // (`executor.rs::finalized_heights_to_backfill`).
-                                //
-                                // The steady-state jump CANNOT serve here and never fires on
-                                // this path: `last_tip_height` and `ordering_finalized` are
-                                // both seeded from that same cursor, so the heartbeat re-poke
-                                // sees a difference of 0, and `maybe_re_jump` refuses to spawn
-                                // at all while the drain is non-empty. So
-                                // `dpos_sync_degraded{reason=crash_recover}` stays raised until
-                                // the drain's LAST height clears it (`executor.rs`, the
-                                // `pending_backfill` arm) — there is no pre-engine step left
-                                // that could clear it here. Cost of the change: this gap is now
-                                // walked by derive+import instead of one devp2p fast-forward.
                                 let best = provider.best_block_number()?;
                                 info!(
                                     gap,
@@ -2285,14 +1944,12 @@ impl DposLayer {
             }
         };
 
-        // Read the EL head AFTER the crash-survivor recovery above: it imports the
-        // missing reth tail, so a pre-recovery snapshot would be stale.
+        // Read both after the crash-survivor recovery, which imports the missing
+        // reth tail; a pre-recovery snapshot would be stale and make the executor
+        // backfill re-derive those blocks.
         let (_cs_fin, _cs_fin_hash, head_num, head_hash) =
             derive_cold_start_heights(&canonical_state, genesis_hash);
 
-        // Read AFTER the crash-survivor recovery above: it imports the missing reth
-        // tail, and a pre-recovery snapshot would make the executor backfill
-        // re-derive exactly those blocks (idempotent but wasted V).
         let last_execution_finalized_height = provider
             .last_block_number()
             .wrap_err("provider failed to report chain head block number at startup")?;
@@ -2308,13 +1965,9 @@ impl DposLayer {
             "DPoS init: cold-start discriminator resolved"
         );
 
-        // Clean-halt migration invariant: the pre-DPoS sequencer is production-gated
-        // at `dposActivationBlock` (bins/fluent launcher), so on a fresh migration
-        // reth's canonical head MUST already equal the activation anchor — there is
-        // no orphaned sequencer-era tail to reconcile. A mismatch means the gate did not run
-        // (mis-set chain-config, an ungated node, or a hand-rolled migration): fail
-        // loud at cold-start rather than wedge silently in the executor ancestor-FCU
-        // guard.
+        // The pre-DPoS sequencer is production-gated at `dposActivationBlock`, so a
+        // fresh migration's reth head must already equal the activation anchor.
+        // Failing here beats wedging in the executor's ancestor-FCU guard.
         if kind == ColdStartKind::FreshMigration {
             ensure!(
                 head_hash == latest_finalized_hash,
@@ -2336,8 +1989,6 @@ impl DposLayer {
         )
         .ok_or_else(|| eyre!("epochBlockInterval is zero"))?;
 
-        // Enforce the node ↔ contract invariant
-        //   `activeValidatorsLength <= fluentbase_p2p::MAX_COMMITTEE_SIZE`.
         let active_validators_length = reader
             .active_validators_length(latest_finalized_hash)
             .wrap_err("failed reading Staking.activeValidatorsLength")?;
@@ -2366,36 +2017,12 @@ impl DposLayer {
             "DPoS startup config"
         );
 
-        // The cold-start committee, read through the MODULE — which is also
-        // what registers it: the record and this epoch's verify-only scheme land
-        // in the same map slot, so the marshal can verify certificates of the
-        // starting epoch before any boundary fires. This replaced a direct
-        // `epoch_committee_snapshot` here plus an `OuterEngine::cold_start_register`
-        // after `build`; between them they were a second producer of an epoch's
-        // scheme, and the one that hardcoded `oracle: None`.
-        //
-        // A refusal is routed by the module's own verdict, and the two arms are
-        // the two different facts the old direct read could not tell apart.
-        //
-        // PERMANENT (`is_transient() == false`: the contract answered something
-        // no committed epoch can answer, or the epoch is below the read window)
-        // is a statement about the CHAIN, and it stays the loud startup refusal
-        // §5.1 prescribes — the operator message in full, and the process does
-        // not come up pretending to follow a chain whose committee it cannot
-        // read.
-        //
-        // TRANSIENT is a statement about THIS PROCESS, not the chain. The
-        // module's anchor is this node's ordering-finalized cursor (floored by
-        // reth's own finalized tag) and its geometry is frozen by the beacon
-        // plane's `EpochTransition`; both are seeded by tasks that run
-        // CONCURRENTLY with this launch, so a `NotReadable` at this instant says
-        // "this process has not finished standing up". The retry is not a hope:
-        // `epoch_transition::cold_start` below queues THIS epoch on the bridge
-        // (`staking-reader/src/epoch_transition.rs` `track_and_trigger`, the
-        // `boundary_tx.try_send`), the forwarder hands it to the manager's
-        // `boundary_rx`, and a reconcile that finds the committee still
-        // unreadable parks the epoch in `deferred_reconciles`, which the
-        // module's own wake-up drains.
+        // The cold-start committee read goes through the module, which registers the
+        // record and this epoch's verify-only scheme in one slot so the marshal can
+        // verify certificates of the starting epoch before any boundary fires. A
+        // permanent refusal is a fact about the chain and stays the loud startup
+        // error; a transient miss is this process's startup order, and the cold start
+        // below queues the epoch for a retry.
         match committee.committee(initial_epoch_u64) {
             Ok(record) => info!(
                 epoch = initial_epoch_u64,
@@ -2430,47 +2057,18 @@ impl DposLayer {
             ),
         }
 
-        // The single `FluentP2P` is built ONCE per process by the node crate's
-        // always-on beacon plane (and stays up across the follower↔signer switch);
-        // this signer engine consumes a CLONE of that one network's `oracle` plus
-        // CLONES of the 5 plane-owned non-beacon `MuxHandle`s. It never re-binds
-        // `listen`, rebuilds a `Muxer`, or consumes a raw channel half — so a
-        // demote→re-promote within one process re-clones cleanly (no network rebuild).
-
-        // THE process's `EpochTransition`, built by the always-on plane with the
-        // sending half of this bridge already wired in, and its receiving half. The
-        // forwarder below (spawned after `build`, where `boundary_sender()` exists)
-        // drains `bridge_rx` → `outer_boundary_tx`. There is no second instance and no
-        // second `oracle.track` per epoch: the plane's poller no longer drives
-        // boundaries at all, this layer's per-block delivery hook does.
         let PlaneEpochTransition {
             transition: et_arc,
             mut bridge_rx,
         } = epoch_transition;
 
-        // `T` for the ladder step — see `DposLayerConfig::tracked_epoch`. This
-        // layer is its ONE writer (the boundary forwarder below).
         const NO_TRACKED_EPOCH: u64 = u64::MAX;
         let tracked_epoch_cell = tracked_epoch;
 
-        // Cold-start at THIS node's anchor — the one the cold-start discriminator
-        // resolved, i.e. AFTER a jump landed, which is strictly at or above the
-        // EL-finalized height the plane poller reads. This is the process's ONE
-        // bootstrap, and it is here rather than in the poller because only here is the
-        // anchor an ORDERING height on the far side of the jump: it picks the starting
-        // epoch (the single value the epoch manager ever learns, over the bridge) and
-        // sets the read floor to the landing (`cold_start` raises, never lowers — see
-        // `raise_anchor_height`).
-        //
-        // The plane's poller has already done the other two things this call also
-        // does: it froze the geometry (through the same path, so whichever ran first
-        // the other is a no-op) and it registered a FIRST peer set
-        // (`EpochTransition::track_peers`, `crates/node/src/dpos.rs`). That
-        // registration is why the jump loop above could finish at all — the frontier
-        // resolver dials only tracked peers — and it is NOT a bootstrap: it moves no
-        // bootstrap state, so the branch this call takes is still the write-once one.
-        // Re-registering its epoch index here is ignored by the Oracle; a higher one
-        // is the ordinary advance.
+        // The process's one bootstrap: it picks the starting epoch the epoch manager
+        // learns over the bridge and raises the read floor to the landing. The plane's
+        // poller already froze the geometry and registered a first peer set, which
+        // writes no bootstrap state, so this still takes the write-once path.
         et_arc
             .lock()
             .await
@@ -2482,20 +2080,9 @@ impl DposLayer {
             "DPoS cold_start complete; peer set tracked"
         );
 
-        // Compute the consensus genesis Block.
-        //
-        // `latest_finalized` is 0 for pristine cold-start (no FCU yet — canonical
-        // state empty → falls to `BlockNumHash::new(0, genesis_hash)` at dpos.rs:220)
-        // and N for sequencer→DPoS migration (the sequencer's last finalised height read from
-        // disk by reth's `BlockchainProvider::with_latest`).
-        //
-        // For migration, anchoring the consensus genesis at block N (rather than
-        // the fluent chain genesis at height 0) makes Simplex voter cache
-        // `set_genesis(hash_N)` so view 1's `context.parent = (View::zero(), hash_N)`
-        // matches the proposer's block.parent = hash_N. `fetch_parent`'s identity
-        // short-circuit then returns the synthetic genesis (= block N),
-        // `validate_block` passes, and `application.verify(block_N+1)` proceeds
-        // to reth `new_payload` against MDBX-loaded state(hash_N).
+        // Anchor the consensus genesis at `latest_finalized`, not at chain height 0:
+        // Simplex caches `set_genesis(hash_N)`, so view 1's `context.parent` must
+        // match the proposer's `block.parent`.
         let genesis_unsealed = provider
             .block_by_number(latest_finalized)
             .map_err(|e| {
@@ -2509,31 +2096,16 @@ impl DposLayer {
                 )
             })?;
         let genesis_sealed: SealedBlock<RethBlock> = SealedBlock::seal_slow(genesis_unsealed);
-        // F-type: the ordering-chain genesis is the deterministic anchor
-        // artifact (its `result` field binds the anchor's EVM hash, so the
-        // weak-subjectivity binding of the old executed-block genesis is
-        // preserved). Every node computes the identical artifact, so Simplex
-        // `set_genesis(digest)` matches view 1's parent on all nodes.
         let genesis_block = anchor_order_block(&genesis_sealed)?;
 
-        // Boundary hook: fires for every `Update::Block`. Spawns
-        // fire-and-forget via `ctx.spawn` (NOT `tokio::spawn`, which would
-        // depend on the implicit `tokio::Handle::current()` contract under
-        // commonware-tokio). The live-DKG epoch clock does not ride this hook —
-        // the `DkgActor` reads the marshal's ordering tip off the plane's own
-        // watch (`SharedBeaconPlane::beacon_tip`), which moves in the follower
-        // phase too, where this signer hook does not run.
+        // Fires for every `Update::Block`, spawned via `ctx.spawn`: `tokio::spawn`
+        // would depend on the implicit `tokio::Handle::current()` contract under
+        // commonware-tokio.
         let consecutive_errors = Arc::new(AtomicU32::new(0));
         let et_for_hook = et_arc.clone();
         let ctx_for_hook = ctx.with_label("boundary_hook");
         let errors_for_hook = consecutive_errors.clone();
         let sync_metrics_for_hook = sync_metrics.clone();
-        // External wedge detection replacing the deleted give-up: the height of a
-        // parked boundary (0 = none). The park has NO internal give-up — a
-        // durably-frozen node is caught by a Prometheus `!= 0 for > Xm` alert +
-        // the periodic warn! below + the harness recover-stall, never a local
-        // counter/clock. Signer-plane twin of the executor cert-budget park's
-        // `deferred_height`.
         let parked_boundary_height = Gauge::<i64>::default();
         ctx_for_hook.register(
             "parked_boundary_height",
@@ -2541,12 +2113,6 @@ impl DposLayer {
              A sustained non-zero value flags a durably-wedged node.",
             parked_boundary_height.clone(),
         );
-        // #16: consecutive on_finalized errors, exposed as a gauge instead of a
-        // 3-error `shutdown.cancel()`. A boundary-read failure is typically
-        // CORRELATED (bad staking state every validator reads) — a fatal here would
-        // restart-storm the whole set at once (Decision A). Retry-forever-degraded;
-        // a sustained non-zero value (paired with `dpos_sync_degraded{reason=
-        // boundary_hook}`) is the external wedge signal.
         let on_finalized_consecutive_errors = Gauge::<i64>::default();
         ctx_for_hook.register(
             "on_finalized_consecutive_errors",
@@ -2554,17 +2120,6 @@ impl DposLayer {
              forever (no shutdown); a sustained non-zero value flags a wedged boundary read.",
             on_finalized_consecutive_errors.clone(),
         );
-        // The re-poke loop below is the ONE task on this path that genuinely
-        // cannot hand a handle to the node supervisor: `enter_boundary` is an
-        // `Arc<dyn Fn(u64)>` called from the delivery adapter and from the
-        // executor's re-jump landing, spawning one loop PER boundary entry —
-        // there is no return path and no fixed set of handles to register. So
-        // its death is made LOUD instead: the panic is caught right at the loop
-        // (`with_catch_panics(true)` otherwise reduces it to one log line, and a
-        // dropped handle detaches the task) and ticked here. Any non-zero value
-        // means an epoch boundary lost its re-poke driver — pair it with
-        // `parked_boundary_height != 0`, which stays stuck at the height the
-        // dead loop was driving.
         let boundary_repoke_panics: Counter = Counter::default();
         ctx_for_hook.register(
             "boundary_repoke_task_panics",
@@ -2575,11 +2130,9 @@ impl DposLayer {
         );
         let parked_gauge_for_hook = parked_boundary_height.clone();
         let errors_gauge_for_hook = on_finalized_consecutive_errors.clone();
-        // The epoch-entry seam, keyed on a HEIGHT and not on a delivered block, so the
-        // steady-state re-jump can drive the SAME entry the delivery path drives without
-        // synthesising an `Update::Block`: that update carries an `Exact` ack the executor
-        // must fire, and a dropped ack trips marshal's supervisor cascade. The hook only ever
-        // read `block.height` anyway.
+        // Keyed on a height rather than a delivered block so the steady-state re-jump can
+        // drive the same entry without synthesising an `Update::Block`, whose `Exact`
+        // ack the executor must fire.
         let enter_boundary: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |number: u64| {
             let et = et_for_hook.clone();
             let ctx_task = ctx_for_hook.clone();
@@ -2588,39 +2141,16 @@ impl DposLayer {
             let errors_gauge = errors_gauge_for_hook.clone();
             let sync_metrics = sync_metrics_for_hook.clone();
             let repoke_panics = boundary_repoke_panics.clone();
-            // The old BlockNotFound retry loop is gone: committee reads
-            // now resolve at the result-final height (number − K) inside
-            // EpochTransition; an unresolved read is Intra + a pending
-            // boundary that replays on the next delivery — no race with
-            // the executor's import remains.
             drop(ctx_task.spawn(move |ctx_inner| async move {
-                // Re-poke loop: a parked boundary replays only on the next
-                // on_finalized call, and during epoch catch-up the parked
-                // boundary IS the last deliverable block — without the
-                // retry no further delivery would ever trigger the replay
-                // (catch-up deadlock).
+                // A parked boundary replays only on the next `on_finalized` call, and
+                // during catch-up the parked boundary is the last deliverable block, so
+                // the loop re-pokes until the park clears. There is no internal give-up:
+                // liveness is the `parked_boundary_height` gauge and the harness
+                // recover-stall deadline.
                 //
-                // NO internal give-up (mirrors the cert-budget executor
-                // park): re-poke at PENDING_RETRY_BACKOFF until the park
-                // CLEARS (state materialized) or a real error surfaces. A
-                // deep re-jump PIPELINE backfill runs up to
-                // EL_SYNC_BACKSTOP_CEILING (6 h), which any fixed limit would
-                // exhaust — abandoning the last deliverable boundary and
-                // wedging epoch E+1 (a recover-stall by a second route). A
-                // best_block_number()-progress gate is deliberately NOT used:
-                // it is FROZEN for the whole backfill (the exact bug
-                // scenario). Liveness against a genuinely-wedged node is
-                // EXTERNAL — the parked_boundary_height gauge (+ periodic
-                // warn) and the harness recover-stall deadline, never a local
-                // counter/clock.
-                // LOUD-EXIT rather than supervised (see the
-                // `boundary_repoke_task_panics` counter above for why no handle
-                // can reach the node supervisor from here): catch the unwind at
-                // the loop so a panic in the only driver of THIS boundary becomes
-                // a counter tick + an error!, instead of the single anonymous
-                // "task panicked" line `with_catch_panics(true)` reduces it to.
-                // Only a panic takes the arm below — a clean `break` returns
-                // `Ok` and an abort never resolves at all.
+                // Catch the unwind so a panic in the only driver of this boundary ticks
+                // `boundary_repoke_task_panics` instead of being reduced by
+                // `with_catch_panics(true)` to a single log line.
                 use futures::FutureExt as _;
                 let repoke = std::panic::AssertUnwindSafe(async move {
                     let mut pokes = 0u64;
@@ -2630,21 +2160,12 @@ impl DposLayer {
                             et_guard.on_finalized(number).await
                         };
                         match outcome {
-                            // Any Ok is a successful boundary read — clear the
-                            // consecutive-error streak + the degraded gauge.
                             Ok(TransitionOutcome::EpochAdvanced(_) | TransitionOutcome::Intra) => {
                                 if errors.swap(0, Ordering::Relaxed) != 0 {
                                     errors_gauge.set(0);
                                     sync_metrics.recover(SyncReason::BoundaryHook);
                                 }
                             }
-                            // #16 SELF-HEAL (retry-forever-degraded, Decision A): a
-                            // boundary-read failure is typically correlated (bad
-                            // staking state every validator reads), so a fatal here
-                            // would crash all validators at once. Raise the gauges,
-                            // back off, and re-attempt on_finalized — NEVER break/
-                            // shutdown (a break would wedge the last-deliverable-
-                            // boundary catch-up with no further delivery to re-fire).
                             Err(e) => {
                                 let count = errors.fetch_add(1, Ordering::Relaxed) + 1;
                                 errors_gauge.set(count as i64);
@@ -2665,16 +2186,10 @@ impl DposLayer {
                                 continue;
                             }
                         }
-                        // BENIGN MISATTRIBUTION: `enter_boundary` spawns one of these
-                        // loops per call and both the delivery adapter and the
-                        // executor's re-jump landing can call it, so the value read
-                        // here may have been parked by the OTHER task. The gauge and
-                        // the every-N-pokes warn can therefore credit a park to the
-                        // wrong spawn. Nothing is lost by it: the slot is global, both
-                        // loops exit only on `None`, and whichever loop sees `None`
-                        // clears the gauge — so no wakeup can be dropped and the gauge
-                        // still reads "some boundary is parked", which is what the
-                        // wedge alert asks.
+                        // Both the delivery adapter and the executor's re-jump landing can
+                        // call `enter_boundary`, so the gauge may credit a park to the other
+                        // spawn; both loops exit only on `None`, and whichever sees `None`
+                        // clears the gauge.
                         let parked = et.lock().await.pending_boundary();
                         match parked {
                             None => {
@@ -2721,12 +2236,8 @@ impl DposLayer {
             Arc::new(move |block: crate::order_block::OrderBlock| enter(block.height))
         };
 
-        // The read-floor seam — the height-floor twin of `enter_boundary`, on the SAME
-        // `EpochTransition`. A re-jump landing publishes its result-final floor here and
-        // the state machine clamps every later committee read to it, so the entry above
-        // reads state this node still holds rather than state the jump left behind.
-        // AWAITED by the executor rather than spawned like the entry: the floor has to be
-        // in place before the entry's first read, and a spawn would race it.
+        // The executor awaits this rather than spawning it: the floor must be in place
+        // before the entry's first committee read, or the read races the jump landing.
         let et_for_read_floor = et_arc.clone();
         let read_floor_boundary: crate::executor::BoundaryReadFloorFn =
             Arc::new(move |height: u64| {
@@ -2739,50 +2250,13 @@ impl DposLayer {
         let me = peer_keypair.public_key();
         info!(peer_pubkey = %me, "DPoS peer identity");
 
-        // The live-DKG `ceremony_store` (written by the always-on `DkgActor`) and the
-        // `committee_for` resolver arrive SHARED from the persistent beacon plane
-        // (node crate) via [`SharedBeaconPlane`]; this signer engine is a read-only
-        // consumer (the `PK_epoch` resolver behind `BeaconVerify`, and the per-epoch
-        // signing material via `beacon_resolver`). The disk reload of
-        // `<datadir>/beacon/` happened ONCE at the plane's startup — not here.
-        //
-
-        // Slasher wiring: the committee module resolves every evidence epoch —
-        // no dedicated reader and no finalized-hash closure of its own. The
-        // TxPool transport sink arrives pre-built via `cfg.slasher_sink`
-        // (host-side construction).
-
-        // Per-epoch threshold beacon resolver for the combined consensus scheme —
-        // carry-forward under the frozen on-chain `dkgQual`-bit arbitration, which
-        // after П-3 lives in `beacon::artifact::MintIndex` (the bit walk, memoised on
-        // disk) over `beacon::artifact::ArtifactStore` (the key); refusal ⇒ the epoch_manager
-        // share-gate demotes to verify-only, the recompute-heal re-promotes.
-
-        // Steady-state self-healing re-jump (finding #6): the executor's reaction
-        // to its own `Update::Tip` event, and since pass Б2 the ONLY jump in the
-        // system — the pre-engine one is gone, and a node with an empty archive
-        // anchors at its own EL-finalized tag and climbs from there. Forward-only,
-        // over a target out of this node's own marshal archive, re-runnable while
-        // the executor runs. Enabled wherever an upstream is configured, which since the
-        // plane-native default is EVERY launched node — `node/src/dpos.rs:1683` wraps
-        // both the `Plane` and the `Ws` branch in `Some(`, so a plain validator has
-        // one too and re-jumps plane-natively. The executor runs it synchronously in
-        // its `select!` arm, so its `sync_to` FCU is serialized with every other
-        // reth write the executor makes — the executor stays the sole reth writer.
-        //
-        // Rule Y: the validator-with-upstream re-jump is SYMMETRIC with the
-        // follower — same epoch-relative threshold, same `rotate` escape. Since
-        // §5.2 its TARGET is not asked for either: the executor reads the
-        // `(finalization, block)` pair out of its own marshal archive at the tip it
-        // triggered on and hands it in, so this closure has no `upstream` in it at
-        // all — only the committee source, the EL seam and the activation height.
+        // The executor's reaction to its own `Update::Tip`, and the only jump:
+        // forward-only, over a target out of this node's own marshal archive, so
+        // no `upstream` is involved in the closure.
         let re_jump_threshold = crate::cold_start_jump::JUMP_THRESHOLD.min(interval);
         let re_jump: Option<crate::executor::ReJump> = upstream.as_ref().map(|up| {
             let up = up.clone();
-            // The inlet's SAME upstream-rotation escape (Rule L/Y).
             let rotate = up.rotate_callback();
-            // The executor's frozen-tip frontier probe — ONE constructor, shared
-            // with the follower (`frontier_probe`, review B1-01).
             let frontier_probe = frontier_probe(up.clone(), committee.clone());
             let provider = provider.clone();
             let beacon_engine_handle = beacon_engine_handle.clone();
@@ -2802,12 +2276,8 @@ impl DposLayer {
                             dpos_activation_block,
                             peer_count,
                         );
-                        // Return the typed terminal `JumpOutcome` verbatim — the
-                        // executor's completion arm classifies it (Landed re-seeds;
-                        // Stalled is NON-fatal + retried on the next Tip). §9.6.
-                        // No committee source and no verify RNG any more: the target
-                        // is a pair out of this node's OWN marshal archive, already
-                        // 2f+1 under a committee this node read (pass Б2).
+                        // The target is a pair out of this node's own marshal archive,
+                        // already 2f+1 under a committee this node read.
                         crate::cold_start_jump::jump_to_target(
                             from,
                             target,
@@ -2823,23 +2293,15 @@ impl DposLayer {
             );
             crate::executor::ReJump {
                 call: cb,
-                // Epoch-relative gate, mirroring the follower (real-prod epochs ≫ 1024
-                // keep the serving-window size; a compressed test epoch heals within
-                // an epoch).
+                // Epoch-relative: production epochs keep `JUMP_THRESHOLD`, a compressed
+                // test epoch heals within an epoch.
                 threshold: re_jump_threshold,
-                // Rule L/Y: the same upstream-rotation escape the follower wires (T2).
-                // After pass Б2 the only arm that fires it is a `Stalled` streak —
-                // the insta-rotating `BadTarget`/`AuthFailed` arms are gone.
+                // Same upstream-rotation escape as the follower; only a `Stalled` streak
+                // fires it.
                 rotate: Some(rotate),
-                // Frozen-tip frontier probe — the live-follow driver for the
-                // PLANE-NATIVE validator (no consensus participation while rotated
-                // out): the executor puts the ladder step on the marshal and hints
-                // it toward any `Latest` above its tip when that tip freezes. Also
-                // a harmless backstop on the WS path (the inlet keeps the tip
-                // advancing → the probe stays silent).
+                // The live-follow driver while rotated out: the executor puts the ladder
+                // step on the marshal and hints it toward any `Latest` above a frozen tip.
                 probe: Some(frontier_probe),
-                // `T` for the ladder step, mirrored off the boundary bridge (see
-                // `tracked_epoch_cell`). `None` while nothing is tracked yet.
                 tracked_epoch: Some({
                     let cell = tracked_epoch_cell.clone();
                     std::sync::Arc::new(move || {
@@ -2852,13 +2314,9 @@ impl DposLayer {
             }
         });
 
-        // Boundary seeding seam — the same upstream and the same POST-sync committee
-        // read as the re-jump above, but fetching ONE already-finalized block by
-        // height rather than a landing. After any jump the epoch-terminal height that
-        // `Inline::genesis` (and so the engine-spawn gate) needs sits BELOW the new
-        // marshal floor, where no repair path ever fetches it — so a member that did
-        // not already hold it parks verify-only for the whole landing epoch, neither
-        // proposing nor voting.
+        // After a jump the epoch-terminal height `Inline::genesis` needs sits below the
+        // new marshal floor, where no repair path fetches it; without this a member
+        // that did not already hold it parks verify-only for the landing epoch.
         let boundary_fetch: Option<crate::cert_follow::BoundaryFetchFn> =
             upstream.as_ref().map(|up| {
                 let up = up.clone();
@@ -2873,8 +2331,8 @@ impl DposLayer {
                     let evm_config = evm_config.clone();
                     let staking_config = staking_config.clone();
                     let sync_metrics = sync_metrics.clone();
-                    // `verify_jump_authenticated` needs a `&mut (Clock + CryptoRngCore)`;
-                    // a fresh clone per call so the closure stays re-usable.
+                    // A fresh clone per call because `verify_jump_authenticated` needs
+                    // `&mut (Clock + CryptoRngCore)`.
                     let mut fetch_ctx = ctx.clone();
                     Box::pin(async move {
                         let committees = crate::cert_inlet::RethCommitteeSource::new(
@@ -2898,12 +2356,9 @@ impl DposLayer {
                 }) as crate::cert_follow::BoundaryFetchFn
             });
 
-        // Core- and executor-owned families, registered against the launch context
-        // — the SAME context `BeaconMetrics` is registered against inside
-        // `beacon::build`, because commonware prefixes each family with the
-        // context's label path and a labelled child would silently rename them.
-        // Registered on this path AND on the follower's, since both node classes
-        // reach the epoch manager and the executor.
+        // Register on this context, the same one `BeaconMetrics` uses inside
+        // `beacon::build`: commonware prefixes each family with the context's label
+        // path, and a labelled child would silently rename them.
         let epoch_metrics = crate::epoch_manager::EpochEngineMetrics::default();
         epoch_metrics.register(&ctx);
         let executor_metrics = crate::executor::ExecutorMetrics::default();
@@ -2911,13 +2366,10 @@ impl DposLayer {
 
         let outer = OuterBuilder {
             me: me.clone(),
-            // Bug A: no-op the consensus vote/cert-plane blocker (parity with the
-            // beacon-resolver NoopBlocker, review [1013]). The simplex batcher's
-            // evidence-free `block!(self.blocker, signer, ..)` on a transient
-            // batch-verify-failed vote would otherwise 4h-partition an honest
-            // committee peer on the shared global transport. Slashing is preserved:
-            // equivocation evidence rides `Activity::Conflicting*` independently of
-            // `block!`. `provider:` keeps the real oracle for peer-set tracking.
+            // NoopBlocker: the simplex batcher's evidence-free `block!` on a transient
+            // batch-verify-failed vote would partition an honest peer on the shared
+            // global transport; equivocation evidence rides `Activity::Conflicting*`
+            // independently, so slashing is preserved.
             blocker: NoopBlocker,
             provider: oracle.clone(),
             chain_id,
@@ -2936,17 +2388,10 @@ impl DposLayer {
             beacon_tip: Some(beacon_tip),
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,
-            // BROADCAST body cache: at most 4 order-block bodies retained per
-            // PRIMARY sender (`CW:broadcast/src/buffered/engine.rs:319-322`,
-            // `:353-359`). 64 was 64 × `MAX_ORDER_BLOCK_SIZE` = 256 MiB per peer,
-            // and the primary set used to be the whole registry (R-013, E4-14);
-            // 4.3 makes primary the three committee records, and 4 covers the
-            // deepest legitimate pipeline (the proposal in flight plus a re-proposal
-            // after nullify) with a spare. There is NO byte cap to pair it with:
-            // `buffered::Config` carries `deque_size` and nothing else
-            // (`CW:broadcast/src/buffered/config.rs:5-22`), so the per-peer memory
-            // bound is `deque_size × MAX_ORDER_BLOCK_SIZE` — a library boundary,
-            // not a choice made here.
+            // At most 4 order-block bodies per primary sender, matching the deepest
+            // legitimate pipeline (proposal in flight plus a re-proposal after
+            // nullify); `buffered::Config` has no byte cap, so the per-peer bound is
+            // `deque_size × MAX_ORDER_BLOCK_SIZE`.
             deque_size: 4,
             partition_prefix: MARSHAL_PARTITION_PREFIX.into(),
             engine_partition_prefix: String::new(),
@@ -2954,7 +2399,6 @@ impl DposLayer {
             resolver_timeout: Duration::from_secs(2),
             resolver_fetch_retry: Duration::from_millis(100),
 
-            // FluentApp constructor args.
             genesis: genesis_block,
             beacon_engine: beacon_engine_handle,
             deriver,
@@ -2963,15 +2407,11 @@ impl DposLayer {
             target_gas_limit,
             boundary_hook,
 
-            // Executor cold-start state.
             last_execution_finalized_height,
             initial_finalized: (Height::new(latest_finalized), latest_finalized_hash),
             initial_head: (Height::new(initial_head_num), initial_head_hash),
-            // DPoS-era floor: the marshal never dispatches pre-anchor history.
-            // Fresh migration: anchor = activation. Restart: a raises-only no-op
-            // (the archive's floor is already at/above its own finalized).
-            // `ElFinalized`: reth's own finalized tag. A later steady-state jump
-            // raises the floor to `landing − K` through `set_floor`, not here.
+            // The marshal never dispatches pre-anchor history; a later steady-state
+            // jump raises the floor to `landing − K` through `set_floor`.
             marshal_floor: Some(Height::new(latest_finalized)),
             boundary_fetch,
             boundary_enter: enter_boundary,
@@ -2991,34 +2431,24 @@ impl DposLayer {
             #[cfg(feature = "dpos-devnet-byzantine")]
             byzantine,
         }
-        // `seed_journal_writer` is cloned off `ctx`, NOT off the `outer_engine`
-        // context: it must be a sibling of the engine task so `engine.abort()`
-        // does not cascade into the writer before it has drained (see
-        // `OuterBuilder::build`).
+        // Clone `seed_journal_writer` off `ctx`, not the engine's context: `engine.abort()`
+        // must not cascade into the writer before it drains.
         .build(ctx.with_label("outer_engine"))
         .await?;
 
-        // Bridge forwarder: drains the `(u64, snapshot)` the transition queues and
-        // hands the OuterEngine's boundary receiver the EPOCH alone. The snapshot
-        // is dropped HERE rather than never produced, because the transition's own
-        // trigger type belongs to `staking-reader`; what matters is that no
-        // consumer downstream of this line sees a committee that did not come from
-        // the committee module.
+        // The transition's trigger type belongs to `staking-reader`, so the snapshot is
+        // dropped here; what matters is that no consumer downstream sees a committee
+        // that did not come from the committee module.
         let outer_boundary_tx = outer.boundary_sender();
         let shutdown_for_forwarder = shutdown.clone();
-        // SUPERVISED, not detached: the `shutdown.cancel()` below is the ERROR
-        // path only — a panic inside this loop unwinds straight past it, and
-        // under `with_catch_panics(true)` that panic is one log line and nothing
-        // else. Dropping the handle would detach the task (no `Drop` on
-        // commonware handles), so committee rotation would stop while the node
-        // stayed "healthy". Handed to the host supervisor instead, which treats
-        // ANY resolution (panic → `Err(Error::Exited)`, or the clean-exit warn)
-        // as fatal — so the deliberate fail-fast holds for both paths.
+        // Supervised, not detached: a panic here would unwind past the
+        // `shutdown.cancel()` below and be reduced by `with_catch_panics(true)` to one
+        // log line, stopping committee rotation while the node looks healthy.
         let tracked_epoch_writer = tracked_epoch_cell.clone();
         let epoch_bridge_handle = ctx.with_label("epoch_bridge").spawn(move |_| async move {
             while let Some((u64_ep, _snap)) = bridge_rx.recv().await {
-                // The transition only queues an epoch it has just tracked, and it
-                // never goes backwards, so a plain store is the mirror.
+                // The transition only queues epochs it has tracked and never goes
+                // backwards, so a plain store mirrors it.
                 tracked_epoch_writer.store(u64_ep, std::sync::atomic::Ordering::Relaxed);
                 if let Err(e) = outer_boundary_tx.send(Epoch::new(u64_ep)).await {
                     error!(
@@ -3032,27 +2462,11 @@ impl DposLayer {
             }
         });
 
-        // Grab the marshal mailbox for the node-side cert feed/RPC BEFORE
-        // `start` consumes the engine.
         let cert_mailbox = outer.marshal_mailbox();
 
-        // Start OuterEngine — ctx + the 5 plane-owned non-beacon `MuxHandle`s
-        // (vote/cert/resolver per-epoch register, broadcast/marshal subchannel 0) +
-        // this promotion's fresh vote-backup receiver. The OuterEngine registers its
-        // sub-channels in `run`; on demote it drops them (auto-deregister) — the
-        // plane's broker tasks stay live for the next promotion.
-        //
-        // `upstream` (the `--dpos.follower-upstream` handle, also used by the
-        // cold-start jump above by reference) is threaded into the marshal's
-        // by-height backfill resolver: when `Some`, the marshal pulls the cold-start
-        // `[floor+1 .. first_live]` gap from the UPSTREAM (not consensus-plane peers),
-        // so an OUT-OF-COMMITTEE validator (a not-yet-committee external joiner with
-        // zero consensus-plane connectivity) backfills exactly like a follower
-        // instead of wedging. The resolver keeps its own `upstream` clone alive
-        // (which keeps the WS actor alive). A no-upstream validator passes `None` and
-        // keeps the consensus-plane p2p resolver (the treadmill, unchanged). The
-        // marshal still BLS-verifies every delivered cert — trustless, single-writer
-        // intact.
+        // `upstream` is threaded into the marshal's by-height backfill resolver so an
+        // out-of-committee validator backfills like a follower instead of wedging; the
+        // resolver BLS-verifies every delivered cert.
         let consensus_handle = outer.start(
             ctx.with_label("marshal_resolver"),
             vote_mux,
@@ -3067,20 +2481,18 @@ impl DposLayer {
             consensus_handle,
             cert_mailbox,
             supervised: vec![("epoch_bridge", epoch_bridge_handle)],
-            // Both journal writers moved into `beacon::build` with the stores
-            // they back, so this layer has no drain of its own left. The node
-            // collects them off the `Beacon` instead — see its `shutdown`.
+            // The journal writers live in `beacon::build` with the stores they back;
+            // the node collects them off the `Beacon`.
             drain_on_shutdown: vec![],
-            // The validator serves from its beacon plane's own
-            // `Beacon::artifact_bytes`, which the node holds directly.
+            // The validator serves from its beacon plane's own `Beacon::artifact_bytes`.
             artifact_bytes: None,
         })
     }
 }
 
-/// Reth handles a near-planeless FOLLOWER needs (Phase 3). Distinct from
-/// [`RethHandle`] only in that a follower carries NO slasher/pool transport (it
-/// never signs) — the slasher actor is built (cheap) but never started.
+/// Reth handles a follower needs. Distinct from [`RethHandle`] in that a follower
+/// carries no slasher/pool transport — it never signs, so the slasher actor is
+/// built but never started.
 pub struct FollowerRethHandle<Provider, EvmConfig, BeaconEngine> {
     pub provider: Provider,
     pub evm_config: EvmConfig,
@@ -3088,18 +2500,18 @@ pub struct FollowerRethHandle<Provider, EvmConfig, BeaconEngine> {
     pub chain_id: u64,
     pub canonical_state: reth_chain_state::CanonicalInMemoryState<EthPrimitives>,
     pub genesis_hash: B256,
-    /// Read-only probe of reth's connected devp2p peer count — see
-    /// [`RethHandle::peer_count`]. Drives the follower EL-sync no-peers net.
+    /// Read-only probe of reth's connected devp2p peer count; the follower's
+    /// EL-sync no-peers net reads it.
     pub peer_count: Arc<dyn Fn() -> usize + Send + Sync>,
 }
 
-/// Operator-supplied config for the near-planeless follower (Phase 3). The node
-/// owns the WS upstream + the ONE broadcast `Muxer`; this config carries the
-/// reth-evm collaborators + the cert-inlet feed channels.
+/// Operator-supplied config for the follower. The node owns the WS upstream and the
+/// one broadcast `Muxer`; this config carries the reth-evm collaborators and the
+/// cert-inlet feed channels.
 pub struct FollowerLayerConfig<D, XC, A, U> {
-    /// This node's ed25519 peer identity (the FluentP2P crypto's public key),
-    /// threaded from the node. A standalone follower never gossips, but
-    /// `buffered::Engine` + the marshal resolver are keyed on it.
+    /// This node's ed25519 peer identity (the FluentP2P crypto's public key). A
+    /// standalone follower never gossips, but `buffered::Engine` and the marshal
+    /// resolver are keyed on it.
     pub me: commonware_cryptography::ed25519::PublicKey,
     pub staking_config: StakingReaderConfig,
     /// Datadir path of the fork-safety halt marker
@@ -3108,29 +2520,25 @@ pub struct FollowerLayerConfig<D, XC, A, U> {
     /// no in-process `disengage`, so without it a restart silently cleared a
     /// halt and the node signed again on the same disk. `None` only in tests.
     pub halt_marker: Option<std::path::PathBuf>,
-    /// L1 Rollup-checkpoint hash (B2) — ALSO the operator checkpoint a fresh
-    /// datadir syncs to (§5.2 "Правило единое"): `Some` ⇒ the fresh-datadir entry
-    /// FCUs to this hash and then fail-closed asserts it
-    /// (`cert-follow: L1 Rollup checkpoint …`). `None` on a fresh datadir is a
-    /// startup refusal on a deployed network and a `warn!`-ed trust-on-first-use
-    /// on a local one — see [`Self::deployed_network`].
+    /// L1 Rollup-checkpoint hash, also the operator checkpoint a fresh datadir syncs
+    /// to: `Some` ⇒ the fresh-datadir entry FCUs to this hash and then fail-closed
+    /// asserts it. `None` on a fresh datadir is a startup refusal on a deployed
+    /// network and a warned trust-on-first-use on a local one — see
+    /// [`Self::deployed_network`].
     pub l1_checkpoint_hash: Option<B256>,
-    /// Whether this chain_id is one of the DEPLOYED networks (devnet / testnet /
-    /// mainnet). Evaluated by the node — the chain_id constants live in its
-    /// `chainspec`, and this crate must not carry a second copy of that list — and
-    /// used here for exactly one decision: a fresh datadir with NO operator
-    /// checkpoint refuses to start on a deployed network (E4-05) and falls back to
-    /// the upstream's `Latest` only off one.
+    /// Whether this chain_id is a deployed network (devnet / testnet / mainnet).
+    /// Evaluated by the node because the chain_id constants live in its chainspec;
+    /// used here for exactly one decision: a fresh datadir with no operator
+    /// checkpoint refuses to start on a deployed network and falls back to the
+    /// upstream's `Latest` only off one.
     pub deployed_network: bool,
     /// OrderBlock → derived-EVM-block execution (node-built over reth-evm).
     pub deriver: D,
     /// Local derived-chain view (node-built over the reth provider).
     pub executed: XC,
-    /// The SAME ordering-finalized cursor [`Self::executed`] was built over —
-    /// see `crate::ordering::ProviderExecutedChain::with_cursor` in the node
-    /// crate. The committee module built below anchors its reads on it, so a
-    /// follower reads every committee at the height its own executor has
-    /// finalized and at no other.
+    /// The same ordering-finalized cursor [`Self::executed`] was built over. The
+    /// committee module anchors its reads on it, so a follower reads every committee
+    /// at the height its own executor has finalized and at no other.
     pub finalized_cursor: crate::FinalizedCursor,
     /// Pool-backed ordering assembly (node-built — pool trait bounds live there).
     /// A follower never proposes, so this is never exercised; the OuterBuilder
@@ -3141,26 +2549,24 @@ pub struct FollowerLayerConfig<D, XC, A, U> {
     /// `consensus` RPC latest-tier. `None` for nodes that don't serve the feed.
     pub feed: Option<crate::feed_sink::FeedSink>,
     pub fcu_heartbeat_interval: Duration,
-    /// Cert upstream. After pass Б2 the follower has no pre-engine jump: what rides
-    /// this handle is the marshal's by-height backfill resolver, the frozen-tip
-    /// ladder probe, the steady-state re-jump's EL work, and — on a FRESH datadir off
-    /// a deployed network only — the one surviving `get_latest ⇒ sync_to`
-    /// ([`FreshFollowerEntry::UpstreamLatest`]). A follower ALWAYS has an upstream
-    /// (the WS the inlet uses); `None` only in tests.
+    /// Cert upstream: the marshal's by-height backfill resolver, the frozen-tip
+    /// ladder probe, and the steady-state re-jump's EL work ride it, plus — on a
+    /// fresh datadir off a deployed network only — the one surviving `get_latest ⇒
+    /// sync_to` ([`FreshFollowerEntry::UpstreamLatest`]). A follower always has an
+    /// upstream (the WS the inlet uses); `None` only in tests.
     pub upstream: Option<U>,
-    /// The live finalized-cert stream the node's WS actor pushes — the inlet's
-    /// SOLE producer (a follower forms no certs locally).
+    /// The live finalized-cert stream the node's WS actor pushes — the inlet's sole
+    /// producer (a follower forms no certs locally).
     pub finalized_rx: mpsc::Receiver<crate::cert_follow::UpstreamFinalized>,
-    /// Connection-generation token the node's WS actor bumps on each (re)connect
-    /// (#7). Wired into the inlet via `with_connection_token` so the data-fault
-    /// streak is scoped to the LIVE connection — a connection-level auto-rotation
-    /// (which the inlet cannot otherwise observe) resets the streak, so one
-    /// upstream's faults never bleed into the next URL's rotation budget. `None`
-    /// in tests.
+    /// Connection-generation token the node's WS actor bumps on each (re)connect.
+    /// Wired into the inlet via `with_connection_token` so the data-fault streak is
+    /// scoped to the live connection: a connection-level auto-rotation resets the
+    /// streak, so one upstream's faults never bleed into the next URL's budget.
+    /// `None` in tests.
     pub conn_gen: Option<Arc<std::sync::atomic::AtomicU64>>,
-    /// B3 — the serving-window sink: each VERIFIED inlet pair is forwarded here
-    /// so a tier-2 follower aligns via THIS node's `consensus` WS window. `None`
-    /// = no serving (tests).
+    /// The serving-window sink: each verified inlet pair is forwarded here so a
+    /// tier-2 follower aligns via this node's `consensus` WS window. `None` = no
+    /// serving (tests).
     pub verified_tx:
         Option<tokio::sync::mpsc::UnboundedSender<crate::cert_follow::UpstreamFinalized>>,
 }
@@ -3188,23 +2594,12 @@ impl SlasherTxSink for NoopSlasherSink {
 }
 
 impl DposLayer {
-    /// Launch the near-planeless FOLLOWER: an OuterEngine with
-    /// `signer_keypair: None` driven by the cert-inlet (the only producer for a
-    /// non-validator) instead of a local BFT engine. The executor is the SOLE reth
-    /// writer (plus the single-shot pre-engine `cold_start_jump`).
-    ///
-    /// Steps:
-    ///   1. resolve geometry (RESTART vs FRESH datadir via `read_geometry`) +
-    ///      EL-sync onto the upstream's attested tip,
-    ///   2. B2 — assert the L1 Rollup checkpoint (verbatim strings) post-EL-sync,
-    ///   3. `cold_start_jump` for a deep residual gap (forward-only, BLS-verified),
-    ///   4. build the follower OuterEngine (`signer_keypair: None`, no beacon
-    ///      plane/signer/slasher-start, `Option<Muxes>::None`),
-    ///   5. `start_follower` over the ONE broadcast `Muxer`, with an
-    ///      UPSTREAM-backed marshal resolver (`UpstreamResolver`) that backfills
-    ///      the by-height floor→frontier gap the live stream never carries,
-    ///   6. spawn the cert-inlet over `finalized_rx` → `marshal_mailbox()` (+ the
-    ///      B3 serving window).
+    /// Launch the near-planeless follower: an `OuterEngine` with `signer_keypair:
+    /// None` driven by the cert-inlet instead of a local BFT engine. Resolves the
+    /// geometry, EL-syncs to an authenticated entry, builds the follower engine, and
+    /// starts it over the one broadcast `Muxer` with an upstream-backed marshal
+    /// resolver that backfills the by-height gap the live stream never carries. The
+    /// executor is the sole reth writer.
     #[allow(clippy::too_many_arguments)]
     pub async fn launch_follower<Provider, EvmConfig, BeaconEngine, D, XC, A, U>(
         ctx: Context,
@@ -3260,15 +2655,12 @@ impl DposLayer {
             verified_tx,
         } = cfg;
 
-        // Self-heal stuck-detector: registered ONCE for the follower launch (the
-        // follower has no beacon plane, so it owns its own — mirrors the fresh
-        // `BeaconMetrics` below). Threaded into the cold-start jump / activation-wait
-        // / landing-belt self-heal loops.
+        // The follower has no beacon plane, so it registers its own self-heal metrics;
+        // threaded into the activation-wait and landing-belt loops.
         let sync_metrics = SyncMetrics::default();
         sync_metrics.register(&ctx);
-        // Fork-safety latch (Phase 3): a follower's executor derives+imports off the
-        // inlet and can hit result divergence / EL Invalid, so it too must be able to
-        // halt-and-stay-up rather than crash.
+        // A follower's executor derives and imports off the inlet, so it needs the same
+        // fork-safety latch: halt-and-stay-up rather than crash.
         let safety_halt = match halt_marker {
             Some(path) => crate::sync_metrics::SafetyHalt::restoring(sync_metrics.clone(), path),
             None => crate::sync_metrics::SafetyHalt::new(sync_metrics.clone()),
@@ -3280,17 +2672,10 @@ impl DposLayer {
             staking_config.clone(),
         );
 
-        // Epoch geometry + the cold-start anchor (§5.2 "Правило единое": `sync_to`
-        // is only ever called with an input this node can check).
-        //
-        // RESTART datadir: `ChainConfig` is readable from local state at reth's own
-        // finalized hash, so the geometry AND the anchor are local — no `sync_to` at
-        // all. FRESH datadir (runtime-deployed cluster): nothing is readable locally,
-        // which is the one place in the system with nothing to check a peer against,
-        // so the entry is an explicit operator checkpoint or a refusal.
-        // THE GEOMETRY READ, and only it, is pinned to a single hash: the arm below
-        // re-reads reth's finalized tag on every turn of its own loop (see there),
-        // so the anchor and the committee reads are NOT this binding.
+        // The geometry read is pinned to one hash, but the arm below re-reads reth's
+        // finalized tag on every turn of its own loop. On a restart both geometry and
+        // anchor are local, so no `sync_to` runs; a fresh datadir has nothing local, so
+        // its entry is an operator checkpoint or a refusal.
         let (_, geometry_at_hash, _h0_num, _h0_hash) =
             derive_cold_start_heights(&canonical_state, genesis_hash);
         let mk_el_sync = |activation: u64| {
@@ -3306,63 +2691,22 @@ impl DposLayer {
         let (activation, interval, anchor_height, anchor_hash) =
             match read_geometry(&reader, geometry_at_hash)? {
                 Some((activation, interval)) => {
-                    // THE ANCHOR IS `rf_hash` — reth's own EL-finalized tag, the same
-                    // datum the validator path anchors on. The `get_latest ⇒ sync_to`
-                    // that used to stand here drove the EL onto a height a peer named,
-                    // with nothing checking it (§5.2 lists it as one of the three
-                    // unauthenticated entries); it is gone. A follower that is behind
-                    // climbs from this anchor exactly like a validator: the ladder
-                    // probe + the marshal's by-height pulls + the steady-state jump
-                    // onto a pair out of its own archive.
-                    //
-                    // BELOW the activation block the anchor is not local yet, and
-                    // `wait_for_activation_block` ALONE (4.2 Б2 .. 4.4) parked such a
-                    // node forever whenever the missing blocks were pre-DPoS sequencer
-                    // blocks that no ordering plane carries (R-131): this arm had no EL
-                    // drive at all, `mk_el_sync` being reachable only from the `None`
-                    // arm (`mk_el_sync` was reachable only from the `None` arm; this arm
-                    // now calls it too). The march is now the five-way `follower_entry` — local,
-                    // operator checkpoint, wait-local, chain-not-there-yet, certificate
-                    // — and only the last two cost a peer round trip. §5.2 holds for the
-                    // new entry the same way it holds for the jump: the height is
-                    // pinned, the payload is bound to the block digest, and the
-                    // finalization is BLS-verified under `committee[E]` READ AT
-                    // `rf_hash` before reth is driven anywhere
-                    // ([`fetch_verified_entry`]).
-                    //
-                    // The cadence is the shared `ACTIVATION_POLL`: this park and
-                    // `wait_for_activation_block`'s are the same wait on the same kind
-                    // of external input (R-131 review, D-10).
-                    // The operator checkpoint is consumed AT MOST ONCE: a checkpoint on
-                    // a pre-DPoS batch lands below the activation block, and re-driving
-                    // it would spin on `sync_to_checkpoint`'s "already canonical"
-                    // short-circuit instead of falling through to the certificate entry.
+                    // The checkpoint is consumed at most once: a checkpoint on a pre-DPoS
+                    // batch lands below activation, and re-driving it would spin on
+                    // `sync_to_checkpoint`'s already-canonical short-circuit.
                     let mut checkpoint_pending = l1_checkpoint_hash;
                     let mut warned_wait = false;
-                    // The LAST refusal reason printed for the certificate entry, so the
-                    // park re-prints on a CHANGE of reason and not on every 2-second turn
-                    // (R-131 review, D-04).
+                    // The last refusal reason printed for the certificate entry, so the
+                    // park re-prints only when the reason changes.
                     let mut unserved_reason: Option<String> = None;
                     loop {
-                        // THE ANCHOR IS RE-READ EVERY TURN, and that is what makes the
-                        // poll below honest rather than half-honest. `rf_hash` is
-                        // reth's own EL-finalized tag — the same datum the validator
-                        // path anchors on — and the pre-DPoS sequencer keeps MOVING it
-                        // while this node waits. Pinning it before the loop pinned the
-                        // STATE the committee window is read at, so the branch "no
-                        // epoch committee is readable yet" (`setDposActivationBlock`
-                        // has run, `commitEpochCommittee(0)` has not) could never
-                        // change its answer no matter how long the poll ran, while its
-                        // own `warn!` promised "Polling (no give-up)". A late commit
-                        // appears on a LATER block, so the only way to see it is to
-                        // re-read the tag (R-131 review, D-02). Both halves of the
-                        // pair come from one `get_finalized_num_hash()`, so the number
-                        // and the hash are always the same block.
+                        // Re-read every turn: the pre-DPoS sequencer keeps moving reth's
+                        // finalized tag, and a late `commitEpochCommittee(0)` appears only
+                        // on a later block, so a pinned tag could never change its answer.
                         let (rf_num, rf_hash, _, _) =
                             derive_cold_start_heights(&canonical_state, genesis_hash);
-                        // LOCAL probe first, every turn: it is the only step with no
-                        // network cost, and after a checkpoint landing or a sequencer
-                        // block it is the step that ends the loop.
+                        // The local probe is the only step with no network cost, so it
+                        // runs first every turn.
                         let activation_hash = provider
                             .block_hash(activation)
                             .wrap_err("probing whether reth holds the DPoS activation block")?;
@@ -3375,17 +2719,14 @@ impl DposLayer {
                             interval,
                             rf_num,
                         );
-                        // Only the retry frontier of the peer-free prefix is worth a
-                        // round trip; re-deciding through the SAME function is what
-                        // keeps this from being a second copy of the predicate.
+                        // Only the retry frontier of the peer-free prefix is worth a round
+                        // trip; re-deciding through `follower_entry` keeps this from being
+                        // a second copy of the predicate.
                         let entry = match (peer_free, upstream.as_ref()) {
                             (FollowerEntry::ChainBelowActivation, Some(up)) => {
-                                // `get_latest` is used for ROUTING and as a height
-                                // ceiling only; its hash is never read here. A liar can
-                                // only pull the target DOWN (never below `activation + K`),
-                                // which costs a lower landing and a ladder climb — it
-                                // cannot raise it past the readable window, and the
-                                // landing hash comes from the attested `result`.
+                                // `get_latest` is routing and a height ceiling only; its
+                                // hash is never read, so a liar can only pull the target
+                                // down, and the landing hash comes from the attested result.
                                 let latest_height =
                                     up.get_latest().await.map(|latest| latest.block.height);
                                 let committees = crate::cert_inlet::RethCommitteeSource::new(
@@ -3396,9 +2737,9 @@ impl DposLayer {
                                     ),
                                     chain_id,
                                 );
-                                // The readable window at `rf_hash`: devnet genesis has
-                                // `committee[0]` only, a pre-activation prod block has up
-                                // to `committee[MAX_COMMITTEE_LOOKAHEAD_EPOCHS]`.
+                                // The readable window at `rf_hash`: devnet genesis has only
+                                // `committee[0]`; a pre-activation prod block reaches
+                                // `MAX_COMMITTEE_LOOKAHEAD_EPOCHS`.
                                 let e_max = (0..=fluentbase_types::staking_protocol::
                                     MAX_COMMITTEE_LOOKAHEAD_EPOCHS)
                                     .rev()
@@ -3431,16 +2772,9 @@ impl DposLayer {
                                 if rf_num >= activation {
                                     break (activation, interval, rf_num, rf_hash);
                                 }
-                                // Third internal invariant of this dispatch, and named
-                                // as one like the other two (`Checkpoint`,
-                                // `Certificate`): below the activation block `Local` is
-                                // returned ONLY for `holds_activation`, which IS
-                                // `activation_hash.is_some()` of the very read below —
-                                // no second probe stands between the verdict and here,
-                                // so a `None` would mean the march and this dispatch
-                                // disagree. The text it used to carry described a
-                                // concurrent unwind, a state this input cannot produce
-                                // (R-131 review, D-09).
+                                // `Local` below activation is returned only for
+                                // `holds_activation == activation_hash.is_some()`, so a
+                                // `None` would mean the march and this dispatch disagree.
                                 let hash = activation_hash.ok_or_else(|| {
                                     eyre!(
                                         "cert-follow: internal — the entry march chose the \
@@ -3460,10 +2794,9 @@ impl DposLayer {
                                 break (activation, interval, activation, hash);
                             }
                             FollowerEntry::WaitLocal => {
-                                // Honest sequencer→DPoS migration: the activation block
-                                // is produced on THIS chain, so there is nobody to ask
-                                // and nothing to authenticate. Retry-forever, Decision A,
-                                // verbatim (`wait_for_activation_block`).
+                                // The activation block is produced on this chain, so there
+                                // is nobody to ask; `wait_for_activation_block` retries
+                                // forever.
                                 let hash = wait_for_activation_block(
                                     &ctx,
                                     &provider,
@@ -3474,10 +2807,9 @@ impl DposLayer {
                                 break (activation, interval, activation, hash);
                             }
                             FollowerEntry::Checkpoint => {
-                                // `Checkpoint` is returned only for `has_checkpoint`, which IS
-                                // `checkpoint_pending.is_some()` — a `None` here would mean the
-                                // march and this dispatch disagree, which is a code fault and not
-                                // an input the operator can produce.
+                                // `Checkpoint` is returned only for `has_checkpoint`,
+                                // which is `checkpoint_pending.is_some()`; a `None` here
+                                // would mean the march and this dispatch disagree.
                                 let l1 = checkpoint_pending.take().ok_or_else(|| {
                                     eyre!(
                                         "cert-follow: internal — the entry march chose the \
@@ -3504,12 +2836,10 @@ impl DposLayer {
                                 if h >= activation {
                                     break (activation, interval, h, hash);
                                 }
-                                // A checkpoint on a pre-DPoS batch is a legal input and a
-                                // legal landing — it just is not a DPoS anchor. Re-run the
-                                // march WITHOUT sleeping: the local probe may now hold the
-                                // activation block, and otherwise the certificate entry is
-                                // next. `assert_l1_checkpoint` after the match then passes
-                                // trivially, which is the whole reason this step is first.
+                                // A checkpoint landing below activation is legal but not a
+                                // DPoS anchor; re-run the march without sleeping — the local
+                                // probe may now hold the activation block, and otherwise the
+                                // certificate entry is next.
                                 info!(
                                     landing = h,
                                     activation,
@@ -3520,12 +2850,9 @@ impl DposLayer {
                                 continue;
                             }
                             FollowerEntry::ChainBelowActivation => {
-                                // NOT a fatal, for the same reason `wait_for_activation_block`
-                                // is not (`:290-295`): the input is external, the honest
-                                // case is "the chain / the committee commit is not there
-                                // yet", and a fatal here restart-storms every honest joiner
-                                // at once. Gauge + ONE `warn!` make the park visible and
-                                // named instead.
+                                // Not fatal: the input is external, the honest case is
+                                // "not there yet", and a fatal here restart-storms every
+                                // joiner at once.
                                 if !warned_wait {
                                     warned_wait = true;
                                     warn!(
@@ -3571,14 +2898,10 @@ impl DposLayer {
                                 let uf = match verified {
                                     Ok(uf) => uf,
                                     Err(reason) => {
-                                        // A refusal does not distinguish "the upstream is
-                                        // not up yet" from "nobody keeps this height any
-                                        // more", and a fatal on the first is a restart
-                                        // storm — so this parks, with the REASON and both
-                                        // operator exits named. Re-printed only when the
-                                        // reason changes: the cadence is 2 s and forever,
-                                        // so a per-attempt line is noise, while a CHANGED
-                                        // reason is the one thing worth a new line.
+                                        // A refusal cannot distinguish an upstream that is
+                                        // not up yet from one that no longer keeps the
+                                        // height, and the first must not be fatal; the park
+                                        // re-prints only when the reason changes.
                                         if unserved_reason.as_deref() != Some(reason.as_str()) {
                                             warn!(
                                                 target,
@@ -3600,21 +2923,10 @@ impl DposLayer {
                                         continue;
                                     }
                                 };
-                                // A FAILED DRIVE IS A RETRY, NOT A STARTUP FATAL, and the
-                                // reason is the #17 visibility race rather than politeness:
-                                // `sync_to`'s post-landing `block_hash(landing)` can
-                                // transiently miss a block reth has only just
-                                // canonicalized, and that maps to `SyncFailure::Stalled`
-                                // indistinguishably from a real stall (`From<Report>`), so
-                                // `?` turned a race this file absorbs everywhere else into
-                                // a dead node (R-131 review, D-15). Re-driving is safe and
-                                // cheap: the target is already committee-authenticated, the
-                                // next turn short-circuits on `best_block_number >=
-                                // tip_height` if the landing did happen, and each attempt
-                                // costs a full EL-sync net (≥ 90 s), so this cannot spin.
-                                // A genuine wedge now parks OBSERVABLY — gauge up, one line
-                                // per attempt — which is what the steady-state re-jump does
-                                // with the same `Stalled`.
+                                // A failed drive is a retry, not a startup fatal: `sync_to`'s
+                                // post-landing `block_hash` can transiently miss and map to
+                                // `Stalled`, while re-driving is safe because the target is
+                                // already committee-authenticated.
                                 let (landing, hash) =
                                     match mk_el_sync(activation).sync_to(&uf).await {
                                         Ok(pair) => pair,
@@ -3650,18 +2962,14 @@ impl DposLayer {
                     }
                 }
                 None => {
-                    // FRESH DATADIR. No geometry, no committee, no archive — the one
-                    // entry where a peer's answer cannot be checked by anything local.
-                    // The policy is the pure `fresh_follower_entry`; only the EL work
-                    // is here.
+                    // Fresh datadir: no geometry, committee or archive, so the entry is
+                    // the pure `fresh_follower_entry` policy and only the EL work is here.
                     let (h, hash, entry) =
                         match fresh_follower_entry(l1_checkpoint_hash, deployed_network, chain_id)?
                         {
-                            // `sync_to_checkpoint` FCUs to the operator's HASH and learns
-                            // the height from the landing, which is why the config needs
-                            // no `(height, hash)` pair: reth reports the number once it
-                            // holds the block canonically, and a hash it never
-                            // canonicalizes stalls instead of landing somewhere else.
+                            // `sync_to_checkpoint` FCUs to the operator's hash and learns the
+                            // height from the landing, which is why the config carries no
+                            // `(height, hash)` pair.
                             FreshFollowerEntry::Checkpoint(l1_hash) => {
                                 info!(
                                     checkpoint = ?l1_hash,
@@ -3703,11 +3011,8 @@ impl DposLayer {
                              wrong chain, or the entry predates DPoS activation"
                         )
                         })?;
-                    // An entry BELOW the activation block is not a DPoS anchor at all, and
-                    // the `h.max(activation)` clamp that used to stand here turned that into a
-                    // read for a height reth does not hold: the visibility belt below then
-                    // failed 10 s later naming the CLAMPED height, never the operator input
-                    // that caused it. Refuse on the input instead (4.2 Б2 fix-1, B2-12).
+                    // An entry below the activation block is not a DPoS anchor; refusing on
+                    // the input beats clamping to a height reth does not hold.
                     ensure!(
                         h >= activation,
                         "cert-follow: {entry} is block {h}, BELOW the DPoS activation block \
@@ -3730,17 +3035,15 @@ impl DposLayer {
                 }
             };
 
-        // B2 — L1 Rollup-checkpoint assert (verbatim strings), post-EL-sync,
-        // fail-closed: a bogus-checkpoint cert-cascade follower still errors with
-        // "is NOT in the local chain after EL-sync".
+        // Fail-closed after EL-sync: a checkpoint that is not in the local chain is a
+        // startup error.
         if let Some(l1_hash) = l1_checkpoint_hash {
             crate::cold_start_jump::assert_l1_checkpoint(&provider, l1_hash)?;
         }
 
-        // Two-tier seed: the landing block's own result attestation arrives only
-        // K blocks later, so the finalized tier starts at landing − K (clamped to
-        // activation). Seed reth's FCU at the floor so it never finalizes ahead of
-        // the result tier.
+        // The landing block's own result attestation arrives only K blocks later, so the
+        // finalized tier starts at `landing − K`, clamped to activation; seeding reth's
+        // FCU at that floor keeps it from finalizing ahead of the result tier.
         let finalized_floor = anchor_height.saturating_sub(K).max(activation);
         let finalized_hash = read_with_visibility_belt(
             &ctx,
@@ -3773,10 +3076,8 @@ impl DposLayer {
             "cert-follow (inlet) cold-start resolved"
         );
 
-        // Consensus genesis = the ordering-chain anchor artifact at the resumed
-        // height (every node derives the identical artifact; Simplex
-        // `set_genesis(digest)` matches view 1's parent). A follower never
-        // proposes, but the marshal/executor still need the genesis anchor.
+        // The marshal and executor need the genesis anchor even though a follower never
+        // proposes; every node derives the identical artifact.
         let genesis_unsealed = read_with_visibility_belt(
             &ctx,
             &sync_metrics,
@@ -3798,39 +3099,20 @@ impl DposLayer {
 
         let epoch_length_blocks =
             NonZeroU64::new(interval).ok_or_eyre("epoch_block_interval must be > 0")?;
-        // The beacon-owned families are registered by `beacon::build_follower`
-        // below, which is this path's randomness provider — NOT here. A standalone
-        // `BeaconMetrics::register` next to it would register every one of them
-        // TWICE: `prometheus_client::Registry::register` neither deduplicates nor
-        // complains, so the only symptom is a duplicated family at scrape time.
-        //
-        // Registered here, on the SAME context, for the reason the metric-owner
-        // split exists: these families are core- and executor-owned on BOTH node
-        // classes, and `prometheus_client::Registry::register` neither
-        // deduplicates nor complains — a family with no owner on this path would
-        // simply stop appearing in follower scrapes.
+        // The beacon-owned families are registered by `beacon::build_follower` below;
+        // registering `BeaconMetrics` here too would duplicate every family silently,
+        // because `prometheus_client::Registry::register` neither deduplicates nor
+        // complains. These two families are core- and executor-owned on both node
+        // classes, so they are registered here.
         let epoch_metrics = crate::epoch_manager::EpochEngineMetrics::default();
         epoch_metrics.register(&ctx);
         let executor_metrics = crate::executor::ExecutorMetrics::default();
         executor_metrics.register(&ctx);
 
-        // EVERY per-epoch committee read this follower makes, as ONE frozen
-        // record per epoch at ONE anchor — the same module the validator plane
-        // runs, over this node's own executor cursor. A follower's geometry is
-        // known HERE (it was read off the chain at the cold-start anchor above),
-        // so the watch is created already frozen; the validator's arrives later
-        // from its beacon plane, which is why the store takes a watch at all.
-        // Consequence, stated because the validator path has to do the opposite:
-        // there is NO unfrozen window on this path and therefore no freeze
-        // wake-up to publish (`Committee::subscribe`'s second event) — the store
-        // is answering from its first call, and the only wake-up left is the
-        // executor's anchor advance.
-        //
-        // The verify-only scheme of every epoch is built HERE too, by the one
-        // producer the store owns: `beacon_slot` is filled the moment
-        // `beacon::build_follower` returns (below), and until then the store
-        // answers "no scheme yet" and retries — the build order makes a value
-        // impossible, because the beacon is constructed FROM this store's facade.
+        // One frozen committee record per epoch at one anchor, over this node's own
+        // executor cursor. A follower's geometry is known here, so the watch is created
+        // already frozen and there is no freeze wake-up to publish; the verify-only
+        // scheme is filled the moment `beacon::build_follower` returns below.
         let beacon_slot: crate::committee::BeaconSlot = Arc::new(std::sync::OnceLock::new());
         let committee: Arc<dyn crate::committee::Committee> =
             Arc::new(crate::committee::CommitteeStore::new(
@@ -3847,24 +3129,15 @@ impl DposLayer {
                 crate::committee::epoch_verifier(chain_id, beacon_slot.clone()),
             ));
 
-        // Steady-state self-healing re-jump (finding #6): the follower's executor
-        // reaction to its own `Update::Tip` event, and since pass Б2 the ONLY jump
-        // on the follower path too: the pre-engine one is gone and the anchor above
-        // is either `rf_hash` or the operator checkpoint. Same upstream / EL-sync /
-        // activation / L1 checkpoint; no committee source (the target is a pair out
-        // of this follower's own marshal archive). A follower ALWAYS has an upstream
-        // (the WS the inlet uses), so this is set whenever `upstream.is_some()`.
+        // The follower's executor reaction to its own `Update::Tip`, and its only jump:
+        // the target is a pair out of this follower's own marshal archive, so no
+        // committee source is involved. A follower always has an upstream.
         //
-        // Epoch-relative re-jump gate: the defer deadlock is "≥2 epochs behind", so
-        // recovery fires at `min(serving-window, 1 epoch)` — real-prod epochs ≫ 1024
-        // keep 1024; a compressed test epoch heals within an epoch (see `ReJump::threshold`).
+        // Epoch-relative: the defer deadlock is "≥2 epochs behind", so recovery fires at
+        // `min(serving-window, 1 epoch)`.
         let re_jump_threshold = crate::cold_start_jump::JUMP_THRESHOLD.min(interval);
         let re_jump: Option<crate::executor::ReJump> = upstream.as_ref().map(|up| {
             let up = up.clone();
-            // The inlet's SAME upstream-rotation escape (Rule L): the re-jump's
-            // terminal fault (a repeated `Stalled`) rotates the SAME WS
-            // actor mailbox the inlet's `inlet_rotate` wraps → coalesced at the WS
-            // actor. Bound BEFORE the cb moves `up`.
             let rotate = up.rotate_callback();
             let provider = provider.clone();
             let beacon_engine_handle = beacon_engine_handle.clone();
@@ -3884,10 +3157,8 @@ impl DposLayer {
                             activation,
                             peer_count,
                         );
-                        // Return the typed terminal `JumpOutcome` verbatim — the
-                        // executor's completion arm classifies it (§9.6). The target
-                        // is a pair out of this follower's OWN marshal archive, so
-                        // there is no committee source and no verify RNG (pass Б2).
+                        // The target is a pair out of this follower's own marshal archive,
+                        // so no committee source and no verify RNG are involved.
                         crate::cold_start_jump::jump_to_target(
                             from,
                             target,
@@ -3904,30 +3175,13 @@ impl DposLayer {
                 call: cb,
                 threshold: re_jump_threshold,
                 rotate: Some(rotate),
-                // THE SAME LADDER AS THE VALIDATOR (review B1-01), over the SAME
-                // constructor — only the `U: CertUpstream` differs (the WS handle
-                // here, the frontier resolver there).
-                //
-                // The follower used to wire `probe: None` on the reasoning that its
-                // WS inlet is an always-on live producer, and that was wrong in the
-                // one state the jump exists for. The inlet is a SUBSCRIPTION to
-                // current finalizations: it replays no intermediate height, and
-                // every cert it ingests more than two epochs above this node's own
-                // anchor is deferred by the committee read window
-                // (`cert_inlet.rs` → `committee.scheme(E)`), storing nothing. With
-                // `upstream_frontier` gone (§5.2) the trigger reads the marshal tip
-                // alone, so at `fin == tip == last(epoch(fin)+2)` the gap is 0, the
-                // tip is frozen and nothing local can unfreeze it — a permanent
-                // silent park. The step `Finalized{last(T+1)}` is what unfreezes
-                // it: the marshal's own resolver pulls that height by number
-                // (`UpstreamResolver` → this node's WS upstream), `verify_delivered`
-                // stores it, and `Update::Tip` re-arms the ordinary trigger.
+                // The follower's WS inlet is a subscription to current finalizations and
+                // replays no intermediate height, so without the ladder step a node whose
+                // tip freezes at `last(epoch(fin)+2)` stays parked: the step pulls
+                // `Finalized{last(T+1)}` by number and re-arms the ordinary trigger.
                 probe: Some(frontier_probe(up.clone(), committee.clone())),
-                // `T` computed LOCALLY: a follower runs no `EpochTransition` to
-                // mirror (see below, where the poller is the validator's), so it
-                // applies ET's own rule to the committee module's geometry and the
-                // ordering-finalized cursor the module is already anchored on —
-                // `local_tracked_epoch`.
+                // A follower runs no `EpochTransition`, so `T` is computed locally from
+                // the module's geometry and the ordering-finalized cursor.
                 tracked_epoch: Some(local_tracked_epoch(
                     committee.clone(),
                     finalized_cursor.clone(),
@@ -3935,12 +3189,9 @@ impl DposLayer {
             }
         });
 
-        // Boundary seeding seam — see the twin in `launch` for the full rationale. A
-        // follower spawns no per-epoch engine, so the `Inline::genesis` precondition
-        // this seeds is not its own concern; it is wired here because a follower runs
-        // the SAME jump and therefore leaves the SAME below-floor hole, and an
-        // upstream-configured node can be promoted to a seated validator by a later
-        // committee change without restarting.
+        // A follower runs the same jump and leaves the same below-floor hole, and an
+        // upstream-configured node can later be promoted to a seated validator without
+        // restarting, so it wires the same seeding seam.
         let boundary_fetch: Option<crate::cert_follow::BoundaryFetchFn> =
             upstream.as_ref().map(|up| {
                 let up = up.clone();
@@ -3978,13 +3229,11 @@ impl DposLayer {
                 }) as crate::cert_follow::BoundaryFetchFn
             });
 
-        // The follower's boundary trigger, producer half. `boundary_hook` fires
-        // synchronously inside the marshal's reporter for every finalized
-        // `OrderBlock`, so it may only stamp and wake — the committee read and the
-        // delivery run on the driver task below. `fetch_max` + a permit-storing
-        // `Notify` is lossless in the only sense that matters here: the driver
-        // reads the LATEST height, and a wake landing while it is not armed is held
-        // as a permit rather than dropped.
+        // `boundary_hook` fires synchronously inside the marshal's reporter for every
+        // finalized `OrderBlock`, so it only stamps and wakes; the committee read and the
+        // delivery run on the driver task below. `fetch_max` plus a permit-storing
+        // `Notify` is lossless: the driver reads the latest height, and a wake landing
+        // while it is not armed is held as a permit.
         let follower_finalized = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let follower_finalized_wake = Arc::new(tokio::sync::Notify::new());
         let boundary_hook: Arc<dyn Fn(OrderBlock) + Send + Sync> = {
@@ -3996,18 +3245,14 @@ impl DposLayer {
             })
         };
 
-        // Every staking read the follower's beacon takes, answered from the
-        // committee module — the SAME type the validator plane is handed, so the
-        // two node classes cannot drift on the cursor or on the reads. The
-        // follower's own `CommitteeReads` implementation is gone with it, and
-        // with it the `committee() => None` hole it carried: a follower runs no
-        // ceremony, but the module has no reason to withhold the roster.
+        // Every staking read the follower's beacon takes is answered from the committee
+        // module — the same type the validator plane is handed, so the two node classes
+        // cannot drift on the cursor or on the reads.
         let follower_committees: Arc<dyn crate::beacon::CommitteeReads> = Arc::new(
             crate::committee::CommitteeReadsFacade::new(committee.clone()),
         );
-        // The ONE relationship a follower has. `None` (a test with no upstream)
-        // leaves the rung permanently empty, which is exactly the pre-FLU-1167
-        // behaviour: vote-only admission, never a fault.
+        // `None` (a test with no upstream) leaves the rung permanently empty, which is
+        // vote-only admission, never a fault.
         let artifact_fetch: crate::beacon::ArtifactFetch = match &upstream {
             Some(up) => {
                 let up = up.clone();
@@ -4020,26 +3265,10 @@ impl DposLayer {
             }
             None => Arc::new(|_| Box::pin(async { None })),
         };
-        // A follower's randomness is negative on everything it PRODUCES — no DKG,
-        // no ceremony store, no agreement instance, no share, no seed — and real
-        // on the one thing it VERIFIES: the key a certificate of an epoch must be
-        // checked against. It used to be `beacon::absent`, i.e. negative there
-        // too, BY TYPE and for the life of the process; that was the whole of
-        // FLU-1167. What was missing was never the check — `verify_artifact` needs
-        // only the chain id, an rng and a `committee[epoch]` read the inlet makes
-        // per certificate — but a DELIVERY ROUTE, which the three capabilities
-        // above now supply over the cert upstream.
-        //
-        // The durable key journal that used to be opened here (with an empty
-        // partition, i.e. RAM-only) stays DELETED: the store this fills is RAM-only
-        // by design, and what a restart loses is one fetch per epoch over a link
-        // the follower holds open anyway. Its seed journal goes with it, and that
-        // one has a real consequence worth stating — a node that ran as a validator
-        // and is restarted as `--cert-follow` no longer replays its seed-journal
-        // tail. Nothing on the follower path reads a seed it did not just receive,
-        // so the tail was already unreadable there; what is lost is the ability to
-        // hand it back on a later switch BACK to validator, which is a restart
-        // through this path either way.
+        // A follower's randomness is negative on everything it produces (no DKG, no
+        // ceremony store, no share, no seed) and real on the one thing it verifies: the
+        // key a certificate of an epoch is checked against. The three capabilities above
+        // are the delivery route that verification needs.
         let (randomness, beacon_tasks) = crate::beacon::build_follower(
             &ctx,
             crate::beacon::FollowerInputs {
@@ -4048,52 +3277,36 @@ impl DposLayer {
                 fetch: artifact_fetch,
             },
         );
-        // The committee module's scheme producer can build now: every epoch it
-        // reads from here on gets its verify-only scheme with THIS beacon's
-        // oracle, and the handful of epochs it may have read before this line
-        // pick theirs up on the next `Committee::scheme`.
+        // The committee module's scheme producer can build now; epochs read before this
+        // line pick theirs up on the next `Committee::scheme`.
         crate::committee::fill_beacon_slot(&beacon_slot, &randomness);
-        // WEAK for the same reason the validator's is: this closure is handed to
-        // the RPC feed, which outlives every task the supervisor aborts. A strong
-        // clone here would keep the beacon — and with it any journal sender it
-        // owns — alive past shutdown. A failed upgrade answers `None`, which is
-        // the right answer once the beacon is gone.
+        // Weak because this closure is handed to the RPC feed, which outlives every task
+        // the supervisor aborts: a strong clone would keep the beacon and its journal
+        // sender alive past shutdown.
         let artifact_bytes = {
             let beacon = Arc::downgrade(&randomness);
             Arc::new(move |epoch: u64| beacon.upgrade()?.artifact_bytes(epoch))
                 as std::sync::Arc<dyn Fn(u64) -> Option<Vec<u8>> + Send + Sync>
         };
         let artifact_fetch_handle = beacon_tasks.supervised;
-        // Held and drained like the validator's, not dropped here. `Tasks` is a
-        // contract — TWO handles the node owes the beacon — and today's follower
-        // drain is an empty task only because a follower opens no journal
-        // partition yet. Dropping it would make the day row 5.1 gives the
-        // follower a durable artifact store the day its writer goes undrained
-        // SILENTLY, with nothing at this call site to change.
+        // Held and drained like the validator's: the node owes the beacon two handles,
+        // and dropping this one would make a future journal writer go undrained silently.
         let beacon_drain_handle = beacon_tasks.drain;
         let outer = OuterBuilder {
             me: me.clone(),
-            // Bug A: no-op the blocker on the follower too. The follower spawns no
-            // simplex batcher, but it DOES run the marshal cert resolver, whose
-            // `deliver=false` verdict would `block!` a registry-∪-committee peer on
-            // the shared global transport — the same self-partition the beacon
-            // resolver already no-op'd. `provider:` keeps the real oracle.
+            // NoopBlocker on the follower too: the marshal cert resolver's `deliver=false`
+            // verdict would `block!` a registry-∪-committee peer on the shared global
+            // transport.
             blocker: NoopBlocker,
             provider: oracle.clone(),
             chain_id,
             epoch_length_blocks,
             dpos_activation_block: activation,
             signer_keypair: None,
-            // A follower runs no agreement plane, so it never MINTS an artifact,
-            // and the plane's pull seam does not reach it: that delivers over
-            // `BEACON_RESOLVER_CHANNEL` and this node's p2p identity is ephemeral,
-            // bootstrapper-less and never tracked into any committee's peer set.
-            // What it does have is one delivery route over its cert upstream, so
-            // its ladder is no longer permanently empty: vote-only admission now
-            // lasts until the epoch's artifact arrives and verifies against
-            // `committee[epoch]`, not until the process exits. The multisig quorum
-            // is verified either way; the seed check is what it does without in
-            // the meantime.
+            // A follower runs no agreement plane and never mints an artifact, and the
+            // plane's pull seam does not reach it; its one delivery route is the cert
+            // upstream, so admission is vote-only only until the epoch's artifact
+            // arrives and verifies against `committee[epoch]`.
             randomness: randomness.clone(),
             spawn_unblocked: Arc::new(tokio::sync::Notify::new()),
             re_jump,
@@ -4101,32 +3314,16 @@ impl DposLayer {
             executor_metrics: executor_metrics.clone(),
             sync_metrics: sync_metrics.clone(),
             safety_halt: safety_halt.clone(),
-            // The follower has no beacon plane, so no tombstone watcher fills a
-            // set here. It casts no vote and proposes no block, so both readers of
-            // this handle are unreachable on the follower path — an empty set is
-            // the honest state, not a lost signal.
+            // No beacon plane fills a tombstone set here, and a follower neither votes
+            // nor proposes, so an empty set is the honest state.
             tombstones: crate::slasher::TombstoneSet::default(),
-            // A follower runs no beacon plane, hence no DKG clock — there is no
-            // second clock here to diverge from the ordering tip. An unregistered
-            // handle publishes nothing, which is the honest answer rather than a
-            // lag gauge reading the ordering tip against a permanent zero.
+            // No beacon plane, hence no DKG clock to diverge from the ordering tip; an
+            // unregistered handle publishes nothing.
             plane_clock: crate::sync_metrics::PlaneClock::default(),
-            // Same reason: no beacon plane holds a receiver, so the app writes
-            // only its own watch and the epoch manager reads that one.
+            // No beacon plane holds a receiver, so the app writes only its own watch.
             beacon_tip: None,
             timeouts: ConsensusTimeouts::fluent_1s(),
             mailbox_size: 256,
-            // BROADCAST body cache: at most 4 order-block bodies retained per
-            // PRIMARY sender (`CW:broadcast/src/buffered/engine.rs:319-322`,
-            // `:353-359`). 64 was 64 × `MAX_ORDER_BLOCK_SIZE` = 256 MiB per peer,
-            // and the primary set used to be the whole registry (R-013, E4-14);
-            // 4.3 makes primary the three committee records, and 4 covers the
-            // deepest legitimate pipeline (the proposal in flight plus a re-proposal
-            // after nullify) with a spare. There is NO byte cap to pair it with:
-            // `buffered::Config` carries `deque_size` and nothing else
-            // (`CW:broadcast/src/buffered/config.rs:5-22`), so the per-peer memory
-            // bound is `deque_size × MAX_ORDER_BLOCK_SIZE` — a library boundary,
-            // not a choice made here.
             deque_size: 4,
             partition_prefix: MARSHAL_PARTITION_PREFIX.into(),
             engine_partition_prefix: String::new(),
@@ -4145,15 +3342,11 @@ impl DposLayer {
             last_execution_finalized_height,
             initial_finalized: (Height::new(anchor_height), anchor_hash),
             initial_head: (Height::new(head_info.best_number), head_info.best_hash),
-            // The follower's DPoS-era floor. A later steady-state jump raises it to
-            // `landing − K` through `set_floor`, not here.
             marshal_floor: Some(Height::new(finalized_floor)),
             boundary_fetch,
-            // Height-keyed epoch entry, and the read floor a re-jump publishes:
-            // both exist to serve `EpochTransition`, which a follower does not
-            // run. Its epoch entry rides `boundary_hook` above instead, and it
-            // clamps no committee read to a jump landing because the trigger reads
-            // at the CURRENT finalized hash, never at a historical one.
+            // Both seams exist to serve `EpochTransition`, which a follower does not run:
+            // its epoch entry rides `boundary_hook`, and it never clamps a committee read
+            // to a jump landing because the trigger reads at the current finalized hash.
             boundary_enter: Arc::new(|_| {}),
             boundary_read_floor: Arc::new(|_| Box::pin(async {})),
             fcu_heartbeat_interval,
@@ -4164,8 +3357,8 @@ impl DposLayer {
             committee: committee.clone(),
             slasher_sink: Arc::new(NoopSlasherSink),
             slasher_wal_partition: "slasher-wal".into(),
-            // A follower runs no slasher (built, never started) and registers
-            // no evidence channel, so there is nothing to bridge to.
+            // A follower runs no slasher and registers no evidence channel, so there is
+            // nothing to bridge to.
             slasher_evidence: None,
 
             feed,
@@ -4173,27 +3366,16 @@ impl DposLayer {
             #[cfg(feature = "dpos-devnet-byzantine")]
             byzantine: None,
         }
-        // Sibling of the engine context, not a child — see the validator path
-        // and `OuterBuilder::build` for why the writer must sit outside the
-        // engine's supervision subtree.
+        // Sibling of the engine context, so the writer sits outside the engine's
+        // supervision subtree.
         .build(ctx.with_label("outer_engine"))
         .await?;
 
-        // The starting epoch's verify-only scheme, taken the way every other
-        // epoch's is: by READING its committee through the module, which installs
-        // the record and the scheme in one slot. The `RethCommitteeSource` +
-        // `finalized_hash` closure that used to build a scheme here — and the
-        // `cold_start_register` that put it in a second map with `oracle: None` —
-        // are gone with the second map.
-        //
-        // The two arms are the validator path's, for the validator path's
-        // reasons: a PERMANENT refusal is a fact about the chain and stays the
-        // loud startup refusal, while a retryable miss is this process's startup
-        // order. The follower's retry is its own boundary trigger rather than an
-        // `EpochTransition`: `enter_finalized_epoch` below leaves the epoch
-        // unconsumed while `committee_at` answers `false` and re-delivers it on
-        // the next finalized block, and once delivered a reconcile that still
-        // cannot read parks it in the manager's `deferred_reconciles`.
+        // The cold-start committee read goes through the module, which installs the
+        // record and its verify-only scheme in one slot. A permanent refusal is a fact
+        // about the chain and stays the loud startup error; a retryable miss is this
+        // process's startup order, and the follower's boundary trigger re-delivers the
+        // epoch until the module can read it.
         match committee.committee(initial_epoch_u64) {
             Ok(record) => info!(
                 epoch = initial_epoch_u64,
@@ -4218,26 +3400,14 @@ impl DposLayer {
             ),
         }
 
-        // The follower's boundary trigger, consumer half — the twin of the
-        // validator path's `epoch_bridge` forwarder, and SUPERVISED for the same
-        // reason: if it dies the node keeps following certificates while silently
-        // never entering another epoch, so its committee schemes and its repair
-        // sweep freeze at whatever the cold-start left.
-        //
-        // Committee reads run at the CURRENT EL-finalized hash — the same anchor
-        // `soft_enter_committees` uses, and the same reason: the committee array
-        // and the one-shot keys are frozen storage, so any in-epoch executed hash
-        // at or past the commit yields the identical snapshot. `None` (no
-        // finalized block yet, or `committee[E]` not committed at that hash) leaves
-        // the epoch unconsumed and the next finalized block retries.
+        // Supervised: if this trigger dies the node keeps following certificates while
+        // never entering another epoch, so its committee schemes freeze at the cold
+        // start. Committee reads run at the current EL-finalized hash; `committee[E]`
+        // not readable there leaves the epoch unconsumed for the next finalized block.
         let follower_boundary_tx = outer.boundary_sender();
         let follower_boundary_handle = {
-            // The module's own readability answer, and the one call that
-            // REGISTERS the epoch: reading `committee[E]` installs the record and
-            // its verify-only scheme in one slot, which is what the manager's
-            // reconcile then finds. The `ValidatorSetSnapshot` this closure used
-            // to project is gone with the channel that carried it — the manager
-            // re-reads the record itself.
+            // Reading `committee[E]` installs the record and its verify-only scheme in
+            // one slot, which is what the manager's reconcile then finds.
             let committee = committee.clone();
             let committee_at: FollowerCommitteeAt =
                 Arc::new(move |epoch: u64| committee.scheme(epoch).is_some());
@@ -4252,11 +3422,9 @@ impl DposLayer {
                 .spawn(move |_| async move {
                     let mut last_delivered: Option<u64> = None;
                     loop {
-                        // `notify_one` stores a permit when nobody is waiting, so
-                        // a block reported while this task is inside the read
-                        // below wakes the NEXT iteration instead of being lost —
-                        // the same object-scoped-permit argument the epoch
-                        // manager's own edges rest on.
+                        // `notify_one` stores a permit when nobody is waiting, so a block
+                        // reported while this task is inside the read below wakes the next
+                        // iteration instead of being lost.
                         let woken = wake.notified();
                         let finalized = height.load(std::sync::atomic::Ordering::Relaxed);
                         if finalized != 0
@@ -4281,29 +3449,19 @@ impl DposLayer {
                 })
         };
 
-        // Two clones: one drives the inlet, one is returned to the node for the
-        // `consensus`-RPC feed (`set_marshal`/`set_window`).
         let cert_mailbox = outer.marshal_mailbox();
         let inlet_marshal = outer.marshal_mailbox();
 
-        // Start the follower OuterEngine over the ONE broadcast Muxer. The marshal
-        // resolver is UPSTREAM-backed (not p2p): it backfills the by-height gap
-        // between the cold-start floor and the upstream's live frontier — the gap
-        // the inlet's live stream never carries — by pulling each missing height
-        // from the cert upstream and delivering it for the marshal to BLS-verify.
-        // `upstream` is `Clone` (CertUpstream), so the resolver gets its own handle
-        // while the inlet keeps one alive for the live stream + the WS actor. The
-        // executor is the sole reth writer from here.
+        // The marshal resolver is upstream-backed: it backfills the by-height gap
+        // between the cold-start floor and the upstream's live frontier, which the
+        // inlet's live stream never carries, and the marshal BLS-verifies each delivered
+        // cert. The executor is the sole reth writer from here.
         let consensus_handle = outer.start_follower(broadcast_mux, ctx.clone(), upstream.clone());
 
-        // The cert-inlet — the SOLE producer for a follower. Drives the marshal
-        // (which drives the executor) + the B3 serving window. Runs on a child
-        // task; fail-closed on TOTAL upstream loss (finalized_rx close).
-        // Observability for the committee-read defer regimes (the reth
-        // pipeline-backfill fail-open): registered ONCE on the launch context so
-        // the family carries the launch prefix, then cloned into the closure below
-        // (probe_inconsistency) and moved into the inlet (state_not_materialized /
-        // committee_not_committed).
+        // The cert-inlet is a follower's only producer: it drives the marshal (and so
+        // the executor) plus the serving window, and fails closed when `finalized_rx`
+        // closes. The defer family is registered once on the launch context so it
+        // carries the launch prefix.
         let committee_read_deferred: Family<crate::cert_inlet::CommitteeReadDeferLabels, Counter> =
             Family::default();
         ctx.register(
@@ -4312,9 +3470,8 @@ impl DposLayer {
              by `reason` (state_not_materialized / committee_not_committed / probe_inconsistency).",
             committee_read_deferred.clone(),
         );
-        // Stale-cursor observability: verify failures under a CARRY-FORWARD seed
-        // pin (a key carried forward from an earlier mint) vs genuine forged-
-        // upstream data faults. Registered once here, moved into the inlet.
+        // Verify failures under a carry-forward seed pin, as opposed to genuine forged
+        // upstream data.
         let carry_forward_verify_failed = Counter::default();
         ctx.register(
             "dpos_cert_inlet_carry_forward_pin_verify_failed",
@@ -4323,58 +3480,29 @@ impl DposLayer {
              rather than already held by the cached scheme.",
             carry_forward_verify_failed.clone(),
         );
-        // The inlet verifies with the module's own scheme for the cert's epoch —
-        // the same map the boundary trigger above registers into and the same one
-        // the marshal verifies with. Its private `RethCommitteeSource` over a
-        // `max(EL-finalized, live)` cursor with a three-branch executed-state
-        // probe is gone; so is the `probe_inconsistency` defer it produced, which
-        // was a fault of that closure and not of the chain.
+        // The inlet verifies with the module's own scheme for the cert's epoch, the same
+        // map the boundary trigger and the marshal use.
         let inlet_committee = committee.clone();
         let shutdown_for_inlet = shutdown.clone();
-        // The SAME provider the epoch manager holds, not a second one over a
-        // private store, and on this path that is load-bearing: the σ the inlet
-        // files through `observe_certificate` and the key `ensure_key` resolves
-        // are the SAME index and the SAME key store the epoch manager and the
-        // executor read. A second instance would hold a σ nothing derives from and
-        // fetch into a key store the repair sweep never sees. (The `observe_cert`
-        // prune this note used to name is gone with row 5.2 — the index measures
-        // its own window; the argument does not depend on it.)
+        // The same provider the epoch manager holds, and on this path that is
+        // load-bearing: the σ the inlet files and the key it resolves are the same index
+        // and key store the epoch manager and executor read.
         let inlet_randomness = randomness.clone();
-        // DATA-fault rotation trigger (#7): after MAX_UPSTREAM_FAULTS consecutive
-        // unverifiable certs over a healthy connection the inlet rotates to the
-        // next configured upstream URL (connection-level failover can never see a
-        // bad PAYLOAD on a live connection). Built from a clone of the SAME
-        // `CertUpstream` handle the keepalive holds; `rotate()` drops the
-        // connection so the WS actor's run loop advances to the next URL.
+        // After `MAX_UPSTREAM_FAULTS` consecutive unverifiable certs over a healthy
+        // connection the inlet rotates to the next upstream URL, since connection-level
+        // failover cannot see a bad payload on a live connection.
         let inlet_rotate: Option<crate::cert_inlet::RotateUpstream> = upstream
             .as_ref()
             .map(crate::cert_follow::CertUpstream::rotate_callback);
-        // SUPERVISED, not detached — the follower twin of the validator path's
-        // `("inlet", h)` registration (`node/src/cert_inlet.rs` → `dpos.rs`).
-        // The `shutdown.cancel()` at the end of the body covers the LOOP exits
-        // (total upstream loss / committee fatal); a PANIC skips it entirely and
-        // `with_catch_panics(true)` swallows it, which on this path means zero
-        // certificate ingestion with a live network and a live RPC — the node
-        // looks healthy and follows nothing. The returned handle resolves
-        // `Err(Error::Exited)` on that panic, so the host supervisor fails the
-        // node closed exactly as the loop exits already do.
+        // Supervised: a panic here would be swallowed by `with_catch_panics(true)`, and
+        // the node would look healthy while ingesting nothing.
         let cert_inlet_handle = ctx.with_label("cert_inlet").spawn(move |c| async move {
-            // Hold the WS upstream REQUEST handle alive for the inlet's whole
-            // lifetime. The WS actor's `run` loop exits the instant ALL
-            // `UpstreamHandle`s drop (its `mailbox_rx` closes → `None => return`),
-            // and that SAME actor feeds `finalized_rx` (the inlet's sole producer).
-            // The cold-start only borrows it (the devnet fresh-datadir
-            // `get_latest`), so without this
-            // move it would drop when `launch_follower` returns → the WS actor
-            // exits cleanly → the node-stack supervisor tears the follower down
-            // before it ever follows. The marshal's `UpstreamResolver` holds its
-            // OWN clone of this same handle for by-height gap-repair pulls; this one
-            // keeps the live stream + WS actor alive.
+            // Hold the WS upstream alive for the inlet's whole lifetime: the WS actor's
+            // `run` loop exits the instant all `UpstreamHandle`s drop, and that actor
+            // feeds `finalized_rx`.
             let _upstream_keepalive = upstream;
-            // B4: `--cert-follow` is ALWAYS verify (the inlet has no no-verify mode).
-            // `with_epoch_math` arms the defense-in-depth height↔epoch bind: the
-            // follower fully trusts upstream committee reads, so it binds each
-            // cert's round-epoch to its block's height-derived epoch.
+            // The height↔epoch bind is defense in depth: a follower trusts upstream
+            // committee reads, so it pins each cert's round-epoch to its block height.
             let mut inlet = crate::cert_inlet::CertInlet::new(inlet_marshal, inlet_committee, c)
                 .with_epoch_math(activation, interval)
                 .with_committee_read_deferred_metric(committee_read_deferred)
@@ -4383,10 +3511,8 @@ impl DposLayer {
             if let Some(rotate) = inlet_rotate {
                 inlet = inlet.with_rotate(rotate);
             }
-            // Per-connection data-fault scoping (#7): a connection-level
-            // auto-rotation (the WS actor reconnecting to the next URL on a
-            // dropped/failed connection) bumps `conn_gen`; the inlet resets its
-            // streak on the change so A's faults never bleed into B's budget.
+            // A connection-level auto-rotation bumps `conn_gen`; the inlet resets its
+            // fault streak on the change so one URL's faults do not bleed into the next.
             if let Some(conn_gen) = conn_gen {
                 inlet = inlet.with_connection_token(conn_gen);
             }
@@ -4397,10 +3523,8 @@ impl DposLayer {
             info!("cert-inlet follower producer started");
             loop {
                 match finalized_rx.recv().await {
-                    // INFALLIBLE by type — see `CertInlet::ingest` and the
-                    // validator-side twin in `node/src/cert_inlet.rs`. The
-                    // fail-closed exit below is TOTAL upstream loss, which is a
-                    // different fact and the only one left.
+                    // Infallible by type; the fail-closed exit below is total upstream
+                    // loss, a different fact.
                     Some(uf) => inlet.ingest(uf).await,
                     None => {
                         error!(
@@ -4410,9 +3534,8 @@ impl DposLayer {
                     }
                 }
             }
-            // TOTAL upstream loss is fail-closed (Risk-3): cancel the shared
-            // shutdown so the host brings the node down (case-cert-cascade A3
-            // accepts an `exited` state; a silent hang would fail it).
+            // Total upstream loss fails closed: cancel the shared shutdown so the host
+            // brings the node down rather than hanging silently.
             shutdown_for_inlet.cancel();
         });
 
@@ -4422,16 +3545,13 @@ impl DposLayer {
             supervised: vec![
                 ("cert_inlet", cert_inlet_handle),
                 ("follower_boundary", follower_boundary_handle),
-                // SUPERVISED, not detached: it parks rather than returning, so a
-                // clean exit means it died — and a dead fetcher silently returns
-                // this node to vote-only admission for the rest of the process,
-                // with every liveness check still green.
+                // Supervised: it parks rather than returning, so a clean exit means it
+                // died, and a dead fetcher silently returns the node to vote-only
+                // admission with every liveness check still green.
                 ("follower_artifact_fetch", artifact_fetch_handle),
             ],
-            // The beacon's drain, registered exactly as the validator's is. A
-            // follower opens no journal partition today, so the handle behind it
-            // is an empty task that returns at once — the registration is what
-            // keeps the contract true when row 5.1 gives it one.
+            // The beacon's drain, registered as on the validator path; a follower opens
+            // no journal partition yet, so the task behind it returns at once.
             drain_on_shutdown: vec![("beacon", beacon_drain_handle)],
             artifact_bytes: Some(artifact_bytes),
         })
@@ -4448,25 +3568,23 @@ mod cold_start_kind_tests {
 
     const ACTIVATION: u64 = 192;
     const INTERVAL: u64 = 64;
-    /// The devnet geometry (`genesis-bootstrap`: `EPOCH_BLOCK_INTERVAL=32`,
-    /// `dposActivationBlock=2 * interval`), used where the target arithmetic is what
-    /// the smoke case will read back out of the log.
+    /// The devnet geometry: `EPOCH_BLOCK_INTERVAL=32`,
+    /// `dposActivationBlock=2 * interval`, used where the target arithmetic is what
+    /// the smoke case reads back out of the log.
     const DEVNET_ACTIVATION: u64 = 64;
     const DEVNET_INTERVAL: u64 = 32;
-    /// Any of the deployed chain_ids would do — the predicate is the node's
-    /// (`node/dpos.rs::is_deployed_network`); this crate only receives its answer.
+    /// Any deployed chain_id would do; the predicate lives in the node, which passes
+    /// its answer in.
     const A_DEPLOYED_CHAIN: u64 = 0x5202;
     const A_LOCAL_CHAIN: u64 = 1337;
 
-    /// (4.2 Б2.7в) The fresh-datadir follower entry, the ONE place in the system
-    /// with nothing local to check a peer against. On a DEPLOYED network a missing
-    /// operator checkpoint is a startup REFUSAL naming the flag (E4-05); off one it
-    /// is trust-on-first-use, which the caller logs as such. A checkpoint wins on
-    /// either.
+    /// A fresh-datadir follower entry — the one place with nothing local to check a
+    /// peer against. On a deployed network a missing operator checkpoint is a startup
+    /// refusal naming the flag; off one it is trust-on-first-use, logged as such. A
+    /// checkpoint wins on either.
     ///
-    /// Falsifier: a deployed network without a checkpoint that returns an entry (the
-    /// refusal is gone); a local network that refuses (devnet cannot start); a
-    /// checkpoint that does not become the entry.
+    /// Falsifier: a deployed network without a checkpoint that returns an entry; a
+    /// local network that refuses; a checkpoint that does not become the entry.
     #[test]
     fn a_fresh_datadir_without_a_checkpoint_refuses_on_a_deployed_network() {
         let err = fresh_follower_entry(None, true, A_DEPLOYED_CHAIN)
@@ -4498,26 +3616,10 @@ mod cold_start_kind_tests {
         }
     }
 
-    /// (4.2 Б2.7а) THE EMPTY-ARCHIVE ANCHOR. An empty consensus archive with the EL
-    /// already past epoch 0, and an upstream, resolves to [`ColdStartKind::ElFinalized`]
-    /// — the kind whose anchor in `launch` is reth's OWN finalized pair
-    /// `(cs_finalized, cs_finalized_hash)`, not the genesis (`archive_finalized`,
-    /// where a runtime-deployed ChainConfig is codeless) and not an upstream's
-    /// `Latest` (nothing local can check it).
-    ///
-    /// RED BEFORE THIS CHANGE, verbatim: on HEAD `f8ec4939` this arm returned
-    /// `ColdStartKind::Restart` — the kind whose `launch` anchor is
-    /// `archive_finalized`, i.e. the GENESIS hash for an empty archive, held there
-    /// until a `get_latest`-targeted jump landed (and `cold_start_jump_eligible`
-    /// answered `true` for it, which is why the retry-forever loop existed). Both the
-    /// variant and that function are gone, so this assertion could not compile there.
-    ///
-    /// WHAT THIS TEST DOES NOT COVER, and the name says so (4.2 Б2 fix-1, B2-07):
-    /// the KIND is all it pins. The anchor ITSELF — that `launch`'s `ElFinalized` arm
-    /// binds `(cs_finalized, cs_finalized_hash)` and not some other pair — is held by
-    /// the compiler and by reading alone: `launch` is never entered from a test
-    /// (`testbed/mod.rs` drives the stand below it), so a mutation of that arm's
-    /// tuple reddens nothing here.
+    /// The empty-archive anchor: an empty consensus archive with the EL already past
+    /// epoch 0, and an upstream, resolves to [`ColdStartKind::ElFinalized`], whose
+    /// anchor in `launch` is reth's own finalized pair rather than the genesis or an
+    /// upstream's `Latest`. The test pins the kind only, not `launch`'s anchor choice.
     ///
     /// Falsifier: a `Restart` (the anchor would be the genesis hash); a
     /// `FreshMigration` (the anchor would be the activation block, orphaning the EL
@@ -4533,7 +3635,7 @@ mod cold_start_kind_tests {
         );
     }
 
-    /// The same empty archive with the EL still INSIDE epoch 0 is the ordinary
+    /// The same empty archive with the EL still inside epoch 0 is the ordinary
     /// sequencer→DPoS migration: anchor at the activation block.
     #[test]
     fn inside_epoch_zero_is_fresh_migration() {
@@ -4578,7 +3680,7 @@ mod cold_start_kind_tests {
 
     #[test]
     fn boundary_exactly_one_interval_is_overshoot() {
-        // cs_finalized == activation + interval is the FIRST height past epoch 0
+        // cs_finalized == activation + interval is the first height past epoch 0
         // (epoch 0 is [activation, activation + interval)); with no upstream it is
         // the startup refusal.
         let err = resolve_cold_start_kind(0, ACTIVATION, INTERVAL, ACTIVATION + INTERVAL, false)
@@ -4592,23 +3694,18 @@ mod cold_start_kind_tests {
         assert!(err.to_string().contains("unscheduled sentinel"), "{err}");
     }
 
-    /// The follower march below the activation block (R-131, PLAN row 4.4). Every
-    /// case below fixes ONE step of the five, in the order the arm evaluates them;
-    /// the last two fix the arithmetic the smoke case reads back out of the log.
+    /// The follower march below the activation block. Every case fixes one step of the
+    /// five, in the order the arm evaluates them.
     ///
-    /// [`PeerProbes`] are the two inputs that cost a peer round trip, so the
-    /// peer-free steps are asserted with `PeerProbes::default()` — which is exactly
-    /// how the arm calls this function on its first pass.
+    /// [`PeerProbes`] are the two inputs that cost a peer round trip, so the peer-free
+    /// steps are asserted with `PeerProbes::default()`, as the arm calls this function
+    /// on its first pass.
     ///
-    /// Falsifier for the pair: a march that reaches the upstream while reth already
-    /// holds the activation block (steps 2..5 firing on `holds = true`); a march that
-    /// asks for a certificate before spending a configured operator checkpoint (the
-    /// order К-73 forbids, because `assert_l1_checkpoint` is counted from the
-    /// landing).
+    /// Falsifier: a march that reaches the upstream while reth already holds the
+    /// activation block; a march that asks for a certificate before spending a
+    /// configured operator checkpoint.
     #[test]
     fn holding_the_activation_block_is_a_local_entry_and_costs_no_peer() {
-        // Step 1a: the probe found the block. Upstream AND checkpoint AND a servable
-        // frontier are all present, and none of them is reached.
         assert_eq!(
             follower_entry(
                 true,
@@ -4625,8 +3722,6 @@ mod cold_start_kind_tests {
             FollowerEntry::Local,
             "a node that holds the activation block must not contact a peer at all"
         );
-        // Step 1b: reth's own finalized tag is already at/above activation — today's
-        // `rf_num >= activation` path, which does not depend on the probe.
         assert_eq!(
             follower_entry(
                 false,
@@ -4642,11 +3737,9 @@ mod cold_start_kind_tests {
         );
     }
 
-    /// Step 3b — nothing to try at all: no checkpoint AND no upstream. That is the
-    /// honest sequencer→DPoS migration, where the block is produced on THIS chain, so
-    /// there is nobody to ask and nothing to authenticate, and the node waits for reth
-    /// to hold it (`wait_for_activation_block`, retry-forever, Decision A). Note what
-    /// separates this input from the one above: `has_checkpoint = false`.
+    /// The honest sequencer→DPoS migration: no checkpoint and no upstream, so there is
+    /// nobody to ask and the node waits for reth to hold the activation block
+    /// (`wait_for_activation_block`, retry-forever).
     ///
     /// Falsifier: a `ChainBelowActivation`/`Certificate` verdict here would send an
     /// upstream-less node into a loop that can never make a request.
@@ -4666,24 +3759,12 @@ mod cold_start_kind_tests {
         );
     }
 
-    /// Step 2 — AN OPERATOR CHECKPOINT WITH NO UPSTREAM AT ALL IS STILL AN ENTRY, and
-    /// this is the one configuration that decides the order of the two peer-free
-    /// fallbacks. `ElSync::sync_to_checkpoint` (`cold_start_jump.rs`) takes `&self`
-    /// and a hash and nothing else: it FCUs reth onto the operator's block and lets
-    /// devp2p backfill, so it works on a node that has no `CertUpstream` configured.
-    /// Testing `has_upstream` first therefore parked — forever, in
-    /// `wait_for_activation_block` — a node whose operator had already handed it a
-    /// working entry.
+    /// An operator checkpoint with no upstream at all is still an entry:
+    /// `ElSync::sync_to_checkpoint` takes a hash and drives reth itself, so testing
+    /// `has_upstream` first would park in `wait_for_activation_block` a node whose
+    /// operator had already handed it a working entry.
     ///
-    /// RED BEFORE THIS CHANGE, verbatim: with the two predicates in the order the
-    /// design shipped them (`if !has_upstream { WaitLocal }` above
-    /// `if has_checkpoint { Checkpoint }`) this input answers
-    /// `FollowerEntry::WaitLocal`, and this assertion fails with
-    /// `left: WaitLocal / right: Checkpoint`.
-    ///
-    /// Falsifier: any verdict but `Checkpoint` on this input — `WaitLocal` is the
-    /// permanent park, and the two retry verdicts cannot even be reached without an
-    /// upstream to ask.
+    /// Falsifier: any verdict but `Checkpoint`; `WaitLocal` is the permanent park.
     #[test]
     fn a_checkpoint_without_any_upstream_is_still_an_entry() {
         assert_eq!(
@@ -4702,11 +3783,10 @@ mod cold_start_kind_tests {
         );
     }
 
-    /// Step 3 — the operator checkpoint goes BEFORE the certificate entry, and the
-    /// order is the point: `assert_l1_checkpoint` (`dpos.rs`, after the match) is
-    /// counted FROM THE LANDING, and the certificate entry lands on the lowest legal
-    /// height, so a certificate-first march turns a survivable park into a fatal
-    /// refusal (К-73).
+    /// The operator checkpoint goes before the certificate entry: `assert_l1_checkpoint`
+    /// runs after the match and is counted from the landing, and the certificate entry
+    /// lands on the lowest legal height, so a certificate-first march would turn a
+    /// survivable park into a fatal refusal.
     ///
     /// Falsifier: a `Certificate` verdict on this input — that is the ordering bug.
     #[test]
@@ -4729,11 +3809,9 @@ mod cold_start_kind_tests {
         );
     }
 
-    /// Step 4 — the ordering chain is not an entry yet. Three shapes, all "ask
-    /// again": the upstream serves no frontier at all, its frontier is below
-    /// `activation + K`, and the boundary `activation + K − 1` (the highest height
-    /// whose certificate still carries no real EVM hash —
-    /// `order_block::result_target` answers `PreActivation` below `anchor + K`).
+    /// The ordering chain is not an entry yet: the upstream serves no frontier at all,
+    /// its frontier is below `activation + K`, or it is the boundary `activation + K − 1`
+    /// (the highest height whose certificate still carries no real EVM hash).
     ///
     /// Falsifier: a `Certificate { target }` at or below `activation + K − 1` would
     /// EL-sync toward `B256::ZERO`.
@@ -4757,7 +3835,6 @@ mod cold_start_kind_tests {
                 "latest = {latest:?} must not become a certificate target"
             );
         }
-        // And the first height that IS an entry, to show the boundary is a boundary.
         assert_eq!(
             follower_entry(
                 false,
@@ -4778,13 +3855,11 @@ mod cold_start_kind_tests {
         );
     }
 
-    /// Step 4, second shape — no epoch committee reads at `rf_hash` yet: the window
-    /// where `setDposActivationBlock` has run and `commitEpochCommittee(0)` has not.
-    /// Nothing can authenticate a finalization under a committee that is not there,
-    /// so the march waits instead of asking (A1b).
+    /// The window where `setDposActivationBlock` has run and
+    /// `commitEpochCommittee(0)` has not: nothing can authenticate a finalization under
+    /// a committee that is not there, so the march waits instead of asking.
     ///
-    /// Falsifier: a `Certificate` verdict with `e_max = None` — the fetch would then
-    /// always fail authentication, and the park would be reported as a refusal.
+    /// Falsifier: a `Certificate` verdict with `e_max = None`.
     #[test]
     fn an_unreadable_committee_window_is_not_an_entry() {
         assert_eq!(
@@ -4804,19 +3879,18 @@ mod cold_start_kind_tests {
         );
     }
 
-    /// Step 5 — the certificate target, on the three shapes that matter. The target
-    /// is the HIGHEST height this node can still check: `min(tip, last(e_max))`,
-    /// floored at `activation + K`, where
-    /// `last(e) = activation + (e + 1) · interval − 1`. One request per attempt,
-    /// aimed at the height a cascading donor's `JUMP_THRESHOLD` window and a jumped
-    /// validator's archive lose LAST.
+    /// The certificate target is the highest height this node can still check:
+    /// `min(tip, last(e_max))`, floored at `activation + K`, where
+    /// `last(e) = activation + (e + 1) · interval − 1`. One request per attempt, aimed
+    /// at the height a cascading donor's `JUMP_THRESHOLD` window and a jumped
+    /// validator's archive lose last.
     ///
     /// Falsifier: a target above `last(e_max)` (the committee needed to authenticate
-    /// it is not readable, so the fetch could never succeed); a target above the tip
-    /// (nobody holds it); a target below `activation + K` (no real EVM hash).
+    /// it is not readable); a target above the tip (nobody holds it); a target below
+    /// `activation + K` (no real EVM hash).
     #[test]
     fn the_certificate_target_is_the_top_of_the_checkable_window() {
-        // DEVNET: one readable epoch, tip well past it. `last(0) = 95`, and the
+        // devnet: one readable epoch, tip well past it. `last(0) = 95`, and the
         // landing the smoke case reads in the log is `95 − K = 92`.
         assert_eq!(
             follower_entry(
@@ -4851,7 +3925,7 @@ mod cold_start_kind_tests {
             FollowerEntry::Certificate { target: 80 },
             "a tip inside epoch 0 is itself the top of the checkable window"
         );
-        // MINIMUM: the tip is exactly the first checkable height.
+        // minimum: the tip is exactly the first checkable height.
         assert_eq!(
             follower_entry(
                 false,
@@ -4870,7 +3944,7 @@ mod cold_start_kind_tests {
             },
             "the floor is activation + K, and it is reachable"
         );
-        // PROD: a pre-activation block reads the whole lookahead window
+        // prod: a pre-activation block reads the whole lookahead window
         // (`MAX_COMMITTEE_LOOKAHEAD_EPOCHS = 2`), so the top is `last(2)`.
         assert_eq!(
             follower_entry(
@@ -4892,21 +3966,14 @@ mod cold_start_kind_tests {
         );
     }
 
-    /// A READABLE WINDOW THAT ENDS BELOW THE FLOOR IS NOT AN ENTRY. `interval <= K`
-    /// puts `last(e_max)` under `activation + K`, so there is no height that is both
-    /// committee-checkable at `rf_hash` and carries a real EVM hash — the same state
-    /// as "the chain has not reached the entry yet", and the same verdict.
+    /// A readable window that ends below the floor is not an entry: `interval <= K`
+    /// puts `last(e_max)` under `activation + K`, so no height is both
+    /// committee-checkable at `rf_hash` and carries a real EVM hash. Clamping the
+    /// target up instead asked for a height in an epoch whose committee is not
+    /// readable, which can never authenticate.
     ///
-    /// RED ON THE FORM THIS REPLACED, which clamped the target UP
-    /// (`min(latest, last(e_max)).max(floor)`): it returned
-    /// `Certificate { target: activation + K }`, a height inside an epoch ABOVE
-    /// `e_max` whose committee the node cannot read, so `fetch_verified_entry`
-    /// could never authenticate it and the node parked forever on the upstream's
-    /// failure text for a fault of the geometry (R-131 review, D-03). Nothing in the
-    /// suite pinned the clamp — deleting it left all fifteen tests green.
-    ///
-    /// Falsifier: any `Certificate` verdict here; a `ChainBelowActivation` on the
-    /// line below, where the window DOES reach the floor and the entry exists.
+    /// Falsifier: any `Certificate` verdict here; a `ChainBelowActivation` on the line
+    /// below, where the window does reach the floor.
     #[test]
     fn a_readable_window_below_the_floor_is_not_an_entry() {
         // `interval = 1`, `e_max = 0` ⇒ `last(0) = activation`, floor = activation + 3.
@@ -4970,10 +4037,9 @@ mod broker_repromote_tests {
     const SUBCHANNEL: u64 = 0;
     const QUOTA: Quota = Quota::per_second(NonZeroU32::MAX);
 
-    /// A demoted engine drops its `SubReceiver`s; a re-promoted engine CLONES the
-    /// plane's `Arc<Mutex<MuxHandle>>` (the `PlaneMux` sharing) and re-registers the
-    /// SAME subchannel against the SAME persistent broker — no network rebuild. This
-    /// is the restart-free re-promotion property the broker-in-plane refactor adds.
+    /// A demoted engine drops its `SubReceiver`s; a re-promoted engine clones the
+    /// plane's `Arc<Mutex<MuxHandle>>` and re-registers the same subchannel against the
+    /// same persistent broker, with no network rebuild.
     #[test]
     fn plane_mux_supports_drop_then_reclone_reregister() {
         let executor = deterministic::Runner::default();
@@ -5011,8 +4077,6 @@ mod broker_repromote_tests {
                     .unwrap();
             }
 
-            // Plane-side broker over peer 1; the plane shares the registrar behind
-            // Arc<Mutex> (PlaneMux).
             let (s1, r1) = oracle
                 .control(pk1.clone())
                 .register(7, QUOTA)
@@ -5022,7 +4086,6 @@ mod broker_repromote_tests {
             mux1.start();
             let plane_mux = Arc::new(Mutex::new(handle1));
 
-            // Sender side over peer 2.
             let (s2, r2) = oracle
                 .control(pk2.clone())
                 .register(7, QUOTA)
@@ -5032,8 +4095,8 @@ mod broker_repromote_tests {
             mux2.start();
             let (mut tx2, _rx2) = handle2.register(SUBCHANNEL).await.unwrap();
 
-            // Two promotions: each clones the SAME plane_mux, registers SUBCHANNEL,
-            // receives, then drops its SubReceiver (auto-deregister) at scope exit.
+            // Each promotion clones the same `plane_mux`, registers `SUBCHANNEL`,
+            // receives, then drops its `SubReceiver` (auto-deregister) at scope exit.
             for payload in [b"a".as_ref(), b"b".as_ref()] {
                 let p = plane_mux.clone();
                 let (_sub_tx, mut sub_rx) = p.lock().await.register(SUBCHANNEL).await.unwrap();
@@ -5174,9 +4237,9 @@ mod self_heal_tests {
     use reth_storage_api::{errors::provider::ProviderResult, BlockHashReader};
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    // #17 visibility belt: a landing read that returns `None` a few times then
-    // materializes must resolve (not fatal), raise `landing_wait` while waiting,
-    // and clear it on success.
+    // The visibility belt: a landing read that returns `None` a few times then
+    // materializes must resolve (not fatal), raise `landing_wait` while waiting, and
+    // clear it on success.
     #[test]
     fn belt_retries_then_resolves_and_clears_the_gauge() {
         deterministic::Runner::default().start(|ctx| async move {
@@ -5206,8 +4269,8 @@ mod self_heal_tests {
         });
     }
 
-    // #17 belt: a genuinely materialized-but-missing read stays fatal AFTER the
-    // belt expires (not retry-forever — a landing local fault, not correlated).
+    // A genuinely materialized-but-missing read stays fatal after the belt expires
+    // (not retry-forever — a landing local fault, not correlated).
     #[test]
     fn belt_expiry_is_fatal_and_clears_the_gauge() {
         deterministic::Runner::default().start(|ctx| async move {
@@ -5256,10 +4319,9 @@ mod self_heal_tests {
         }
     }
 
-    // #13 activation-wait: a transient absence RETRIES (the old code fatal-ed after
-    // a 120 s deadline; the deadline is now gone — retry-forever) and resolves when
-    // the sequencer's block lands, raising `activation_wait` while it waits and
-    // clearing it on success. Never fatal on a mere transient absence.
+    // Activation-wait: a transient absence retries forever and resolves when the
+    // sequencer's block lands, raising `activation_wait` while it waits and clearing it
+    // on success. Never fatal on a mere transient absence.
     #[test]
     fn activation_wait_retries_then_resolves() {
         deterministic::Runner::default().start(|ctx| async move {
@@ -5336,8 +4398,8 @@ mod crash_recover_tests {
         }
     }
 
-    // #12: reth missing a small tail below `target` reconnects at the highest
-    // present ancestor and replays it (the flush-race path — NOT a defer).
+    // reth missing a small tail below `target` reconnects at the highest present
+    // ancestor and replays it (the flush-race path — not a defer).
     #[test]
     fn small_gap_reconnects_for_replay() {
         // reth holds up to 998; target 1000 (999, 1000 missing) → reconnect at 999.
@@ -5351,8 +4413,8 @@ mod crash_recover_tests {
         }
     }
 
-    // #12: reth missing MORE than MAX_COLD_RECOVER below its own archive is TooDeep —
-    // the pre-engine replay can't bridge it; the recover fn defers to devp2p EL-sync.
+    // reth missing more than `MAX_COLD_RECOVER` below its own archive is TooDeep: the
+    // pre-engine replay cannot bridge it, so the recover fn defers to devp2p EL-sync.
     #[test]
     fn deep_gap_is_too_deep_for_replay() {
         // reth holds only up to 100; target 1000 → far more than 64 behind.
@@ -5369,9 +4431,9 @@ mod crash_recover_tests {
         );
     }
 
-    // #12 disposition WITH an upstream: DEFER to EL-sync + raise the crash-recover
-    // gauges/counter (the caller then anchors at reth's tip so the jump devp2p-backfills
-    // the EL — the archive is INTACT, so no consensus-store repair is needed).
+    // With an upstream: defer to EL-sync and raise the crash-recover gauges and counter;
+    // the caller anchors at reth's tip, and the archive is intact so no consensus-store
+    // repair is needed.
     #[test]
     fn defer_with_upstream_raises_gauges_and_reports_gap() {
         let provider = SparseProvider {
@@ -5398,9 +4460,8 @@ mod crash_recover_tests {
         assert_eq!(m.crash_recover_gap_blocks.get(), 900, "gap gauge set");
     }
 
-    // #12 residual fatal WITHOUT an upstream: there is nowhere to devp2p-backfill from —
-    // real local data loss stays FATAL (Decision A does not apply to idiosyncratic local
-    // corruption), and no gauge is raised.
+    // Without an upstream there is nowhere to devp2p-backfill from, so real local data
+    // loss stays fatal and no gauge is raised.
     #[test]
     fn defer_without_upstream_is_fatal() {
         let provider = SparseProvider {
@@ -5422,10 +4483,9 @@ mod crash_recover_tests {
     }
 }
 
-// The σ half of the crash-survivor replay, pinned where the DECISION is made.
-// The I/O tail it guards (local certificate → upstream → defer) is exercised by
-// the smoke suite, as the disk-archive replay itself is; what a unit can pin —
-// and what the fork hinges on — is that a MISS never reads as "no σ here".
+// The σ half of the crash-survivor replay, pinned where the decision is made: the I/O
+// tail (local certificate → upstream → defer) is exercised by the smoke suite, and what
+// a unit pins is that a miss never reads as "no σ here".
 #[cfg(test)]
 mod replay_seed_tests {
     use super::{replay_seed_source, seed_via_beacon, CertSeed, ReplaySeedSource, SyncMetrics};
@@ -5467,7 +4527,7 @@ mod replay_seed_tests {
             seeds.record(PkOracle::new(*sharing.public(), ns.clone()).witness(round, sigma));
         }
         // No key index entries: this fixture is about the σ store, and the replay
-        // path's claim is that a σ MISS never reads as "no σ here".
+        // path's claim is that a σ miss never reads as "no σ here".
         LiveBeacon::build(LiveBeaconConfig {
             seeds,
             keys: MintFixture::new().keys.clone(),
@@ -5480,9 +4540,9 @@ mod replay_seed_tests {
         })
     }
 
-    // THE property: on a beacon-active link a σ miss is "go find it", never "there
-    // is no σ here". The second reading is the digest fallback under another name —
-    // it re-rolls `prev_randao` and forks the restart away from the network.
+    // On a beacon-active link a σ miss is "go find it", never "there is no σ here": the
+    // second reading is the digest fallback under another name, re-rolling `prev_randao`
+    // and forking the restart away from the network.
     #[test]
     fn a_seed_miss_on_a_beacon_active_link_is_wanted_never_inactive() {
         let m = SyncMetrics::default();
@@ -5505,7 +4565,7 @@ mod replay_seed_tests {
         );
     }
 
-    /// A committee that can produce a REAL seeded finalization: `n` multisig
+    /// A committee that can produce a real seeded finalization: `n` multisig
     /// members over one dealt threshold key, so the σ its certificates carry is a
     /// genuine threshold signature and the beacon's check of it is the shipped one.
     struct Seeded {
@@ -5593,7 +4653,7 @@ mod replay_seed_tests {
         }
     }
 
-    /// A 2f+1 finalization for `round` whose certificate CARRIES the round's σ.
+    /// A 2f+1 finalization for `round` whose certificate carries the round's σ.
     fn seeded_cert(
         c: &Seeded,
         round: Round,
@@ -5621,7 +4681,7 @@ mod replay_seed_tests {
         .expect("quorum + recovered seed")
     }
 
-    /// A provider over an EMPTY index, with `mint` optionally filed — the two
+    /// A provider over an empty index, with `mint` optionally filed — the two
     /// states the replay walk has to tell apart.
     fn provider(mint: Option<&crate::beacon::testing::DkgOutcome>) -> Arc<LiveBeacon> {
         let mints = MintFixture::new();
@@ -5640,21 +4700,10 @@ mod replay_seed_tests {
         })
     }
 
-    // (E5-03) THE ARCHIVE IS NO LONGER TRUSTED FOR σ. This walk used to read σ
-    // straight out of a certificate with no check, justified as "the key may
-    // legitimately not be here" — and the two cases ARE distinguishable, which is
-    // what the beacon's verdict says:
-    //
-    //   - genuine σ + key resolvable ⇒ `Held`, and it is FILED on the way past;
-    //   - any σ + no key ⇒ `Pending` ⇒ the caller defers and resumes on
-    //     `KeyAvailable`, instead of deriving from bytes nobody checked;
-    //   - a σ that FAILS an attested key ⇒ `Absent`: the walk looks elsewhere and
-    //     stops rather than forking on a corrupt or tampered record.
-    //
-    // RED BEFORE THE FIX, on the third assertion: the predecessor
-    // (`seed_from_cert`) returned `Some(σ)` for all three. Reproduce the `Pending`
-    // half with one line — `Observed::Pending => CertSeed::Absent` in
-    // `seed_via_beacon`.
+    // The archive is not trusted for σ: a certificate is taken only when its round
+    // matches and it is checked under the epoch's attested key. Genuine σ under a
+    // resolvable key is `Held` and filed; any σ with no key is `Pending` (the caller
+    // defers); a σ that fails an attested key is `Absent`.
     #[test]
     fn the_replays_certificate_seed_is_checked_under_the_epoch_key() {
         let c = seeded_committee();
@@ -5665,8 +4714,7 @@ mod replay_seed_tests {
             .seed()
             .expect("a beacon-active certificate carries the round seed");
 
-        // (1) The key is here and the σ is genuine: taken, and filed for the rest of
-        // the walk.
+        // The key is here and the σ is genuine: taken, and filed for the rest of the walk.
         let keyed = provider(Some(&c.outcome));
         match seed_via_beacon(keyed.as_ref(), round, &cert) {
             CertSeed::Held(seed) => {
@@ -5681,9 +4729,9 @@ mod replay_seed_tests {
             "the verdict FILES what it checks, so the walk needs no second check"
         );
 
-        // (2) No key here: HELD, and the walk defers. Deriving here is the fork this
-        // arm exists to prevent — a restart with an empty artifact partition is an
-        // ordinary state.
+        // No key here: held, and the walk defers. Deriving here is the fork this arm
+        // exists to prevent — a restart with an empty artifact partition is an ordinary
+        // state.
         let keyless = provider(None);
         assert!(
             matches!(
@@ -5697,9 +4745,9 @@ mod replay_seed_tests {
             "and nothing unchecked is served"
         );
 
-        // (3) A σ that fails an ATTESTED key — a tampered or corrupt archive record.
-        // The genuine σ of a NEIGHBOURING round is the forgery: a decodable curve
-        // point that verifies for no round here.
+        // A σ that fails an attested key — a tampered or corrupt archive record. The
+        // genuine σ of a neighbouring round is the forgery: a decodable curve point that
+        // verifies for no round here.
         let neighbour = Round::new(
             Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH),
             View::new(VIEW + 1),
@@ -5723,8 +4771,8 @@ mod replay_seed_tests {
             "and it is not filed either"
         );
 
-        // (4) The round PIN, unchanged: a certificate for another round carries a
-        // perfectly valid signature over something else.
+        // The round pin, unchanged: a certificate for another round carries a perfectly
+        // valid signature over something else.
         let other = provider(Some(&c.outcome));
         assert!(
             matches!(
@@ -5735,8 +4783,7 @@ mod replay_seed_tests {
         );
     }
 
-    // The ordinary case, and the one the whole re-key exists for: σ is found under
-    // the block's own round, with no child block read.
+    // The ordinary case: σ is found under the block's own round, with no child block read.
     #[test]
     fn a_held_seed_resolves_at_the_blocks_own_round() {
         let round = Round::new(Epoch::new(DETERMINISTIC_BOOTSTRAP_EPOCH), View::new(VIEW));
@@ -5754,8 +4801,8 @@ mod replay_seed_tests {
         }
     }
 
-    // PREDICATE FIRST: a provider that HAS σ for the round is still refused, because
-    // the agreed epoch map says the beacon is not active there and the rest of the
+    // The agreed epoch map comes first: a provider that has σ for the round is still
+    // refused when the map says the beacon is not active there and the rest of the
     // network derives `None`. Counted, not obeyed and not fatal.
     #[test]
     fn a_stray_seed_at_a_beacon_inactive_round_is_ignored_and_counted() {
@@ -5775,9 +4822,9 @@ mod replay_seed_tests {
         assert_eq!(m.crash_recover_stray_seed.get(), 1);
     }
 
-    // An epoch the map cannot name at all (below the epocher origin) is INACTIVE and
-    // is never unwrapped — the beacon cannot have been mandatory in an epoch that
-    // does not exist.
+    // An epoch the map cannot name at all (below the epocher origin) is inactive and is
+    // never unwrapped: the beacon cannot have been mandatory in an epoch that does not
+    // exist.
     #[test]
     fn a_height_below_the_epocher_origin_is_inactive_not_a_panic() {
         assert!(matches!(
@@ -5793,11 +4840,11 @@ mod replay_seed_tests {
     }
 }
 
-// #8: the below-floor archive-hole heal is NOT a defer — with an upstream it
-// RE-POPULATES the hole by a BLS-verified by-height re-fetch. These pin
-// `refetch_verified_archive_hole` in isolation (the disk-archive replay it splices
-// into is exercised by the smoke suite): a valid cert heals, a no-upstream / gone-
-// everywhere / forged cert is fatal.
+// The below-floor archive-hole heal is not a defer: with an upstream it re-populates the
+// hole by a BLS-verified by-height re-fetch. These pin
+// `refetch_verified_archive_hole` in isolation (the disk-archive replay it splices into
+// is exercised by the smoke suite): a valid cert heals, a no-upstream / gone-everywhere /
+// forged cert is fatal.
 #[cfg(test)]
 mod refetch_hole_tests {
     use super::refetch_verified_archive_hole;
@@ -5893,12 +4940,11 @@ mod refetch_hole_tests {
         }
     }
 
-    /// THE TWO ANSWERS ARE INDEPENDENT FIELDS, because conflating them is the defect
-    /// under test: `height` is what the by-height pull serves, `latest` is what
-    /// `get_latest` serves — the only positive proof that an upstream answered us at
-    /// all. A fake that derived one from the other could not express "reachable, and
-    /// it does not hold the height" apart from "nothing answered", which is exactly
-    /// the pair `refetch_verified_archive_hole` has to separate.
+    /// The two answers are independent fields, and conflating them is the defect under
+    /// test: `height` is what the by-height pull serves, `latest` is what `get_latest`
+    /// serves — the only positive proof that an upstream answered us at all. A fake that
+    /// derived one from the other could not express "reachable, and it does not hold the
+    /// height" apart from "nothing answered", the pair this function separates.
     #[derive(Clone)]
     struct FakeUpstream {
         height: Option<UpstreamFinalized>,
@@ -5912,7 +4958,7 @@ mod refetch_hole_tests {
                 latest: Some(uf),
             }
         }
-        /// ANSWERS, and says it does not hold the height — the only shape that is
+        /// Answers, and says it does not hold the height — the only shape that is
         /// evidence about the record, and the only one that may exit fatal.
         fn reachable_but_missing(latest: UpstreamFinalized) -> Self {
             Self {
@@ -5939,9 +4985,9 @@ mod refetch_hole_tests {
     }
 
     /// Unreachable for the first `silent_laps` by-height pulls, then normal — the
-    /// operator's upstream that is simply not up yet when the node crash-recovers.
-    /// Records the `crash_recover` gauge as seen ON THE SECOND LAP, so the test can
-    /// assert the park was actually visible and not merely survived.
+    /// operator's upstream that is not up yet when the node crash-recovers. Records the
+    /// `crash_recover` gauge as seen on the second lap, so the test can assert the park
+    /// was visible and not merely survived.
     #[derive(Clone)]
     struct FlakyUpstream {
         served: UpstreamFinalized,
@@ -5985,8 +5031,8 @@ mod refetch_hole_tests {
         }
     }
 
-    // WITH an upstream serving a committee-signed cert, a below-floor hole is
-    // RE-POPULATED (returns the verified block+cert to splice into the replay),
+    // With an upstream serving a committee-signed cert, a below-floor hole is
+    // re-populated (returns the verified block and cert to splice into the replay),
     // never deferred.
     #[test]
     fn valid_upstream_cert_repopulates_the_hole() {
@@ -6014,7 +5060,7 @@ mod refetch_hole_tests {
         });
     }
 
-    // WITHOUT an upstream: a below-floor hole is unrecoverable local data loss → FATAL.
+    // Without an upstream a below-floor hole is unrecoverable local data loss: fatal.
     #[test]
     fn no_upstream_is_fatal() {
         deterministic::Runner::default().start(|mut ctx| async move {
@@ -6038,14 +5084,8 @@ mod refetch_hole_tests {
         });
     }
 
-    // Upstream reachable but no longer serves the below-floor height (pruned
-    // everywhere) → FATAL (gone-everywhere).
-    //
-    // THE WORLD IS NOW EXPLICITLY REACHABLE, and that is the point of the change: the
-    // fake used to answer `None` to BOTH the by-height pull and `get_latest`, i.e. it
-    // was simultaneously "pruned everywhere" and "nobody home", and the fatal fired on
-    // the pair. Only the first of the two licenses this sentence (R-131 review,
-    // `4.4а-Д-9`), so the world has to say which one it is.
+    // Upstream reachable but no longer serving the below-floor height, pruned
+    // everywhere: fatal gone-everywhere.
     #[test]
     fn upstream_missing_height_is_fatal() {
         deterministic::Runner::default().start(|mut ctx| async move {
@@ -6067,21 +5107,13 @@ mod refetch_hole_tests {
         });
     }
 
-    /// AN UNREACHABLE UPSTREAM IS NOT A DATA-LOSS VERDICT. Same `None` from the
-    /// by-height pull as the test above, same height, same committee — and the answer
-    /// must be the opposite one, because the two negatives are different facts.
+    /// An unreachable upstream is not a data-loss verdict: the same `None` from the
+    /// by-height pull as the test above, same height, same committee, and the opposite
+    /// answer, because the two negatives are different facts. The block path must ask
+    /// again rather than tell the operator to re-sync the EL disk.
     ///
-    /// The stake is irreversible: the sentence this must NOT produce tells the
-    /// operator to re-sync the EL disk from a snapshot. Before the entry march made a
-    /// disconnected WS actor answer its mailbox, the pull simply never returned here,
-    /// so a negative was necessarily "servers answered and none holds it"; the fix for
-    /// that hang is what made this case reachable, and this is the test that keeps the
-    /// two apart (R-131 review, `4.4а-Д-9`).
-    ///
-    /// RED on any form where both cases answer the same — delete the `get_latest`
-    /// witness and this fails with the gone-everywhere error it must not produce,
-    /// while `upstream_missing_height_is_fatal` stays green. That pair is the whole
-    /// discrimination.
+    /// Falsifier: any form where both negatives answer alike — delete the `get_latest`
+    /// witness and this fails with the gone-everywhere error it must not produce.
     #[test]
     fn an_unreachable_upstream_is_not_a_data_loss_verdict() {
         deterministic::Runner::default().start(|mut ctx| async move {
@@ -6106,18 +5138,17 @@ mod refetch_hole_tests {
         });
     }
 
-    /// …and the block path ASKS AGAIN until a verdict exists, healing the hole the
-    /// moment an upstream comes up. The upstream is silent for two laps and then
-    /// serves the record, which is the crash-recovery boot race: the node restarts
-    /// before the validator it pulls from is listening.
+    /// The block path asks again until a verdict exists, healing the hole the moment an
+    /// upstream comes up. The upstream is silent for two laps and then serves the
+    /// record, which is the crash-recovery boot race: the node restarts before the
+    /// validator it pulls from is listening.
     ///
-    /// Two things are asserted beyond the happy end, and both are the point: the lap
-    /// count proves it RETRIED rather than concluded, and the gauge read taken by the
-    /// fake ON THE SECOND LAP proves the park was OBSERVABLE while it waited — a
-    /// silent wait would be the other half of the same defect.
+    /// Two things beyond the happy end: the lap count proves it retried rather than
+    /// concluded, and the gauge read taken on the second lap proves the park was
+    /// observable while it waited.
     ///
-    /// RED on the form where both negatives answer alike: the first lap exits with
-    /// "gone everywhere" and no second lap happens.
+    /// Falsifier: any form where both negatives answer alike — the first lap exits with
+    /// gone-everywhere and no second lap happens.
     #[test]
     fn a_hole_waits_for_an_upstream_instead_of_declaring_data_loss() {
         deterministic::Runner::default().start(|mut ctx| async move {
@@ -6172,14 +5203,14 @@ mod refetch_hole_tests {
         });
     }
 
-    // A forged cert (signed by a DIFFERENT committee than the one the trust anchor
-    // reads) FAILS the BLS authentication → FATAL: the re-fetch cannot be steered by
-    // a malicious upstream.
+    // A forged cert (signed by a different committee than the trust anchor reads) fails
+    // BLS authentication: fatal, so the re-fetch cannot be steered by a malicious
+    // upstream.
     #[test]
     fn forged_cert_fails_authentication() {
         deterministic::Runner::default().start(|mut ctx| async move {
             let signer_committee = committee(4);
-            let trust_committee = committee(5); // a DIFFERENT committee
+            let trust_committee = committee(5); // a different committee
             let block = sample_order(65);
             let uf = certify(&signer_committee, 0, &block);
             let up = FakeUpstream::serving(uf);
@@ -6248,8 +5279,8 @@ mod follower_boundary_tests {
         (rec, committee_at, deliver)
     }
 
-    /// `boundary_hook` fires per finalized block — ~1/s in production — while
-    /// `reconcile_roles` prunes, re-registers and sweeps on each delivery. Reds if
+    /// `boundary_hook` fires per finalized block — about once a second in production —
+    /// while `reconcile_roles` prunes, re-registers and sweeps on each delivery. Reds if
     /// the once-per-epoch gate is dropped.
     #[tokio::test]
     async fn every_finalized_block_of_one_epoch_delivers_one_boundary() {
@@ -6274,12 +5305,8 @@ mod follower_boundary_tests {
         assert_eq!(last, Some(1));
     }
 
-    /// `committee[E]` is committed during `E-1`, but the read runs at the
-    /// EL-finalized hash, which trails the ordering-finalized height by K — so the
-    /// first blocks of `E` can legitimately read back nothing. Consuming the epoch
-    /// there would skip its scheme registration for the whole epoch.
-    ///
-    /// Reds if `last_delivered` advances on an unreadable committee.
+    /// An unreadable `committee[E]` leaves the epoch unconsumed for the next block, so
+    /// its scheme registration is not skipped; reds if `last_delivered` advances anyway.
     #[tokio::test]
     async fn an_unreadable_committee_leaves_the_epoch_for_the_next_block() {
         let (rec, committee_at, deliver) = seams(false, true);
@@ -6314,11 +5341,9 @@ mod follower_boundary_tests {
         assert_eq!(*rec.delivered.lock().unwrap(), vec![0]);
     }
 
-    /// A closed boundary receiver means the epoch manager has exited. The trigger
-    /// stops and the supervisor takes the node down, rather than spinning on a
-    /// dead channel for every finalized block.
-    ///
-    /// Reds if the send result stops being propagated.
+    /// A closed boundary receiver means the epoch manager has exited. The trigger stops
+    /// and the supervisor takes the node down, rather than spinning on a dead channel for
+    /// every finalized block. Reds if the send result stops being propagated.
     #[tokio::test]
     async fn a_dropped_boundary_receiver_stops_the_trigger() {
         let (_rec, committee_at, deliver) = seams(true, false);
@@ -6356,23 +5381,16 @@ mod local_tracked_epoch_tests {
         local_tracked_epoch(committee, cursor)()
     }
 
-    /// `T` on the follower is ET's rule over the module's geometry, checked at the
-    /// two points where the rule differs (review B1-01).
+    /// `T` on the follower is `EpochTransition`'s rule over the module's geometry,
+    /// checked at the two points where the rule differs: on an epoch terminal ET tracks
+    /// `epoch_of(fin) + 1`, and mid-epoch `epoch_of(fin)`. A follower runs no
+    /// `EpochTransition`, so this is the one place the two can drift.
     ///
-    /// ET tracks `epoch_e + 1` when the finalized block is the LAST block of its
-    /// epoch — both its cold-start arm (`epoch_transition.rs:558`) and its boundary
-    /// arm (`:580`) — and `epoch_e` otherwise. A follower runs no `EpochTransition`,
-    /// so this is the ONE place the two can drift; the test is what stops them.
+    /// The terminal point is the case that matters: a node parked on an epoch terminal
+    /// would, with `T = epoch_of(fin)`, name a rung it already holds.
     ///
-    /// The terminal point is not an edge case here, it is THE case: a node whose
-    /// execution stalled parks on an epoch terminal (that is where the ordering
-    /// plane's two-epoch ceiling puts it), and a `T` that read `epoch_e` there would
-    /// name a rung the node already holds — `last(T+1)` at or below its own frozen
-    /// tip, which the marshal discards at the floor and which moves nothing.
-    ///
-    /// Falsifier: `epoch_of(fin)` at a terminal (one rung too low, the ladder never
-    /// climbs); `epoch_of(fin) + 1` mid-epoch (a rung two epochs up, outside the
-    /// node's own committee read window).
+    /// Falsifier: `epoch_of(fin)` at a terminal (one rung too low); `epoch_of(fin) + 1`
+    /// mid-epoch (a rung outside the node's own committee read window).
     #[test]
     fn the_followers_t_follows_the_epoch_transition_rule_at_a_terminal_and_mid_epoch() {
         // Mid-epoch: `fin = 100` sits inside epoch 3 (96..=127) ⇒ `T = 3`, rung
@@ -6443,21 +5461,18 @@ mod gated_receiver_tests {
         }
     }
 
-    /// The LIVE seam of the 4.3 tier rule, tested where production runs it.
+    /// The live seam of the tier rule, tested where production runs it.
     ///
-    /// `GatedReceiver` is the only thing between the network and a channel's
-    /// decode, and by the time `slasher::gossip::ingest_batch` or
-    /// `beacon::actor::on_message` sees a frame this has already ruled on its
-    /// sender — so the tier checks inside those two are unreachable in production
-    /// and their tests cannot stand in for this one (P-06/P-24).
+    /// `GatedReceiver` is the only thing between the network and a channel's decode, so
+    /// by the time `slasher::gossip::ingest_batch` or `beacon::actor::on_message` sees
+    /// a frame this has already ruled on its sender, and the tier checks inside those
+    /// two are unreachable in production.
     ///
-    /// Every arm of `admits` at once, on ONE queue, so the assertion is the
-    /// SURVIVING SEQUENCE rather than a per-frame boolean: a gate that dropped or
-    /// admitted one frame too many would shift everything after it.
+    /// Every arm of `admits` at once, on one queue, so the assertion is the surviving
+    /// sequence rather than a per-frame boolean.
     ///
-    /// Falsifier: a tombstoned, untracked or registry-tier sender reaching `recv`
-    /// on a committee channel; a committee member NOT reaching it; or the
-    /// registry-tier sender being refused on a channel that serves the registry.
+    /// Falsifier: a tombstoned, untracked or registry-tier sender reaching `recv` on a
+    /// committee channel; a committee member not reaching it.
     #[test]
     fn a_committee_channel_admits_only_members_and_a_registry_channel_admits_the_tier() {
         let member = PrivateKey::from_seed(1).public_key();
@@ -6478,7 +5493,7 @@ mod gated_receiver_tests {
         let window =
             TrackedWindow::default().with_tombstones(Arc::new(move |p: &PeerPubkey| *p == banned));
 
-        // Before the first `track` the window has no MEMBERSHIP opinion, so nothing
+        // Before the first `track` the window has no membership opinion, so nothing
         // is refused for being in the wrong tier — a node in cold start must not
         // silence its own plane. The tombstone is the exception, and deliberately:
         // it is an on-chain verdict, read before the set is even looked at.
@@ -6540,10 +5555,10 @@ mod gated_receiver_tests {
         );
     }
 
-    /// The mask a `Member` carries is per-EPOCH, which is what the second half of
-    /// the rule (each channel's own entry) reads. The gate itself does not look at
-    /// it — a member of ANY carried record passes the transport seam — so the two
-    /// halves cannot be collapsed into one.
+    /// The mask a `Member` carries is per-epoch, which the second half of the rule
+    /// (each channel's own entry) reads. The gate itself does not look at it — a member
+    /// of any carried record passes the transport seam — so the two halves cannot be
+    /// collapsed into one.
     #[test]
     fn the_gate_admits_a_member_of_any_carried_record_and_the_mask_says_which() {
         let outgoing = PrivateKey::from_seed(11).public_key();

@@ -2,16 +2,8 @@
 //!
 //! Wire format: serde-deserialized JSON conforming to
 //! <https://eips.ethereum.org/EIPS/eip-2335>. Pinned by
-//! `crates/bls/tests/eip2335_conformance_vectors.rs` against the EIP-2335
+//! `crates/dpos/bls/tests/eip2335_conformance_vectors.rs` against the EIP-2335
 //! Appendix A reference vectors.
-//!
-//! Decryption flow:
-//! 1. Normalize the password to NFKD UTF-8 and strip C0/C1 control codes
-//!    (EIP-2335 §6.1), via `normalize_password`. Non-UTF-8 input is passed
-//!    through unchanged.
-//! 2. KDF (scrypt or PBKDF2-HMAC-SHA256) → 32-byte derivation key DK.
-//! 3. Verify checksum: `SHA256(DK[16..32] || cipher.message) == checksum.message`.
-//! 4. AES-128-CTR decrypt with key=DK[0..16], iv=cipher.params.iv → secret bytes.
 //!
 //! [`EthKeystoreV4::decrypt`] is length-generic — it returns whatever-length
 //! plaintext the AES-CTR keystream yields. The 32-byte BLS-scalar shape is
@@ -19,9 +11,9 @@
 //! boundary (which also rejects zero / out-of-field); [`EthKeystoreV4::decrypt_fixed`]
 //! is the fixed-`[u8; N]` shim that call-site uses.
 //!
-//! Only the decrypt path is implemented; encrypt (keygen-CLI) is intentionally
-//! deferred. Adding it later must re-introduce serde::Serialize alongside an
-//! `encrypt()` constructor that gates KDF parameter selection.
+//! Only the decrypt path is implemented: adding encrypt means re-introducing
+//! `serde::Serialize` alongside an `encrypt()` constructor that gates KDF
+//! parameter selection.
 
 use aes::cipher::{KeyIvInit, StreamCipher};
 use hmac::Hmac;
@@ -34,11 +26,10 @@ use crate::error::Error;
 
 type Aes128Ctr = ctr::Ctr64BE<aes::Aes128>;
 
-/// EIP-2335 §6.1 password normalization: NFKD UTF-8 with C0/C1
-/// control codes stripped. Callers in the integration path pass UTF-8
-/// password bytes; this helper normalizes them per spec so a password
-/// written with mathematical-fraktur (𝔱) decodes identically to its
-/// ASCII NFKD form (t).
+/// EIP-2335 §6.1 password normalization: NFKD UTF-8 with C0/C1 control codes
+/// stripped, so a password written with mathematical-fraktur (𝔱) decodes
+/// identically to its ASCII NFKD form (t). Non-UTF-8 input passes through
+/// unchanged.
 fn normalize_password(raw: &[u8]) -> Zeroizing<Vec<u8>> {
     let Ok(s) = std::str::from_utf8(raw) else {
         return Zeroizing::new(raw.to_vec());
@@ -54,7 +45,7 @@ fn normalize_password(raw: &[u8]) -> Zeroizing<Vec<u8>> {
     Zeroizing::new(normalized.into_bytes())
 }
 
-/// Top-level EIP-2335 keystore JSON. `version` MUST be 4.
+/// Top-level EIP-2335 keystore JSON; `version` MUST be 4.
 #[derive(Deserialize)]
 pub struct EthKeystoreV4 {
     pub version: u8,
@@ -130,24 +121,19 @@ impl EthKeystoreV4 {
         Ok(ks)
     }
 
-    /// Decrypt the keystore payload to its raw plaintext bytes (length-generic:
-    /// the AES-CTR keystream yields exactly `cipher.message.len()` bytes). The
-    /// shape of the plaintext (e.g. the 32-byte BLS scalar) is the caller's
-    /// concern — [`Self::decrypt_fixed`] / [`crate::keys::ValidatorBlsKeypair::from_secret_bytes`]
-    /// enforce it at the typed boundary.
+    /// Decrypt the keystore payload to its raw plaintext bytes. The shape of the
+    /// plaintext (e.g. the 32-byte BLS scalar) is the caller's concern.
     pub fn decrypt(&self, password: &[u8]) -> Result<Zeroizing<Vec<u8>>, Error> {
         let pw = normalize_password(password);
         let dk = Zeroizing::new(self.derive_kdf_key(&pw)?);
 
-        // EIP-2335 §5 fixes the derived key at 32 bytes: DK[0..16] is the AES
-        // key, DK[16..32] feeds the checksum. A malformed/corrupt keystore can
-        // declare a shorter `dklen`; reject it cleanly instead of panicking on
-        // the slices below.
+        // EIP-2335 §5 fixes the derived key at 32 bytes: DK[0..16] is the AES key,
+        // DK[16..32] feeds the checksum. A malformed keystore can declare a shorter
+        // `dklen`; reject it instead of panicking on the slices below.
         if dk.len() < 32 {
             return Err(Error::InvalidKeystore);
         }
 
-        // Checksum: SHA256(DK[16..32] || cipher.message).
         let mut hasher = Sha256::new();
         hasher.update(&dk[16..32]);
         hasher.update(&self.crypto.cipher.message);
@@ -156,7 +142,6 @@ impl EthKeystoreV4 {
             return Err(Error::KeystoreChecksum);
         }
 
-        // AES-128-CTR decrypt with DK[0..16] as key and cipher.params.iv as IV.
         match self.crypto.cipher.function.as_str() {
             "aes-128-ctr" => {}
             _ => return Err(Error::InvalidKeystore),
@@ -173,10 +158,7 @@ impl EthKeystoreV4 {
     }
 
     /// Decrypt and assert the plaintext is exactly `N` bytes, returning a
-    /// fixed-size `[u8; N]`. The validator-key call-site uses `decrypt_fixed::<32>`;
-    /// a wrong-length keystore message surfaces [`Error::InvalidLength`] here
-    /// (the length guard that the length-generic [`Self::decrypt`] no longer
-    /// applies inline).
+    /// fixed-size `[u8; N]`; a wrong length is [`Error::InvalidLength`].
     pub fn decrypt_fixed<const N: usize>(
         &self,
         password: &[u8],
@@ -222,10 +204,10 @@ impl EthKeystoreV4 {
                 if prf != "hmac-sha256" {
                     return Err(Error::InvalidKeystore);
                 }
-                // Bound `dklen` before allocating: it is an unvalidated `u32`
-                // from the keystore JSON, and unlike the scrypt branch (capped
-                // by `scrypt::Params::new` at 64) PBKDF2 has no built-in limit,
-                // so a hostile/corrupt file could request a multi-GiB buffer.
+                // Bound `dklen` before allocating: it is an unvalidated `u32` from
+                // the keystore JSON, and unlike the scrypt branch (capped at 64 by
+                // `scrypt::Params::new`) PBKDF2 has no built-in limit, so a hostile
+                // file could request a multi-GiB buffer.
                 if *dklen > 64 {
                     return Err(Error::InvalidKeystore);
                 }
@@ -308,9 +290,7 @@ mod tests {
     fn decrypt_fixed_rejects_wrong_length_message() {
         for len in [31usize, 33] {
             let ks = EthKeystoreV4::from_json(&keystore_for(&vec![0xAB; len])).expect("v4 parses");
-            // Length-generic decrypt yields the raw bytes unchanged.
             assert_eq!(ks.decrypt(b"pw").unwrap().len(), len);
-            // The fixed-32 shim is where the moved length guard rejects it.
             assert!(matches!(
                 ks.decrypt_fixed::<32>(b"pw"),
                 Err(Error::InvalidLength)

@@ -3,53 +3,29 @@
 //!
 //! It runs on its own namespace ([`fluentbase_bls::beacon::dkg_namespace`]) and
 //! its own sub-channels, agrees exactly one value — the pinned dealer-log set —
-//! and is torn down at its own finalization. Five things differ from the ordering
-//! plane's engine ([`crate::engine`]) and each of them is load-bearing:
+//! and is torn down at its own finalization. It differs from the ordering plane's
+//! engine in five load-bearing ways:
 //!
-//! 1. a distinct, prefix-free namespace, or an observer of this plane could
-//!    assemble an honest validator's two payloads for one `(epoch, view)` into
-//!    permissionless equivocation evidence;
-//! 2. no `register_scheme` — the shared `EpochSchemeProvider` refuses a
-//!    different-committee re-register and prunes by epoch, so writing this
-//!    instance's scheme into that slot would drop the ordering engine's;
-//! 3. a seedless [`RoundRobin`] elector — the VRF elector this instance exists to
-//!    make possible is not available to it;
-//! 4. a reporter wired to NEITHER marshal, slasher nor `spec_exec` — agreement
-//!    rounds are not consensus rounds, and feeding them to the slasher would
-//!    manufacture evidence about rounds the ordering plane never held;
+//! 1. a distinct, prefix-free namespace, or an observer could assemble an honest
+//!    validator's two payloads for one `(epoch, view)` into equivocation evidence;
+//! 2. no `register_scheme`, because the shared provider refuses a
+//!    different-committee re-register and writing this instance's scheme there
+//!    would drop the ordering engine's;
+//! 3. a seedless [`RoundRobin`] elector, since the VRF elector needs the very key
+//!    this instance exists to agree;
+//! 4. a reporter wired to neither marshal, slasher nor `spec_exec`, because
+//!    agreement rounds are not consensus rounds;
 //! 5. its own journal partition, destroyed after the abort.
 //!
-//! # Lifecycle
+//! `simplex::Engine::run` panics if any of its actors finishes, so the abort comes
+//! from outside: [`spawn_agreement`] returns one handle and the supervisor aborts
+//! the instance when its reporter delivers a finalization. The engines start from
+//! the supervisor's own context, so an external abort cascades to them.
 //!
-//! `simplex::Engine::run` panics if any of its actors finishes and its only clean
-//! return is `context.stopped()`, so "decide once and stop" has to come from
-//! outside: [`spawn_agreement`] returns ONE handle, the supervisor's, and the
-//! supervisor aborts the instance when its reporter delivers a finalization —
-//! whichever view that lands in, because a nullified first view is ordinary. The
-//! engines are started from the supervisor's OWN context, so an external
-//! `handle.abort()` (the launcher pruning the instance below its cutoff)
-//! cascades to them; started from an outer context they would outlive it, since
-//! `Handle` has no `Drop`.
-//!
-//! That external abort is a CANCELLATION, and what CANNOT be done under it is the
-//! partition removal, which is async and therefore unreachable: the launcher
-//! sweeps the leftovers by partition name instead ([`prune_agreements`]).
-//!
-//! # Ownership
-//!
-//! The launcher ([`spawn_agreement_launcher`]) is the ONE owner of every started
+//! The launcher ([`spawn_agreement_launcher`]) is the one owner of every started
 //! instance and of its journal partition: it starts an instance on the actor's
-//! dealing-closed edge, holds its supervisor handle in its own map, aborts and
-//! joins it when the actor's epoch clock moves past the target, and sweeps the
-//! partition band below that cutoff. It used to hand each handle to the epoch
-//! manager over an intake channel and the manager pruned on ITS cutoff — which
-//! left an instance in flight between the two in no map at all, a sweep that
-//! could run while it was being adopted, and a SafetyHalt latch that had to abort
-//! an instance the plane had already spawned. Spawn and sweep now sit on one task
-//! over one map, so neither of those states exists. The same task waits on the
-//! latch's own edge ([`crate::sync_metrics::SafetyHalt::engaged_edge`]), so a
-//! halt aborts the running instances the moment it is published — with no
-//! finalized height needed to carry it.
+//! dealing-closed edge, holds its handle, and aborts and joins it when the epoch
+//! clock moves past the target, sweeping the partition band below the cutoff.
 
 use commonware_consensus::{
     simplex::{self, config::ForwardingPolicy, elector::RoundRobin},
@@ -100,11 +76,10 @@ const FETCH_CONCURRENT: usize = 4;
 
 /// The six `simplex::Config` timeouts for the agreement instance.
 ///
-/// Deliberately NOT [`crate::timeouts::ConsensusTimeouts`]: that struct's
-/// `validated()` enforces two Fluent-only tripwires — `certification >= leader +
-/// VERIFY_EXEC_BUDGET`, and `leader > BLOCK_INTERVAL` — that exist because a
-/// consensus leader must EXECUTE a block inside its view. This instance executes
-/// nothing, so it carries commonware's own invariants and no more.
+/// Not [`crate::timeouts::ConsensusTimeouts`]: that struct enforces two
+/// consensus-specific tripwires for a leader that must execute a block inside its
+/// view. This instance executes nothing, so it carries commonware's own invariants
+/// and no more.
 #[derive(Clone, Copy, Debug)]
 pub struct AgreementTimeouts {
     pub leader: Duration,
@@ -116,28 +91,15 @@ pub struct AgreementTimeouts {
 }
 
 /// How long a view waits for its leader's proposal before nullifying — the value
-/// that sets this instance's whole pace, because it is the ONLY timeout the happy
-/// path never pays (the leader deadline clears the moment a proposal arrives,
-/// builds or verifies, and one decision costs about three network delays).
+/// that sets the instance's pace, because it is the only timeout the happy path
+/// never pays.
 ///
-/// It is coarse for TWO independent reasons, and both must survive any retune:
-///
-/// 1. **Journal file growth.** commonware's voter passes the raw view as the
-///    journal SECTION, the manager holds one open blob per section with no cap
-///    and no eviction, and the prune floor only ever moves on a FINALIZATION —
-///    which a single-height instance reaches exactly once, at the end. There is
-///    no seam to group sections or to prune from outside the voter, so the file
-///    count is the view count and the only lever we hold is how slowly views
-///    advance. A waiting view is measured at 218 B and one blob
-///    (`a_waiting_view_is_bounded_by_open_blobs_and_not_by_bytes`), so it is the
-///    blobs that bind and never the bytes: at 30 s a thousand of them take 8 h
-///    20 min and cost 213 KiB, where at 750 ms they take 12 min 30 s. This is a
-///    mitigation, not a fix — the fix is upstream.
-/// 2. **The `interesting()` skew hazard.** A vote whose view is beyond
-///    `current.next()` is DROPPED, and instances spawn on a local edge rather
-///    than a shared one. With short views a skewed cohort drifts apart in view
-///    number and silently discards each other's votes; with long views it stays
-///    together in view 1 while it assembles.
+/// It is coarse for two independent reasons. commonware's voter uses the raw view as
+/// the journal section and the prune floor only moves on a finalization, which a
+/// single-height instance reaches once, so the file count is the view count and the
+/// only lever is how slowly views advance. And a vote whose view is beyond
+/// `current.next()` is dropped while instances spawn on a local edge, so short views
+/// let a skewed cohort drift apart in view number.
 const LEADER_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The rest of the view's budget after the leader deadline: proposal delivery,
@@ -145,27 +107,19 @@ const LEADER_TIMEOUT: Duration = Duration::from_secs(30);
 /// [`LEADER_TIMEOUT`] — the leader deadline fires first and nullifies.
 const CERTIFICATION_TIMEOUT: Duration = Duration::from_secs(45);
 
-/// Nullify re-broadcast cadence. Scaled with the coarse view, but NOT without
-/// limit: the re-broadcast also re-ships the previous view's best certificate,
-/// which is the laggard-repair path, so stretching it slows repair.
+/// Nullify re-broadcast cadence, scaled with the coarse view. The re-broadcast also
+/// re-ships the previous view's best certificate, so stretching it slows repair.
 const TIMEOUT_RETRY: Duration = Duration::from_secs(5);
 
 /// Certificate-backfill request timeout. This instance's payloads are kilobytes,
 /// not a 4 MB block, so it does not inherit the ordering plane's budget.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// The coarse set. `activity` and `skip` govern a trailing window below the
+/// finalized tip that a single-height agreement does not have, so the floor is 0
+/// whatever they say; they are set to the ordering plane's values only to satisfy
+/// commonware's construction asserts.
 impl AgreementTimeouts {
-    /// The coarse set. See [`LEADER_TIMEOUT`] for why coarse, and why the reason
-    /// is two reasons.
-    ///
-    /// `activity` and `skip` govern a trailing window below the finalized tip
-    /// that a single-height agreement does not have: `min_active` is
-    /// `last_finalized - activity`, and this instance's `last_finalized` is the
-    /// genesis view until the one finalization that ends it, so the floor is 0
-    /// whatever they say. They are set to the ordering plane's values purely to
-    /// satisfy commonware's construction asserts. `activity` is deliberately NOT
-    /// raised above that: raising it only LOWERS the prune floor, so it can never
-    /// improve retention and can only worsen it.
     pub const fn coarse() -> Self {
         Self {
             leader: LEADER_TIMEOUT,
@@ -236,21 +190,13 @@ pub(crate) struct AgreementConfig<P, R, L> {
     /// The ceremony-state seam that turns a candidate pinned set into a group key
     /// (in production `crate::beacon::actor::PinnedMailbox`).
     pub pinned: L,
-    /// The share-confirmations the entry bar counts, and the namespace they are
-    /// signed under.
-    ///
-    /// PRECONDITION: the very pool the beacon actor was wired with. Its namespace is
-    /// the one confirmations are verified under here; a second pool built from a
-    /// different base would reject every honest confirmation and the bar would never
-    /// be met, with no error anywhere — the plane would simply keep nullifying views.
+    /// Precondition: the very pool the beacon actor was wired with. A second pool
+    /// built from a different base would reject every honest confirmation and the bar
+    /// would never be met, with no error anywhere.
     pub confirms: ConfirmPool,
     pub metrics: BeaconMetrics,
-    /// Where the agreed artifact lands, and what peers are served from.
-    ///
-    /// Written HERE rather than by whoever reads `out`, so the artifact is
-    /// servable the moment it exists even if nothing downstream is listening —
-    /// and, once the store is opened against a partition, durable across the
-    /// restart that today loses it outright (`dkg_agree_body_lost_total`).
+    /// Where the agreed artifact lands, and what peers are served from. Written here so
+    /// the artifact is servable the moment it exists and durable across a restart.
     pub artifacts: ArtifactStore,
     pub mailbox_size: usize,
     pub timeouts: AgreementTimeouts,
@@ -258,8 +204,8 @@ pub(crate) struct AgreementConfig<P, R, L> {
     /// See `agreement_partition`.
     pub partition_prefix: String,
     /// Where a certified-but-unresolved body is reported (the target epoch): the
-    /// DKG actor moves that epoch to acquiring the artifact from peers at once
-    /// (R-026). `None` ⇒ nobody to tell (the instance's unit tests).
+    /// DKG actor moves that epoch to acquiring the artifact from peers at once.
+    /// `None` means nobody to tell (the instance's unit tests).
     pub body_lost: Option<tokio::sync::mpsc::Sender<u64>>,
 }
 
@@ -273,14 +219,8 @@ pub(crate) struct AgreementNetworks<VS, VR, CS, CR, XS, XR, BS, BR> {
 }
 
 /// The journal partition for the agreement instance of `target_epoch`, under
-/// `prefix` (production passes `""`; the in-crate testbed a per-node prefix, see
-/// [`crate::engine::engine_partition`]). The base name is
-/// [`AGREEMENT_JOURNAL_PARTITION_PREFIX`], declared beside the plane's other
-/// partition names in `beacon/mod.rs`.
-///
-/// Disjoint from the ordering plane's `consensus_epoch_{n}` by name, and removed
-/// wholesale after the abort — nothing else ever reclaims it. Private: the
-/// launcher in this module is the only thing that opens or sweeps one.
+/// `prefix` (production passes `""`). Disjoint from the ordering plane's
+/// `consensus_epoch_{n}` by name, and removed wholesale after the abort.
 fn agreement_partition(prefix: &str, target_epoch: u64) -> String {
     format!("{prefix}{AGREEMENT_JOURNAL_PARTITION_PREFIX}{target_epoch}")
 }
@@ -288,47 +228,19 @@ fn agreement_partition(prefix: &str, target_epoch: u64) -> String {
 /// Target epochs below the cutoff whose agreement journal partition is swept on
 /// every prune.
 ///
-/// The sweep is what makes the removal survive CANCELLATION. An agreement
-/// supervisor removes its own partition after it delivers, but every external
-/// `abort()` — this prune, the SafetyHalt abort, the launcher's own exit —
-/// cancels it at an await and that removal never runs. Nothing else reclaims
-/// `dkg_epoch_{n}`, and unlike the ceremony journals there is no reconciler for
-/// it, so the directory and its one blob per traversed view survive forever.
-///
-/// A band reclaims them all: it is driven by epoch NUMBER rather than by a map
-/// this process populated, so it also collects a previous process's leftovers on
-/// the first cutoff after a restart, and it collects a partition that an
-/// aborted-but-not-yet-stopped voter wrote one last time. The band is the
-/// trailing scheme-retention window — the same distance the rest of the beacon
-/// keeps state for.
-///
-/// It is NOT swept on every prune, and that is the difference from the shape
-/// this replaced. The launcher prunes on every edge of the actor's epoch clock
-/// (the shape this replaced pruned once per finalized height), and each sweep
-/// is `AGREEMENT_SWEEP_SPAN` `Storage::remove` calls — every one of them a
-/// process-global runtime lock and a directory removal — so the gate here
-/// keeps the function honest under ANY caller rate. The two states that can put a reclaimable partition inside the band are both
-/// edges, so the sweep follows them instead: the cutoff reaching a height it has
-/// never been at (a new epoch enters the band, and a fresh process's first prune
-/// is this case), or this very call having aborted an instance (its last journal
-/// write is on disk by then — the abort is JOINED above the sweep).
+/// A supervisor removes its own partition after it delivers, but an external abort
+/// cancels it at an await and the removal never runs, so the band below the cutoff
+/// is swept by epoch number — which also collects a previous process's leftovers.
+/// The sweep follows the two edges that can put a partition in the band: the cutoff
+/// reaching a new epoch, or this call having aborted an instance.
 const AGREEMENT_SWEEP_SPAN: u64 = SCHEME_RETENTION_EPOCHS as u64;
 
-/// Drop every epoch-key agreement instance whose target is below `cutoff`,
-/// aborting it on the way out, and reclaim the journal partitions of the targets
-/// below the cutoff that no longer have one.
+/// Drop every agreement instance whose target is below `cutoff`, aborting it on the
+/// way out, and reclaim the journal partitions below the cutoff.
 ///
-/// The cutoff is the actor's epoch clock — the epoch its merged height feeder is
-/// in. Below it an instance has either delivered its artifact — its supervisor
-/// has already returned, so the abort is a no-op — or it is still agreeing a key
-/// for an epoch the chain has gone past.
-///
-/// `swept_to` is the highest cutoff whose band this process has already swept —
-/// see [`AGREEMENT_SWEEP_SPAN`] for why the sweep is edge-driven. It is RAISED
-/// rather than assigned: a prune at a cutoff below the highest one sweeps its
-/// own band when it aborted something, but it has not un-swept the higher band,
-/// and a memo that went backwards there would re-sweep bands already done on
-/// every tick until the cutoff climbed back.
+/// `swept_to` is the highest cutoff whose band this process has already swept. It is
+/// raised rather than assigned, so a prune below the highest cutoff that aborted
+/// something sweeps its own band without un-sweeping the higher one.
 async fn prune_agreements<E: Storage>(
     context: &E,
     agreements: &mut BTreeMap<Epoch, Handle<()>>,
@@ -341,21 +253,10 @@ async fn prune_agreements<E: Storage>(
         .copied()
         .filter(|e| e.get() < cutoff)
         .collect();
-    // Taken BEFORE the loop consumes the list: an instance aborted here is the
-    // one state that puts a partition in the band without the cutoff moving.
     let aborted_one = !stale.is_empty();
     for e in stale {
         if let Some(handle) = agreements.remove(&e) {
             handle.abort();
-            // JOINED, and before the sweep below — for the same reason
-            // `spawn_agreement` joins before destroying its own partition: `abort`
-            // only REQUESTS cancellation, so the simplex voter under this
-            // supervisor runs on to its next await and its `on_stopped` still
-            // syncs the journal. A sweep that ran while it was still stopping
-            // would remove a partition the voter then recreates with one last
-            // write, and nothing reclaims that one. The map removal above is what
-            // makes the guard below unable to protect these epochs, so the wait
-            // has to be here.
             drop(handle.await);
             info!(?e, "epoch-key agreement instance pruned (transition)");
         }
@@ -391,10 +292,9 @@ async fn prune_agreements<E: Storage>(
 /// Start the agreement instance for `cfg.target_epoch` and return the supervisor
 /// handle that owns it.
 ///
-/// The caller owns that handle and nothing else: aborting it tears down the
-/// simplex engine and the body engine with it. The agreed artifact is delivered
-/// on `out` AFTER the instance has been aborted and its partition destroyed, so a
-/// consumer that acts on the artifact never races the teardown.
+/// Aborting the handle tears down the simplex engine and the body engine with it.
+/// The artifact is delivered on `out` after the instance has been aborted and its
+/// partition destroyed, so a consumer never races the teardown.
 pub(crate) fn spawn_agreement<E, P, R, L, VS, VR, CS, CR, XS, XR, BS, BR>(
     context: E,
     cfg: AgreementConfig<P, R, L>,
@@ -421,11 +321,11 @@ where
     // chain's. The signed tuple carries only `Round{epoch, view}` and the
     // payload, with nothing identifying the instance, so under a shared base this
     // node's agreement vote and its ordering vote at the same `(epoch, view)` are
-    // assemblable by ANY observer into equivocation evidence — and evidence
+    // assemblable by any observer into equivocation evidence — and evidence
     // submission is permissionless.
     let namespace = dkg_namespace(&fluent_namespace(cfg.chain_id));
     // No `register_scheme`: see the module doc, point 2.
-    // Seedless by construction: the instance that AGREES the epoch key cannot
+    // Seedless by construction: the instance that agrees the epoch key cannot
     // depend on it, so it never carries an oracle.
     let scheme = build_signer(
         &namespace,
@@ -467,10 +367,8 @@ where
                     // Seedless by necessity: the VRF elector needs the very key this
                     // instance exists to agree.
                     elector: RoundRobin::<Sha256>::default(),
-                    // The resolver's own excluded-set/quota defences are independent
-                    // of this hook, and a real blocker here severs the peer from EVERY
-                    // channel — a self-inflicted consensus partition paid for a
-                    // benignly skewed peer on the agreement plane.
+                    // The resolver's own defences are independent of this hook, and a real blocker
+                    // here would sever the peer from every channel over a benign skew.
                     blocker: NoopBlocker,
                     automaton: agree.clone(),
                     relay: agree,
@@ -501,7 +399,7 @@ where
             // certificate means the agreement is decided, and a closed channel means
             // there is no longer anything to decide it.
             engine_handle.abort();
-            // Joined before the partition is destroyed: `abort` only REQUESTS
+            // Joined before the partition is destroyed: `abort` only requests
             // cancellation — it cascades to the voter and the rest through the
             // runtime's supervision tree, but each of them stops at its own next
             // await point — and a journal write that landed after the remove would
@@ -525,11 +423,9 @@ where
                             "dkg agree: certified a payload whose body never arrived — the \
                              artifact is acquired from a peer that resolved it"
                         );
-                        // Tell the actor NOW, not at the boundary: no instance for this
-                        // target runs again in this process (`started`), so the only
-                        // source of the artifact is a peer's copy, and the actor owns
-                        // the pull. A full mailbox is not retried — the actor asks on
-                        // its own past the boundary anyway.
+                        // Tell the actor now: no instance for this target runs again in this
+                        // process, so the only source of the artifact is a peer's copy
+                        // and the actor owns the pull.
                         if let Some(tx) = &cfg.body_lost {
                             let _ = tx.try_send(target_epoch);
                         }
@@ -558,15 +454,9 @@ where
             let Some(artifact) = artifact else {
                 return;
             };
-            // Before the send: a consumer of `out` that immediately serves or
-            // re-publishes must never observe an artifact this node cannot yet
-            // answer a peer's request for. A store that already holds ANOTHER
-            // value for this target (a pulled artifact that raced this
-            // instance's) keeps it, first-wins, hands this one back, and it is
-            // noted beside the held one — durably, the store owns the witness —
-            // as the `Conflict` input the actor reads on its next tick (or on a
-            // restart); the send below carries it as well, for the tick it would
-            // otherwise wait.
+            // Before the send: a consumer must never observe an artifact this node cannot yet
+            // serve. A store that already holds another value for this target keeps it
+            // first-wins and notes the conflict for the actor's next tick.
             if let Err(loser) = cfg.artifacts.insert(target_epoch, artifact.clone()) {
                 cfg.artifacts.note_divergent(target_epoch, &loser);
             }
@@ -590,29 +480,13 @@ where
 
 /// Pair a finalization certificate with the body it names.
 ///
-/// Resolved HERE, with the body engine still up, and never in the reporter: the
-/// reporter runs on the voter's own chain — journal replay awaits every `report`
-/// inline — so all it could do there is an instant cache peek, and the peek is
-/// wrong twice over. A certificate can outrun its body in normal operation (a node
-/// that parked its whole `verify` on missing dealer logs learns the outcome from
-/// the certificate alone), and after a restart the in-memory buffer is empty while
-/// the certificate is replayed from the journal. `subscribe` is the await that the
-/// first case satisfies.
+/// Resolved here, with the body engine still up, and never in the reporter: the
+/// reporter runs on the voter's own chain, so all it could do is an instant cache
+/// peek, which a certificate that outruns its body or a post-restart empty buffer
+/// would defeat. The artifact store is tried first, then the live body.
 ///
-/// The second case is what [`ArtifactStore`] now answers, and it is tried FIRST:
-/// a restart rehydrates the store from its journal, so the body the empty
-/// in-memory buffer cannot produce is already on disk and the wait is skipped
-/// outright. The store is consulted only for a held artifact whose proposal
-/// digests to the certificate's payload — first-wins per epoch makes a mismatch
-/// unreachable, and treating it as an error here would be a verdict this function
-/// has no committee read to justify, so it simply falls through to the wait.
-///
-/// What remains for the wait is the body that arrived NOWHERE — no store record
-/// and no live sender, since nothing re-broadcasts a decided proposal. That is
-/// why it still ends: waiting forever would leave the instance never torn down
-/// and its journal partition never reclaimed, and the target epoch re-agrees on a
-/// fresh instance instead. The bound is one view's certification budget because
-/// that is exactly how long a live view gives a body to land.
+/// A body that arrived nowhere still ends the wait after one view's certification
+/// budget, so the instance is torn down and its partition reclaimed.
 async fn resolve_artifact<E: Clock>(
     ctx: &E,
     bodies: &crate::beacon::dkg_transport::BodyMailbox,
@@ -634,11 +508,8 @@ async fn resolve_artifact<E: Clock>(
 }
 
 /// The four plane-owned mux brokers an agreement instance takes a sub-channel on.
-///
-/// The SAME brokers the per-epoch consensus engine registers against — the
-/// instance takes a slice of the sub-channel id space no `register(epoch)` can
-/// reach ([`dkg_subchannel`]), so no new top-level p2p channel, quota or peer set
-/// is introduced for it.
+/// The same brokers the per-epoch consensus engine registers against, so no new
+/// top-level p2p channel, quota or peer set is introduced.
 pub struct AgreementMuxes<HS, HR>
 where
     HS: Sender<PublicKey = PeerPubkey>,
@@ -650,21 +521,17 @@ where
     pub bodies: SharedMux<HS, HR>,
 }
 
-/// Everything an agreement instance needs that does NOT depend on which target
+/// Everything an agreement instance needs that does not depend on which target
 /// epoch it is for. The launcher holds one of these for the process and derives
 /// an [`AgreementConfig`] per target from it.
 pub struct AgreementPlaneConfig<P, R> {
     pub chain_id: u64,
     pub keypair: ValidatorBlsKeypair,
     pub me: PeerPubkey,
-    /// PRECONDITION, and it is silent when violated: this must resolve
-    /// `latest.primary` to a set containing `committee[target_epoch]`, or the body
-    /// engine caches nothing and the plane never converges. In production it is
-    /// the plane's own oracle, on which the `EpochTransition` tracks
-    /// `committee[E−1] ∪ committee[E] ∪ committee[E+1]` as PRIMARY (4.3 — the
-    /// Active registry is tier 2 and `buffered` caches no body from it), so
-    /// `committee[target_epoch]` is covered as the incoming record of the epoch the
-    /// agreement runs in. The same reachability the dealer-log resolver rides.
+    /// Precondition, silent when violated: this must resolve `latest.primary` to a set
+    /// containing `committee[target_epoch]`, or the body engine caches nothing and the
+    /// plane never converges. In production it is the plane's own oracle, which tracks
+    /// `committee[E-1] ∪ committee[E] ∪ committee[E+1]` as primary.
     pub peers: P,
     /// The `{epoch, dealer, hash}` dealer-log resolver, narrowed to the log key space.
     pub logs: R,
@@ -686,7 +553,7 @@ pub struct AgreementPlaneConfig<P, R> {
     /// See [`AgreementConfig::body_lost`].
     pub body_lost: Option<tokio::sync::mpsc::Sender<u64>>,
     /// The launcher task's state after every event it handled, for the tests
-    /// that drive the REAL task ([`spawn_agreement_launcher`]) and have no other
+    /// that drive the real task ([`spawn_agreement_launcher`]) and have no other
     /// view into it. `None` in production.
     #[cfg(test)]
     pub probe: Option<watch::Sender<LauncherProbe>>,
@@ -705,24 +572,13 @@ pub struct LauncherProbe {
 /// Start the plane's launcher: one long-lived task that turns a target epoch on
 /// `requests` into a running agreement instance.
 ///
-/// The edge that feeds `requests` is the beacon actor's — a ceremony whose
-/// dealing has CLOSED ([`crate::beacon::actor::DkgActor`]) — because that actor
-/// owns the only state that knows when it happened. The launcher owns everything
-/// the actor cannot reach: the mux registrations, the staking committee read and
-/// the runtime context the instance is spawned on.
+/// The edge that feeds `requests` is the beacon actor's dealing-closed edge. The
+/// launcher owns the mux registrations, the staking committee read and the runtime
+/// context the instance is spawned on. Requests are deduplicated here, so a target
+/// whose committee could not be read yet is retried rather than lost.
 ///
-/// Requests are DEDUPLICATED here rather than at the sender, so a target whose
-/// committee could not be read yet is simply retried on the next request for it
-/// instead of being lost to a one-shot announcement.
-///
-/// The launcher OWNS every instance it starts (see the module doc, "Ownership").
-/// `clock` is the actor's epoch clock — the epoch its merged height feeder is
-/// in, published on change and never per height — and it is the cutoff
-/// `prune_agreements` runs on: an instance whose target is below it is aborted
-/// and joined, and the partition band below it is swept on the edge.
-/// `safety_halt` is the node's fork-safety latch: read at every spawn, and its
-/// 0→1 edge is the task's third wake-up, on which every running instance is
-/// aborted and joined at once.
+/// `clock` is the actor's epoch clock, the cutoff `prune_agreements` runs on, and
+/// `safety_halt`'s 0→1 edge aborts every running instance at once.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_agreement_launcher<E, P, R, HS, HR>(
     context: E,
@@ -749,25 +605,16 @@ where
             #[cfg(test)]
             let mut events = 0u64;
             let mut launcher = Launcher::new(ctx, cfg, muxes, out, safety_halt.clone());
-            // The latch's 0→1 edge, armed ONCE: a latch that is already engaged
-            // resolves it on every call (it is a `watch`, not a permit), so the
-            // arm is disarmed after its one firing — re-armed, it would spin this
-            // loop. A latch engaged before this task was built fires it on the
-            // first select.
+            // The latch's 0→1 edge, armed once: an already-engaged latch resolves it on the
+            // first select, and re-arming it would spin the loop.
             let halt_edge = safety_halt.engaged_edge();
             tokio::pin!(halt_edge);
             let mut halt_seen = false;
             loop {
                 tokio::select! {
-                    // Polled in order, the halt arm first: an engaged latch wins
-                    // every iteration it is ready on, so an instance never
-                    // outlives it by a request or a tick that happened to be
-                    // ready too.
+                    // The halt arm is polled first: an engaged latch wins every iteration it
+                    // is ready on, so an instance never outlives it by a request or a tick.
                     biased;
-                    // Edge: the fork-safety latch engaged. Abort + join every
-                    // running instance NOW — the same edge, and the same moment,
-                    // as the epoch manager's engine abort; `on_request` refuses
-                    // every later spawn on the latch bit.
                     _ = &mut halt_edge, if !halt_seen => {
                         halt_seen = true;
                         launcher.on_halt().await;
@@ -801,9 +648,8 @@ where
 }
 
 /// The launcher's state: everything an instance is started from, and the map of
-/// the instances started. ONE task owns it, which is what makes "an instance is
-/// in the map from the moment it is spawned" a fact rather than a race — there
-/// is no hop between the spawn and the map, so no sweep can run between them.
+/// instances started. One task owns it, so an instance is in the map from the
+/// moment it is spawned.
 struct Launcher<E, P, R, HS, HR>
 where
     HS: Sender<PublicKey = PeerPubkey>,
@@ -812,36 +658,23 @@ where
     ctx: E,
     cfg: AgreementPlaneConfig<P, R>,
     muxes: AgreementMuxes<HS, HR>,
-    /// The instances' journal partitions are the only storage this plane
-    /// touches, and they are destroyed at teardown; a cache of its own keeps
-    /// that traffic off the ordering plane's.
+    /// The instances' journal partitions are the only storage this plane touches, and
+    /// they are destroyed at teardown.
+    ///
+    /// The node's fork-safety latch: a halted node runs no agreement instance, so it is
+    /// read at every spawn and re-read after one, and its 0→1 edge aborts the instances
+    /// live at that moment.
     page_cache: CacheRef,
     out: mpsc::Sender<AgreedArtifact>,
-    /// The node's fork-safety latch. A halted node runs no agreement instance:
-    /// its output is a share this node will never get to sign with — the latch
-    /// is permanent and the epoch manager keeps it a Verifier forever — so a vote
-    /// on the agreement plane buys nothing and costs the network a vote it should
-    /// not be casting. Read at every spawn (a halted node spawns NOTHING, where
-    /// the epoch manager used to abort what the plane had already spawned — same
-    /// outcome, one spawn fewer), re-read right after a spawn (a latch that
-    /// engaged during the spawn's mux registrations aborts the instance before
-    /// it is a second old), and its 0→1 edge is the launcher task's own wake-up
-    /// ([`Self::on_halt`]: the instances live at that moment are aborted and
-    /// joined at once, with no height tick in between).
     safety_halt: SafetyHalt,
-    /// Supervisor handles of the running instances, keyed by TARGET epoch. An
-    /// instance is SUPPOSED to complete — it aborts itself the moment its own
-    /// finalization lands — so nothing here polls a handle for death: a completed
-    /// supervisor sits until the cutoff passes its target, and `abort()` on an
-    /// already-completed handle is a no-op.
+    /// Supervisor handles of the running instances, keyed by target epoch. An instance
+    /// aborts itself when its finalization lands, so nothing polls a handle for death.
     instances: BTreeMap<Epoch, Handle<()>>,
     /// Targets settled in this process — running, not a member, or refused by
     /// the latch — so the actor's per-tick re-announcement is a no-op for them.
     started: BTreeSet<u64>,
-    /// The highest cutoff whose partition band [`prune_agreements`] has already
-    /// swept in THIS process — `0` at construction, which is what makes a fresh
-    /// process's first tick sweep (and collect the previous process's leftovers);
-    /// a cutoff of `0` has an empty band either way.
+    /// The highest cutoff whose partition band [`prune_agreements`] has already swept
+    /// in this process; `0` makes a fresh process's first tick sweep.
     swept_to: u64,
 }
 
@@ -887,7 +720,7 @@ where
         }
         self.start(target_epoch).await;
         // The request stream only ever moves forward, so anything a retention
-        // window below the newest target will never be asked for again. On EVERY
+        // window below the newest target will never be asked for again. On every
         // outcome — a refused or an unreadable target is a request too, and a
         // halted node's `started` would otherwise grow by one per announced epoch
         // for the rest of the process.
@@ -898,7 +731,7 @@ where
     /// The body of [`Self::on_request`] after the dedup: every early return is
     /// an outcome the caller's bookkeeping still runs for.
     async fn start(&mut self, target_epoch: u64) {
-        // The latch, BEFORE the spawn. Permanent, so the target is settled like a
+        // The latch, before the spawn. Permanent, so the target is settled like a
         // non-member's: the warn is once per target, not once per tick.
         if self.safety_halt.is_engaged() {
             warn!(
@@ -946,7 +779,7 @@ where
             // Transient: the next request for this target retries.
             Started::Failed => {}
         }
-        // The latch AFTER the spawn as well, on EVERY outcome: `start_one` awaited
+        // The latch after the spawn as well, on every outcome: `start_one` awaited
         // the four mux registrations, and a latch that engaged during them has
         // its edge queued behind this request on the launcher's `select!` — the
         // instance just started, or one already in the map, would run until the
@@ -970,11 +803,9 @@ where
         .await;
     }
 
-    /// The fork-safety latch's edge (or its bit, read after a spawn): abort and
-    /// join every running instance, whatever its target. Joined, like the
-    /// prune's own aborts: an instance still stopping when a later sweep reaches
-    /// its partition would recreate it with one last journal write. Idempotent —
-    /// the map is empty afterwards, and `on_request` refuses every later spawn.
+    /// The fork-safety latch's edge: abort and join every running instance, whatever
+    /// its target. Joined like the prune's aborts, so a later sweep cannot race a last
+    /// journal write. Idempotent.
     async fn on_halt(&mut self) {
         for (epoch, handle) in std::mem::take(&mut self.instances) {
             warn!(
@@ -986,8 +817,8 @@ where
         }
     }
 
-    /// Abort every instance (idempotent on a completed one). Supervision would
-    /// do it for the task's exit as well; this is the log line.
+    /// Abort every instance. Supervision would do it for the task's exit as well; this
+    /// is the log line.
     fn abort_all(&mut self, why: &'static str) {
         for (epoch, handle) in std::mem::take(&mut self.instances) {
             info!(?epoch, "{why}");
@@ -1138,8 +969,8 @@ mod tests {
     const CHAIN_ID: u64 = 20_994;
     const N: usize = 4;
 
-    /// In production each of these is a mux sub-channel; on the simulated network
-    /// the four top-level routes stand in for them directly.
+    /// In production each of these is a mux sub-channel; on the simulated network the
+    /// four top-level routes stand in directly.
     const ROUTES: [(u64, commonware_runtime::Quota); 4] = [
         (constants::VOTE_CHANNEL, constants::VOTE_QUOTA),
         (constants::CERT_CHANNEL, constants::CERT_QUOTA),
@@ -1212,14 +1043,8 @@ mod tests {
         assert!(skewed.validated().is_err());
     }
 
-    /// The two journal records a view that waits out its leader actually writes,
-    /// in on-disk bytes: our own first-attempt `Nullify` vote and the recovered
-    /// `Nullification` certificate. `certifiers` is how many of the `n` members
-    /// signed into that certificate.
-    ///
-    /// The journal frames a record as an unsigned varint length followed by the
-    /// encoding, with no checksum, and the voter builds its journal with
-    /// compression disabled — so the on-disk record is exactly that sum.
+    /// The two journal records a view that waits out its leader writes, in on-disk
+    /// bytes: the `Nullify` vote and the `Nullification` certificate.
     fn waiting_view_records(n: usize, certifiers: usize) -> (usize, usize) {
         let (peers, bls) = signing_set(0x5E, n);
         let bimap = bimap_of(&peers, &bls);
@@ -1250,21 +1075,12 @@ mod tests {
         UInt(u32::try_from(item).expect("a record fits a u32 length")).encode_size() + item
     }
 
-    /// Prices the trade the coarse [`LEADER_TIMEOUT`] makes. Without a finalization
-    /// the prune floor never moves, so a spinning instance keeps every view's
-    /// records AND one open blob per view, and the only lever we hold is how slowly
-    /// views advance. Which of those two costs actually binds decides whether a
-    /// slower clock is a sufficient answer or an evasion, so both are measured.
+    /// Prices the trade the coarse [`LEADER_TIMEOUT`] makes. Without a finalization the
+    /// prune floor never moves, so a spinning instance keeps every view's records and
+    /// one open blob per view, and the only lever is how slowly views advance.
     ///
-    /// Bytes do not bind, by three orders of magnitude: a waiting view writes about
-    /// a fifth of a kilobyte, so the whole partition is still tens of kilobytes at a
-    /// round count nobody expects a plane to reach. Open blobs are the real budget,
-    /// and they are a pure function of the view count — which is what the coarse
-    /// timeout buys down.
-    ///
-    /// The certificate carries a FIXED-WIDTH signer bitmap, so its size is set by
-    /// the committee and not by how many of it signed: these are bounds on a
-    /// waiting view, not samples of one.
+    /// The certificate's signer bitmap is fixed-width, so its size is set by the
+    /// committee and not by how many of it signed.
     #[test]
     fn a_waiting_view_is_bounded_by_open_blobs_and_not_by_bytes() {
         const CAP: usize = MAX_COMMITTEE_SIZE as usize;
@@ -1318,21 +1134,15 @@ mod tests {
         );
     }
 
-    /// The agreement instances live in the launcher's map and are pruned on the
-    /// actor's epoch clock — and pruning really aborts them, which for a
-    /// still-running instance is the only thing that stops it.
-    ///
-    /// It also WAITS for them. The partition sweep that follows the abort pass
-    /// cannot see these epochs any more — the abort pass removed them from the map
-    /// the sweep's guard consults — so an instance still stopping while the sweep
-    /// runs would have its partition removed and then recreated by its voter's
-    /// last journal write, leaving a directory nothing ever reclaims.
+    /// The agreement instances live in the launcher's map and are pruned on the actor's
+    /// epoch clock; pruning aborts and joins them, so a still-stopping instance cannot
+    /// have its partition removed and then recreated by a last journal write.
     #[test]
     fn agreement_instances_prune_on_the_clock_cutoff_and_are_aborted() {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        /// Set on drop, which for an aborted task is the moment its future is
-        /// dropped — the observable proof that `abort()` reached it.
+        /// Set on drop, which for an aborted task is the moment its future is dropped —
+        /// the observable proof that `abort()` reached it.
         struct Tombstone(Arc<AtomicUsize>);
         impl Drop for Tombstone {
             fn drop(&mut self) {
@@ -1354,7 +1164,6 @@ mod tests {
                     }),
                 );
             }
-            // Let the spawned tasks reach their park before anything is aborted.
             ctx.sleep(Duration::from_millis(1)).await;
 
             prune_agreements(&ctx, &mut agreements, 5, "", &mut 0).await;
@@ -1373,12 +1182,9 @@ mod tests {
         });
     }
 
-    /// An agreement supervisor removes its own journal partition after it
-    /// delivers, but every EXTERNAL abort — this prune, the SafetyHalt abort, the
-    /// launcher's exit — cancels it at an await and that removal never runs. Nothing
-    /// else reclaims `dkg_epoch_{n}`, so the prune sweeps the band below the cutoff
-    /// itself, by epoch number and not by the map, which also collects what a
-    /// previous process left behind.
+    /// An external abort cancels a supervisor at an await, so its own partition removal
+    /// never runs. The prune sweeps the band below the cutoff by epoch number, which
+    /// also collects what a previous process left behind.
     #[test]
     fn pruning_reclaims_the_journal_partitions_an_abort_left_behind() {
         let runner = deterministic::Runner::timed(Duration::from_secs(10));
@@ -1415,18 +1221,9 @@ mod tests {
         });
     }
 
-    /// The band's upper edge is EXCLUSIVE: the cutoff epoch's own partition is
-    /// not the sweep's business even when no instance for it is in the map. The
-    /// abort pass above the sweep keeps `target == cutoff` alive (`e < cutoff`),
-    /// and the map is only what THIS process has started: after a restart the
-    /// instance for the cutoff epoch is not in it until its request is replayed,
-    /// and that partition is its simplex voter's journal — the double-vote
-    /// guard the resumed voter reads first. The test above holds the cutoff
-    /// epoch in the map, so it cannot see a sweep reaching one step too far;
-    /// this one leaves the map empty so that the band alone decides.
-    ///
-    /// Falsifier: the cutoff epoch's partition gone (`..=cutoff`); the band
-    /// partition below it kept (the sweep never ran, and this proves nothing).
+    /// The band's upper edge is exclusive: the cutoff epoch's own partition is not the
+    /// sweep's business even when no instance for it is in the map, because after a
+    /// restart that partition is the resumed voter's journal.
     #[test]
     fn the_sweep_leaves_the_cutoff_epochs_partition_alone_even_without_an_instance() {
         let runner = deterministic::Runner::timed(Duration::from_secs(10));
@@ -1452,26 +1249,9 @@ mod tests {
         });
     }
 
-    /// The band sweep costs `AGREEMENT_SWEEP_SPAN` `Storage::remove` calls, each
-    /// one a process-global runtime lock and a directory removal, and the
-    /// launcher prunes on EVERY edge of the actor's epoch clock. That clock is
-    /// published on change only (`send_if_modified` in `on_height`: once per
-    /// EPOCH, never per finalized height), so today's launcher does not repeat a
-    /// cutoff; what this pins is the prune's own contract, independent of how
-    /// often its caller ticks it — a repeat at one cutoff is pure cost.
-    ///
-    /// What this pins is that the repeat is gone WITHOUT the collection being
-    /// gone: a partition that appears under a cutoff already swept is left alone
-    /// until the cutoff moves, and then it is collected. The two edges that can
-    /// legitimately put a reclaimable partition in the band are the other two
-    /// cases — a cutoff the process has never been at (the first test above, and
-    /// every new epoch) and an abort this call performed (the test above it,
-    /// where the abort is joined before the sweep).
-    ///
-    /// Falsifier: the partition surviving the cutoff move (the gate is stuck
-    /// shut, a real leak); the partition disappearing on the repeat (the gate
-    /// never closed and this test proves nothing); the first call not collecting
-    /// at all (`swept_to` starting above the cutoff).
+    /// A repeat prune at a cutoff already swept must not touch storage. A partition that
+    /// appears under an already-swept cutoff is left alone until the cutoff moves, and
+    /// the two edges that sweep are a new cutoff and an abort this call performed.
     #[test]
     fn a_repeat_prune_at_a_cutoff_already_swept_does_not_touch_storage() {
         let runner = deterministic::Runner::timed(Duration::from_secs(10));
@@ -1479,8 +1259,7 @@ mod tests {
             let mut agreements: BTreeMap<Epoch, Handle<()>> = BTreeMap::new();
             let mut swept_to = 0u64;
 
-            // A fresh process: `swept_to = 0`, so the first prune sweeps and the
-            // leftover goes.
+            // A fresh process: `swept_to = 0`, so the first prune sweeps and the leftover goes.
             ctx.open(&agreement_partition("", 4), b"blob")
                 .await
                 .expect("partition");
@@ -1491,8 +1270,7 @@ mod tests {
             );
             assert_eq!(swept_to, 5, "the memo must name the cutoff just swept");
 
-            // The same cutoff again, nothing aborted: the band is where it was, so
-            // the partition recreated under it is NOT the sweep's business yet.
+            // The same cutoff again, nothing aborted: the band is where it was.
             ctx.open(&agreement_partition("", 4), b"blob")
                 .await
                 .expect("partition");
@@ -1503,7 +1281,6 @@ mod tests {
                  removals on a call that moved nothing"
             );
 
-            // The cutoff moves: the band moves with it and the partition goes.
             prune_agreements(&ctx, &mut agreements, 6, "", &mut swept_to).await;
             assert!(
                 ctx.scan(&agreement_partition("", 4)).await.is_err(),
@@ -1511,10 +1288,8 @@ mod tests {
             );
             assert_eq!(swept_to, 6);
 
-            // A prune BELOW the highest cutoff, with an instance to abort: it
-            // sweeps its own band (the abort is the edge), and it must not lower
-            // the memo — a memo that went backwards would re-sweep on every tick
-            // until the cutoff climbed back.
+            // A prune below the highest cutoff, with an instance to abort: it sweeps its own
+            // band but must not lower the memo.
             ctx.open(&agreement_partition("", 1), b"blob")
                 .await
                 .expect("partition");
@@ -1563,18 +1338,9 @@ mod tests {
             .expect("unique committee")
     }
 
-    /// The two shapes a certificate can arrive in, and the reason the reporter no
-    /// longer resolves the body itself.
-    ///
-    /// LATE BODY: the certificate outruns the body — a node that parked its whole
-    /// `verify` on missing dealer logs learns the outcome from the certificate
-    /// alone. An instant cache peek returns `None` here and the artifact is lost;
-    /// the subscribe resolves the moment the body lands.
-    ///
-    /// NO BODY: the post-restart shape — the certificate is replayed from the
-    /// journal and the in-memory buffer is empty. Nothing re-broadcasts a decided
-    /// proposal, so the wait must END: a supervisor that waited forever would never
-    /// tear the instance down and never reclaim its journal partition.
+    /// The two shapes a certificate can arrive in. A late body resolves through the
+    /// subscribe; a body that arrived nowhere (the post-restart shape) ends the wait,
+    /// because a supervisor that waited forever would never tear the instance down.
     #[test]
     fn a_certificate_is_paired_with_a_late_body_and_gives_up_when_there_is_none() {
         let runner = deterministic::Runner::timed(Duration::from_secs(600));
@@ -1615,7 +1381,6 @@ mod tests {
             let digest = commonware_cryptography::Digestible::digest(&proposal);
             let certificate = finalization_over(digest);
 
-            // NO BODY: the wait ends and the supervisor gets to tear down.
             assert!(
                 resolve_artifact(
                     &context,
@@ -1629,8 +1394,6 @@ mod tests {
                 "a certificate with no body must not park the teardown forever"
             );
 
-            // LATE BODY: it lands after the subscribe, which an instant peek would
-            // have missed.
             let late = {
                 let bodies = bodies.clone();
                 let context = context.clone();
@@ -1657,11 +1420,8 @@ mod tests {
         });
     }
 
-    /// The post-restart shape, once the artifact store is durable: the certificate
-    /// is replayed from the journal and the in-memory body buffer is empty, but the
-    /// rehydrated artifact answers the pairing outright. The body engine here is
-    /// built and NEVER started, so the only way to reach `subscribe` is to hang on
-    /// it until the wait expires — which is what the clock assertion catches.
+    /// The post-restart shape once the artifact store is durable: the rehydrated store
+    /// answers the pairing outright, spending no part of the certification budget.
     #[test]
     fn a_rehydrated_artifact_short_circuits_the_wait() {
         let runner = deterministic::Runner::timed(Duration::from_secs(600));
@@ -1738,8 +1498,7 @@ mod tests {
     }
 
     /// A started four-member cohort on a simulated network, plus everything a test
-    /// needs to steer it: the shared confirmation pool, the seat keys that can sign
-    /// into it, and the group key every member derives.
+    /// needs to steer it.
     struct Cohort {
         handles: Vec<Handle<()>>,
         /// One artifact store per member, in the same seat order.
@@ -1754,10 +1513,8 @@ mod tests {
     }
 
     impl Cohort {
-        /// Sign `seats`' confirmations of the full dealer-log set into the shared
-        /// pool — the statement a proposer needs to clear the entry bar. A range so
-        /// a test can widen the confirmed set without re-recording what is already
-        /// there, which the pool would (correctly) refuse as saying nothing new.
+        /// Sign `seats`' confirmations of the full dealer-log set into the shared pool, the
+        /// statement a proposer needs to clear the entry bar.
         fn confirm(&self, seats: std::ops::Range<usize>) {
             for (idx, key) in self
                 .seat_keys
@@ -1788,13 +1545,12 @@ mod tests {
     }
 
     /// Start one agreement instance per member over one simulated network. The
-    /// confirmation pool is SHARED by all four, which models a cohort that has
-    /// already gossiped: the confirmation transport itself is the beacon actor's and
-    /// is tested there.
+    /// confirmation pool is shared by all four, modelling a cohort that has already
+    /// gossiped.
     async fn start_cohort(context: &deterministic::Context, seed: u64) -> Cohort {
         let (peers, bls) = signing_set(seed, N);
         let bimap = bimap_of(&peers, &bls);
-        // The elector indexes the COMMONWARE-SORTED participant set, not the order
+        // The elector indexes the commonware-sorted participant set, not the order
         // the keys were generated in, so the seats are read off the BiMap and every
         // per-seat decision below follows that order.
         let members: Vec<PeerPubkey> = bimap.keys().iter().cloned().collect();
@@ -2083,7 +1839,7 @@ mod tests {
             (launcher, pinned_tx)
         }
 
-        /// The REAL launcher task ([`spawn_agreement_launcher`]) over `committee`
+        /// The real launcher task ([`spawn_agreement_launcher`]) over `committee`
         /// and `halt`, with the test holding its three inputs — the request
         /// stream, the epoch clock, the latch — and its probe.
         fn task(
@@ -2170,27 +1926,15 @@ mod tests {
         launcher.instances.keys().map(|e| e.get()).collect()
     }
 
-    /// The launcher: what turns the beacon actor's dealing-closed edge into a
-    /// running instance, and the three behaviours that decide whether a target ever
-    /// gets one.
-    ///
-    /// A request starts an instance and the launcher's own map holds it — that map
-    /// is what the clock cutoff prunes. A repeat for a target already running is
-    /// a no-op (it does not even read the committee), which is what lets the actor
-    /// re-announce on every height tick. And a request the plane could not act on
-    /// — an unreadable `committee[epoch]`, which is the ordinary state until the
-    /// executor reaches the block that committed it — must leave the target
-    /// RETRYABLE: a one-shot announcement lost there would cost the epoch its
-    /// instance outright.
+    /// The launcher turns the beacon actor's dealing-closed edge into a running
+    /// instance. A repeat for a running target is a no-op, and a request the plane could
+    /// not act on — an unreadable `committee[epoch]` — leaves the target retryable.
     #[test]
     fn the_launcher_starts_one_instance_per_target_and_retries_an_unreadable_committee() {
         let runner = deterministic::Runner::timed(Duration::from_secs(600));
         runner.start(|context| async move {
             let bench = LauncherBench::new(&context).await;
 
-            // `committee[TARGET]` is readable; `committee[TARGET + 1]` is not, until
-            // the flag flips — the executor-has-not-caught-up state. Every read is
-            // counted: a deduplicated repeat never gets as far as the read.
             let readable = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let committee: CommitteeSource = {
@@ -2212,8 +1956,6 @@ mod tests {
             assert_eq!(running(&launcher), vec![TARGET]);
             assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 1);
 
-            // A repeat is a no-op: the actor re-announces on every height tick, and a
-            // second instance for one target would agree against itself.
             launcher.on_request(TARGET).await;
             assert_eq!(running(&launcher), vec![TARGET]);
             assert_eq!(
@@ -2242,23 +1984,9 @@ mod tests {
         });
     }
 
-    /// The SafetyHalt latch, read by the launcher: a halted node starts NO
-    /// epoch-key agreement instance, and the instances live when the latch
-    /// engages are aborted on the latch's edge (`on_halt`), whatever the clock
-    /// says.
-    ///
-    /// Its output is a share this node will never get to sign with — the latch is
-    /// permanent and the epoch manager keeps a halted node a Verifier forever — so
-    /// a vote on the agreement plane buys nothing and costs the network a vote it
-    /// should not be casting. The refusal is BEFORE the spawn (the epoch manager
-    /// used to abort what the plane had already started, one adoption hop later),
-    /// and it settles the target, so the actor's per-tick re-announcement is not
-    /// a per-tick warning.
-    ///
-    /// Falsifier: an instance appearing after the halt (the latch is not read at
-    /// the spawn); the running instance surviving `on_halt`; the committee being
-    /// read for a refused target (the refusal sits after the read, so an
-    /// unreadable committee would hide it).
+    /// A halted node starts no agreement instance, and the instances live when the
+    /// latch engages are aborted on its edge. The refusal is before the spawn, and it
+    /// settles the target so the actor's re-announcement is not a per-tick warning.
     #[test]
     fn a_halted_node_starts_no_agreement_instance_and_aborts_the_ones_it_has() {
         use std::{
@@ -2282,15 +2010,12 @@ mod tests {
             let halt = SafetyHalt::new(crate::sync_metrics::SyncMetrics::default());
             let (mut launcher, _pinned) = bench.launcher(&context, committee, halt.clone());
 
-            // Healthy: the instance starts and the tick leaves it alone.
             launcher.on_request(TARGET).await;
             launcher.on_tick(TARGET - 1).await;
             assert_eq!(running(&launcher), vec![TARGET]);
 
             halt.engage(crate::sync_metrics::SyncReason::ResultDivergence);
 
-            // The next spawn is refused before the committee read, and the target
-            // is settled: the repeat is a no-op too.
             let reads_before = reads.load(std::sync::atomic::Ordering::SeqCst);
             launcher.on_request(TARGET + 1).await;
             launcher.on_request(TARGET + 1).await;
@@ -2309,8 +2034,6 @@ mod tests {
                 "a refused target must be settled, or the actor's re-announcement warns per tick"
             );
 
-            // The halt edge aborts what was live, whatever the cutoff says: a
-            // clock tick below the target leaves it alone, `on_halt` does not.
             let mut handle = launcher
                 .instances
                 .remove(&Epoch::new(TARGET))
@@ -2340,15 +2063,9 @@ mod tests {
         });
     }
 
-    /// The latch can engage DURING a spawn: `start_one` awaits the four mux
-    /// registrations before it spawns, and a latch that flipped in that window
-    /// was read as clear before it. The instance is retired on the same
-    /// `on_request`, before the launcher does anything else — not on a later
-    /// select iteration, whose branch order is random.
-    ///
-    /// Falsifier: `on_request` returning with the instance in the map (the latch
-    /// is not re-read after the spawn); the committee never read (the request
-    /// was refused before the window, so nothing was tested).
+    /// The latch can engage during a spawn: `start_one` awaits the four mux
+    /// registrations, so the instance just started is retired on the same `on_request`
+    /// before the launcher does anything else.
     #[test]
     fn a_latch_that_engages_during_the_spawn_retires_the_instance_it_started() {
         let runner = deterministic::Runner::timed(Duration::from_secs(600));
@@ -2366,8 +2083,6 @@ mod tests {
             let halt = SafetyHalt::new(crate::sync_metrics::SyncMetrics::default());
             let (mut launcher, _pinned) = bench.launcher(&context, committee, halt.clone());
 
-            // The spawn parks on the vote mux's lock, held here; the latch
-            // engages while it is parked, then the lock is released.
             let guard = bench.muxes[0].clone().lock_owned().await;
             context.with_label("flip").spawn({
                 let halt = halt.clone();
@@ -2400,14 +2115,9 @@ mod tests {
         });
     }
 
-    /// The launcher TASK, end to end: a request starts an instance the task
-    /// holds; the clock edge prunes it; the request stream closing exits the
-    /// task and takes its instances with it.
-    ///
-    /// Falsifier: the task not holding the instance (the request arm is
-    /// broken); the instance surviving the clock edge (the clock arm is
-    /// broken); the task not exiting on a closed request stream, or exiting with
-    /// the instance still registered on the mux (the exit path is broken).
+    /// The launcher task end to end: a request starts an instance the task holds, the
+    /// clock edge prunes it, and the request stream closing exits the task and takes
+    /// its instances with it.
     #[test]
     fn the_launcher_task_starts_on_a_request_prunes_on_the_clock_edge_and_aborts_on_exit() {
         let runner = deterministic::Runner::timed(Duration::from_secs(600));
@@ -2461,21 +2171,10 @@ mod tests {
         });
     }
 
-    /// The halt edge reaches the launcher TASK on its own: with the clock
-    /// silent, the latch engaging aborts and joins the running instance, and
-    /// the task then goes on answering requests — with a refusal — rather than
-    /// spinning on an edge that stays high.
-    ///
-    /// The `watch` edge resolves on every call once engaged; the task disarms
-    /// its arm after the first firing. Without that it would be a hot loop:
-    /// `events` would climb with no input at all, and the deterministic runtime,
-    /// which advances time only when nothing is runnable, would never reach the
-    /// sleep below.
-    ///
-    /// Falsifier: the instance surviving the engage with no clock edge (the task
-    /// does not wait on the latch); `events` moving during the silent second
-    /// (the arm is not disarmed); the later request not answered (the task is
-    /// gone or stuck).
+    /// The halt edge reaches the launcher task on its own: with the clock silent, the
+    /// latch engaging aborts and joins the running instance, and the task then keeps
+    /// answering requests. The `watch` edge resolves on every call once engaged, so the
+    /// arm is disarmed after its first firing.
     #[test]
     fn a_halt_edge_aborts_the_running_instance_without_a_clock_tick_and_the_task_keeps_answering() {
         let runner = deterministic::Runner::timed(Duration::from_secs(600));
@@ -2537,13 +2236,9 @@ mod tests {
         });
     }
 
-    /// A latch engaged BEFORE the launcher is built — the datadir marker
-    /// restored at startup — refuses the first request: no spawn, no committee
-    /// read. The edge arm fires on the task's first select (an already-high
-    /// `watch` resolves at once) with nothing to abort, and is disarmed.
-    ///
-    /// Falsifier: a committee read (the refusal is not before it); an instance
-    /// on the mux (a spawn happened); the task not answering the request.
+    /// A latch engaged before the launcher is built refuses the first request: no
+    /// spawn, no committee read. The already-high `watch` edge fires on the first
+    /// select with nothing to abort, and is disarmed.
     #[test]
     fn a_latch_engaged_before_the_launcher_is_built_refuses_the_first_request() {
         let runner = deterministic::Runner::timed(Duration::from_secs(600));
@@ -2563,7 +2258,6 @@ mod tests {
             let mut task = bench.task(&context, committee, halt);
 
             task.requests.send(TARGET).await.expect("task alive");
-            // Two events: the edge (already high) and the request, in either order.
             let state = task.after(2).await;
             assert_eq!(state.events, 2);
             assert!(
@@ -2594,8 +2288,6 @@ mod tests {
         let runner = deterministic::Runner::timed(Duration::from_secs(3600));
         runner.start(|context| async move {
             let mut cohort = start_cohort(&context, 5).await;
-            // At `n = 4` the entry bar is the bare quorum (`f = 1`, so the margin is
-            // 0), and the silent seat confirms nothing.
             assert_eq!(entry_bar(N, View::new(1)), 3);
             cohort.confirm(0..3);
 
@@ -2619,11 +2311,8 @@ mod tests {
                 handle.await.expect("supervisor returned cleanly");
             }
 
-            // Every member kept the artifact it agreed, so a peer asking ANY of
-            // them is served: the plane writes the store itself rather than
-            // leaving it to whoever happens to read `out`. And each one verifies
-            // against `committee[TARGET]` alone — no ceremony state, no share, no
-            // block — which is the property the whole delivery path rests on.
+            // Every member kept the artifact it agreed, so a peer asking any of them is
+            // served. Each verifies against `committee[TARGET]` alone.
             let mut rng = StdRng::seed_from_u64(2026);
             for (i, store) in cohort.stores.iter().enumerate() {
                 let held = store
@@ -2652,24 +2341,16 @@ mod tests {
         });
     }
 
-    /// Below the entry bar the plane NEVER aborts. It nullifies view after view and
-    /// keeps every instance alive, so the epoch is still agreed the moment enough
-    /// members confirm — minutes later, with no operator action and no restart.
-    ///
-    /// The second half is what makes the first half an assertion rather than a
-    /// timeout: a plane that had given up would produce no artifact after the
-    /// confirmations land either.
+    /// Below the entry bar the plane never aborts: it nullifies view after view and
+    /// keeps every instance alive, so the epoch is agreed the moment enough members
+    /// confirm. The second half makes the first an assertion rather than a timeout.
     #[test]
     fn the_plane_waits_below_the_entry_bar_and_never_aborts() {
         let runner = deterministic::Runner::timed(Duration::from_secs(3600));
         runner.start(|context| async move {
             let mut cohort = start_cohort(&context, 5).await;
-            // One short of the bar: every honest leader refuses to propose, and no
-            // verifier would accept it if one did.
             let bar = entry_bar(N, View::new(1));
             cohort.confirm(0..bar - 1);
-            // Ten leader timeouts: every seat leads at least twice and refuses every
-            // time. Longer buys no more confidence and every view costs real BLS.
             assert!(
                 cohort
                     .artifact(&context, Duration::from_secs(20))

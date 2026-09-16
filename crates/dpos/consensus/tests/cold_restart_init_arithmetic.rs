@@ -1,11 +1,10 @@
 //! Regression: cold-start init in `dpos.rs::launch` derives the correct
 //! `(finalized, head)` from reth's `canonical_state` + `genesis_hash`. Pins the
-//! PRODUCTION `derive_cold_start_heights` directly (not a copy), so a future
-//! reth pin / refactor that breaks the read pattern fails loud at compile or
-//! test time instead of silently regressing at runtime.
+//! production `derive_cold_start_heights` directly (not a copy), so a future
+//! reth pin or refactor that breaks the read pattern fails here.
 //!
-//! Note: `last_execution_finalized_height` (= `provider.last_block_number()`)
-//! is a separate provider call, not part of this pure derivation, so it is not
+//! `last_execution_finalized_height` (= `provider.last_block_number()`) is a
+//! separate provider call, not part of this pure derivation, so it is not
 //! covered here.
 
 use alloy_consensus::Header;
@@ -31,7 +30,7 @@ fn cs_finalized(height: u64, hash: B256) -> CanonicalInMemoryState<EthPrimitives
     CanonicalInMemoryState::with_head(s.clone(), Some(s), None)
 }
 
-/// Canonical state with head AHEAD of finalized (warm restart: blocks executed
+/// Canonical state with head ahead of finalized (warm restart: blocks executed
 /// past the last finalization).
 fn cs_head_ahead(
     head_h: u64,
@@ -57,7 +56,7 @@ fn pristine_network_falls_back_to_genesis() {
         "pristine: finalized hash = genesis fallback"
     );
     assert_eq!(head_num, 0, "pristine: head number = 0 (empty chain_info)");
-    // head_hash comes from chain_info (an empty-state default-header hash), NOT
+    // head_hash comes from chain_info (an empty-state default-header hash), not
     // the genesis fallback used for `finalized` — proving the two are sourced
     // independently rather than both collapsing to the genesis fallback.
     assert_ne!(

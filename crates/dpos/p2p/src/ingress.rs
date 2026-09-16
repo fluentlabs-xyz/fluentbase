@@ -1,12 +1,11 @@
-//! Shared `"host:port"` → [`Ingress`] parser for operator-supplied peer
-//! addresses (bootstrappers JSON `socket` field and `--dpos.dialable`).
+//! Shared `"host:port"` → [`Ingress`] parser for operator-supplied peer addresses
+//! (the bootstrappers JSON `socket` field and `--dpos.dialable`).
 //!
-//! A string that parses as a [`SocketAddr`] (IPv4 `1.2.3.4:9000`, bracketed
-//! IPv6 `[::1]:9000`) yields [`Ingress::Socket`]; anything else is treated as
-//! a DNS `host:port` and validated against commonware's RFC-1035/1123
-//! [`Hostname`] type, yielding [`Ingress::Dns`]. DNS-form ingress is only
-//! *dialed* when the network-wide `ALLOW_DNS` policy is `true`
-//! (see [`crate::constants::ALLOW_DNS`]); this parser is policy-agnostic.
+//! A string that parses as a [`SocketAddr`] (IPv4 `1.2.3.4:9000`, bracketed IPv6
+//! `[::1]:9000`) yields [`Ingress::Socket`]; anything else is treated as a DNS
+//! `host:port` and validated against commonware's RFC-1035/1123 [`Hostname`],
+//! yielding [`Ingress::Dns`]. DNS-form ingress is dialed only when the
+//! network-wide `ALLOW_DNS` policy is `true`; this parser is policy-agnostic.
 
 use std::net::SocketAddr;
 
@@ -15,19 +14,12 @@ use commonware_utils::Hostname;
 
 /// Parse a `"host:port"` string into an [`Ingress`].
 ///
-/// - Exact [`SocketAddr`] literal (IPv4, or bracketed IPv6) → [`Ingress::Socket`].
-/// - Otherwise split on the LAST `':'` into host + port; the host is validated
-///   as a DNS hostname (`Hostname::new`, RFC-1035/1123, ≤253 chars) → [`Ingress::Dns`].
-///
-/// Errors name the offending string. A bare hostname without a port, an empty
-/// host, an invalid port, or a hostname that fails RFC validation (e.g. an
-/// unbracketed IPv6 literal, an over-length label, an underscore) all reject.
+/// A missing port, empty host, invalid port, or a host failing DNS validation
+/// (unbracketed IPv6, over-length label, underscore) rejects.
 pub fn parse_ingress(s: &str) -> eyre::Result<Ingress> {
-    // Fast path: exact socket literal (covers IPv4 and bracketed IPv6).
     if let Ok(addr) = s.parse::<SocketAddr>() {
         return Ok(Ingress::Socket(addr));
     }
-    // DNS form: split host from port on the last ':'.
     let (host, port_str) = s
         .rsplit_once(':')
         .ok_or_else(|| eyre::eyre!("peer address {s:?} is missing a ':port' suffix"))?;
@@ -37,10 +29,9 @@ pub fn parse_ingress(s: &str) -> eyre::Result<Ingress> {
     let port: u16 = port_str
         .parse()
         .map_err(|_| eyre::eyre!("peer address {s:?} has an invalid port {port_str:?}"))?;
-    // A host whose every dot-separated label is all-digits (e.g. `300.1.2.3`) is
-    // never a legitimate DNS name for a peer address — it's a malformed IP that
-    // just missed the `SocketAddr` fast path (out-of-range octet, too few/many
-    // groups). Fail fast rather than silently dialing it as a hostname.
+    // An all-numeric dotted host (e.g. `300.1.2.3`) is a malformed IP that missed
+    // the `SocketAddr` fast path, never a legitimate DNS name: fail fast rather
+    // than silently dialing it as a hostname.
     if host
         .split('.')
         .all(|label| !label.is_empty() && label.bytes().all(|b| b.is_ascii_digit()))
@@ -122,11 +113,9 @@ mod tests {
 
     #[test]
     fn rejects_malformed_ip_as_all_numeric_host() {
-        // Out-of-range octet fails SocketAddr, must NOT become a DNS hostname.
+        // Out-of-range octet fails SocketAddr, must not become a DNS hostname.
         assert!(parse_ingress("300.1.2.3:9000").is_err());
-        // Too few groups, all-numeric.
         assert!(parse_ingress("10.0.0:9000").is_err());
-        // A bare numeric label.
         assert!(parse_ingress("12345:9000").is_err());
     }
 

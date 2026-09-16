@@ -1,14 +1,14 @@
 //! Proof-of-Possession signing and verification.
 //!
-//! We use the stock Commonware function `ops::sign_proof_of_possession::<MinSig>`
-//! unchanged. The signed message body is `union_unique(namespace, pubkey.encode())`
-//! under the DST `BLS_POP_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_`. The on-chain
-//! Solidity verifier reconstructs this byte layout exactly (pinned by
-//! `crates/bls/tests/hash_to_g1_conformance.rs`).
+//! Stock commonware `ops::sign_proof_of_possession::<MinSig>`, unchanged: the
+//! signed body is `union_unique(namespace, pubkey.encode())` under the DST
+//! `BLS_POP_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_`. The on-chain Solidity verifier
+//! reconstructs this byte layout exactly (pinned by
+//! `crates/dpos/bls/tests/hash_to_g1_conformance.rs`).
 //!
-//! Address-binding (Sui-style `PoP_msg = pubkey || validator_address`) was
-//! considered and rejected: rogue-key safety already comes from PoP, and
-//! address binding adds no security here.
+//! Address binding (Sui-style `PoP_msg = pubkey || validator_address`) was
+//! considered and rejected: rogue-key safety already comes from PoP, and address
+//! binding adds no security here.
 
 use commonware_codec::{DecodeExt, EncodeFixed};
 use commonware_cryptography::bls12381::primitives::ops;
@@ -18,9 +18,6 @@ use crate::{
     SIGNATURE_BYTES,
 };
 
-/// Sign a Proof-of-Possession for `keypair` under `namespace`.
-///
-/// Returns the 48-byte compressed G1 signature.
 pub fn sign_pop(keypair: &ValidatorBlsKeypair, namespace: &[u8]) -> [u8; SIGNATURE_BYTES] {
     let sig: BlsSignature = ops::sign_proof_of_possession::<Variant>(keypair.secret(), namespace);
     // `BlsSignature::SIZE == SIGNATURE_BYTES` for MinSig (G1 compressed);
@@ -28,14 +25,8 @@ pub fn sign_pop(keypair: &ValidatorBlsKeypair, namespace: &[u8]) -> [u8; SIGNATU
     sig.encode_fixed::<SIGNATURE_BYTES>()
 }
 
-/// Verify a Proof-of-Possession.
-///
-/// Decodes `pubkey` and `signature` (including subgroup checks via blst), then
-/// re-hashes `union_unique(namespace, pubkey.encode())` to G1 under the PoP
-/// DST and checks the pairing equation.
-///
 /// Returns [`Error::InvalidPubkey`] / [`Error::InvalidSignature`] for malformed
-/// point bytes, and [`Error::InvalidPoP`] when the pairing equation fails.
+/// point bytes and [`Error::InvalidPoP`] when the pairing equation fails.
 pub fn verify_pop(
     pubkey: &[u8; PUBKEY_BYTES],
     namespace: &[u8],

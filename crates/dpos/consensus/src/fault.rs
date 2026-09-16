@@ -1,22 +1,20 @@
-//! The executor fault taxonomy (family 5): ONE closed classification of every
-//! fallible executor/boundary operation, replacing the per-site behavioral
-//! classifiers that each new soak fix used to add.
+//! The executor fault taxonomy (family 5): one closed classification of every
+//! fallible executor/boundary operation.
 //!
-//! The rule the taxonomy encodes is the fork-safety split that N sites used to
-//! enforce by convention (a comment at each call site): **retry ⇔ transport
-//! `Err`/`Syncing`; SafetyHalt ⇔ `Ok(Invalid)`**. Here it is a *type-level*
-//! fact — the layer that OWNS a concrete error maps it into a [`FaultClass`],
-//! and the executor routes on the class. The dispositions themselves stay
-//! implemented by the executor's existing mechanisms (the bounded/convergent
-//! derive belts, degrade-retry, non-blocking defer, `SafetyHalt` engage,
-//! abort-all) — the taxonomy is the shared VOCABULARY the leaf mappers speak,
-//! not a second dispatch layer over those mechanisms.
+//! The rule it encodes is the fork-safety split: retry ⇔ transport
+//! `Err`/`Syncing`; `SafetyHalt` ⇔ `Ok(Invalid)`. Here it is a type-level fact —
+//! the layer that owns a concrete error maps it into a [`FaultClass`], and the
+//! executor routes on the class. The dispositions themselves stay implemented by
+//! the executor's existing mechanisms (the bounded/convergent derive belts,
+//! degrade-retry, non-blocking defer, `SafetyHalt` engage, abort-all); the
+//! taxonomy is the shared vocabulary the leaf mappers speak, not a second
+//! dispatch layer over those mechanisms.
 //!
 //! Classification happens exactly where the concrete error type exists (the
 //! node-side deriver/importer/staking-reader — see [`EngineError`],
 //! `crate::application::BeaconEngineLike`, `fluentbase-node`'s
-//! `classify_derive_fault`), and is carried
-//! as a typed verdict, never as a display string re-parsed in consensus code.
+//! `classify_derive_fault`), and is carried as a typed verdict, never as a
+//! display string re-parsed in consensus code.
 
 use crate::sync_metrics::SyncReason;
 
@@ -31,17 +29,17 @@ pub enum DeferReason {
     /// reth transiently dropped executed state at/below the finalized hash
     /// during pipeline backfill (staking-reader `StateNotMaterialized`).
     StateNotMaterialized,
-    /// Guard #2: the node is ≥ K behind but the committee-attested body at
-    /// `h + K` is not backfilled yet, so the convergence check cannot run —
-    /// park the finalized block + re-poke event-driven (`DeriveOutcome`).
+    /// The node is ≥ K behind but the committee-attested body at `h + K` is not
+    /// backfilled yet, so the convergence check cannot run — park the finalized
+    /// block and re-poke event-driven.
     NeedAttestation,
-    /// A SPECULATIVE (notarization-path) derive failed. The finalized path is
+    /// A speculative (notarization-path) derive failed. The finalized path is
     /// the sole authority and derives this height from the child witness
     /// regardless, so the speculative work item is skipped, not retried here.
     SpecDeriveFailed,
-    /// reth answered a SPECULATIVE forkchoice update with a non-`Valid`,
+    /// reth answered a speculative forkchoice update with a non-`Valid`,
     /// non-`Syncing` verdict — see the executor's `spec_execute` for why that
-    /// verdict is NOT a fork-safety witness on a notarized-but-unfinalized
+    /// verdict is not a fork-safety witness on a notarized-but-unfinalized
     /// block (the finalized path re-renders it if the branch commits).
     SpecFcuRejected,
 }
@@ -66,17 +64,16 @@ impl DeferReason {
 /// - [`Self::TransientBounded`]/[`Self::TransientConvergent`] → the derive
 ///   belt's two budget loops (exhaustion is loud, propagating the last error);
 /// - [`Self::TransientExternal`]`(reason)` → degrade-visible + retry-forever /
-///   defer to reconvergence (Decision A: never actor-death on a correlated
-///   cause);
+///   defer to reconvergence (never actor-death on a correlated cause);
 /// - [`Self::Defer`]`(reason)` → skip the work item non-blockingly + reason
 ///   counter;
 /// - [`Self::ForkSafety`]`(reason)` → `SafetyHalt::engage(reason)` + `Err` →
 ///   `park_halted`;
-/// - [`Self::Corruption`] → `Err` with the latch NOT engaged → supervisor
+/// - [`Self::Corruption`] → `Err` with the latch not engaged → supervisor
 ///   abort-all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FaultClass {
-    /// Bounded retry; the trigger ALSO fires on genuine corruption (torn
+    /// Bounded retry; the trigger also fires on genuine corruption (torn
     /// static-file reads, visibility lag), so exhaustion is loud and propagates
     /// the original error. The two-phase fast/slow budget lives in
     /// `fluentbase-node`'s `derive.rs` next to the reth error types it parses.
@@ -86,7 +83,7 @@ pub enum FaultClass {
     /// attempts, no backoff, budget declared in `derive.rs`).
     TransientConvergent,
     /// Retry forever, degraded-visible; the cause is external/correlated
-    /// (engine transport, EL apply lag) so NEVER actor-death (Decision A).
+    /// (engine transport, EL apply lag) so never actor-death.
     TransientExternal(SyncReason),
     /// Skip this work item non-blockingly; the pipeline re-presents it.
     Defer(DeferReason),
@@ -126,13 +123,13 @@ impl FaultClass {
 /// A [`FaultClass`] verdict carried together with the concrete cause that
 /// produced it — the type every fallible executor boundary returns.
 ///
-/// The point is what it makes IMPOSSIBLE. An `eyre::Report` lets a routing site
+/// The point is what it makes impossible. An `eyre::Report` lets a routing site
 /// reduce any failure to a `warn!`; a `Fault` forces that site to match on
 /// [`Self::class`], so a [`FaultClass::ForkSafety`] cannot be logged away. The
-/// executor's ONE disposition router (`Actor::dispatch_fault`) is the only place
-/// that turns a class into an action — and it is therefore the only place that
-/// engages the `SafetyHalt` latch, so "engage here and hope the `Err` is
-/// propagated" is no longer expressible.
+/// executor's one disposition router (`Actor::dispatch_fault`) is the only place
+/// that turns a class into an action, and therefore the only place that engages
+/// the `SafetyHalt` latch, so "engage here and hope the `Err` is propagated" is
+/// not expressible.
 #[derive(Debug)]
 pub struct Fault {
     class: FaultClass,
@@ -146,7 +143,7 @@ impl Fault {
     }
 
     /// Local derivation would extend a chain honest peers reject: the router
-    /// engages `SafetyHalt::engage(reason)` and parks. The latch is NOT touched
+    /// engages `SafetyHalt::engage(reason)` and parks. The latch is not touched
     /// here — building a `Fault` has no side effects.
     pub const fn fork_safety(reason: SyncReason, cause: eyre::Report) -> Self {
         Self::new(FaultClass::ForkSafety(reason), cause)
@@ -163,7 +160,7 @@ impl Fault {
     }
 
     /// External/correlated cause (engine transport, EL apply lag): degrade
-    /// visibly and continue — never actor-death (Decision A).
+    /// visibly and continue — never actor-death.
     pub const fn transient_external(reason: SyncReason, cause: eyre::Report) -> Self {
         Self::new(FaultClass::TransientExternal(reason), cause)
     }
@@ -183,34 +180,30 @@ impl Fault {
     }
 }
 
-/// An UNCLASSIFIED error crossing a classified boundary is
-/// [`FaultClass::Corruption`] — the LOUD disposition, so an unmapped leaf can
-/// only ever be too noisy, never silently swallowed. This is also exactly what
-/// an untyped `eyre::Report` already did at the executor's fatal sites (log +
-/// actor death + supervisor abort-all), so `?` on a plain eyre error keeps its
-/// pre-taxonomy behaviour. A boundary whose failures must stay best-effort (the
-/// speculative path) therefore has to classify EXPLICITLY.
+/// An unclassified error crossing a classified boundary is
+/// [`FaultClass::Corruption`], the loud disposition, so an unmapped leaf can only
+/// ever be too noisy, never silently swallowed. A boundary whose failures must
+/// stay best-effort (the speculative path) therefore has to classify explicitly.
 impl From<eyre::Report> for Fault {
     fn from(cause: eyre::Report) -> Self {
         Self::corruption(cause)
     }
 }
 
-/// A failure at the reth engine boundary that produced NO verdict — as opposed
-/// to a semantic `Ok(Invalid)` verdict, which rides in the `Ok` half. Distinct
-/// type so the no-verdict-vs-verdict split is TYPE-LEVEL, not a convention at
-/// each call site: an [`crate::application::BeaconEngineLike`] method returns
-/// the verdict in `Ok(..)` and the no-verdict failure in `Err(EngineError)`.
+/// A failure at the reth engine boundary that produced no verdict, as opposed to
+/// a semantic `Ok(Invalid)` verdict, which rides in the `Ok` half. Distinct type
+/// so the no-verdict-vs-verdict split is type-level, not a convention at each
+/// call site.
 ///
 /// It carries its own [`FaultClass`] because "the request did not produce a
-/// verdict" has two structurally different causes with OPPOSITE dispositions,
+/// verdict" has two structurally different causes with opposite dispositions,
 /// and collapsing them is how a permanent local condition ends up in a
 /// retry-forever loop:
 ///
 /// - [`Self::transport`] — reth never processed the request (closed engine/tree
 ///   channel, dropped oneshot, internal reth error): honestly transient,
 ///   [`FaultClass::TransientExternal`]`(EngineRetry)`, retried forever.
-/// - [`Self::anchor_inconsistent`] — reth PROCESSED the forkchoice update and
+/// - [`Self::anchor_inconsistent`] — reth processed the forkchoice update and
 ///   rejected the state this node named: [`FaultClass::Corruption`].
 #[derive(Debug)]
 pub struct EngineError {
@@ -221,7 +214,7 @@ pub struct EngineError {
 impl EngineError {
     /// The request never reached a verdict (a closed channel / an RPC-handle
     /// blip). The node-side importer stringifies its concrete engine-handle
-    /// error here — the ONE place the display is captured, next to the type it
+    /// error here — the one place the display is captured, next to the type it
     /// parses.
     pub fn transport(source: impl std::fmt::Display) -> Self {
         Self {
@@ -230,12 +223,12 @@ impl EngineError {
         }
     }
 
-    /// reth rejected the forkchoice STATE itself — it cannot resolve the
+    /// reth rejected the forkchoice state itself — it cannot resolve the
     /// finalized/safe hash this node named in its own canonical chain. Retrying
     /// re-sends the same unresolvable hashes forever, so this is
     /// [`FaultClass::Corruption`]: the node's own anchor is inconsistent with
     /// its own EL, which says nothing about what the network believes (so it is
-    /// NOT [`FaultClass::ForkSafety`]) and cannot heal on its own.
+    /// not [`FaultClass::ForkSafety`]) and cannot heal on its own.
     pub fn anchor_inconsistent(source: impl std::fmt::Display) -> Self {
         Self {
             class: FaultClass::Corruption,
@@ -261,9 +254,8 @@ impl std::error::Error for EngineError {}
 mod tests {
     use super::*;
 
-    // A no-verdict engine failure is transient ONLY when reth never processed
-    // the request. `InvalidState` (reth processed it and rejected the anchor we
-    // named) used to share this class and was therefore retried forever.
+    // A no-verdict engine failure is transient only when reth never processed the
+    // request; a processed-and-rejected anchor is corruption.
     #[test]
     fn engine_transport_retries_but_an_inconsistent_anchor_is_corruption() {
         let e = EngineError::transport("engine tree channel closed");
@@ -293,7 +285,7 @@ mod tests {
         assert_eq!(fault.cause().to_string(), "something nobody mapped");
     }
 
-    // The router's metric dimensions are a BOUNDED label set — every class
+    // The router's metric dimensions are a bounded label set — every class
     // renders a fixed pair, never a formatted error string.
     #[test]
     fn fault_class_labels_are_bounded_and_carry_the_payload_reason() {
@@ -307,8 +299,8 @@ mod tests {
         assert_eq!(defer.reason_str(), "spec_fcu_rejected");
     }
 
-    // The defer labels are the metric series names — pinned for continuity with
-    // the pre-taxonomy `dpos_cert_inlet_committee_read_deferred_total` labels.
+    // The defer labels are the metric series names, pinned for continuity with
+    // the existing `dpos_cert_inlet_committee_read_deferred_total` labels.
     #[test]
     fn defer_reason_labels_match_the_metric_series() {
         assert_eq!(

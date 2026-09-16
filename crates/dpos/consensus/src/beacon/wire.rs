@@ -1,9 +1,8 @@
 //! `BEACON_CHANNEL` message envelope: DKG ceremony traffic.
 //!
-//! Per-height seed PARTIALS no longer ride this channel — they are part of the
-//! consensus vote (the combined `fluentbase_bls::Scheme`), recovered from the
-//! notarization/finalization certificate. This channel now carries only DKG
-//! ceremony traffic (the live per-epoch DKG actor is phased).
+//! Per-height seed partials ride the consensus vote (the combined
+//! `fluentbase_bls::Scheme`), recovered from the notarization/finalization
+//! certificate, so this channel carries only DKG ceremony traffic.
 
 use bytes::{Buf, BufMut, Bytes};
 use commonware_codec::{EncodeSize, Read, Write};

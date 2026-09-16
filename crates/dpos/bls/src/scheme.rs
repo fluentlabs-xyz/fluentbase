@@ -16,19 +16,17 @@ use crate::{
 };
 
 /// Per-epoch consensus committee: an epoch identifier paired with the
-/// commonware-sorted `BiMap<PeerPubkey, BlsPubkey>` that defines the
-/// Simplex Participant index for that epoch.
+/// commonware-sorted `BiMap<PeerPubkey, BlsPubkey>` that defines the Simplex
+/// Participant index for that epoch.
 ///
-/// Invariant carried by [`Self::from_pairs`]: every pubkey in the resulting
-/// BiMap has had its Proof-of-Possession verified on-chain at
-/// `Staking.setConsensusKeys` time. This type trusts the on-chain contract
-/// and does not re-verify PoP at construction. The test-only
-/// [`Self::from_unverified`] constructor relaxes this contract.
+/// Every pubkey in a [`Self::from_pairs`] committee had its Proof-of-Possession
+/// verified on-chain at `Staking.setConsensusKeys` time; this type trusts the
+/// contract and does not re-verify PoP. [`Self::from_unverified`] relaxes that.
 #[derive(Clone, Debug)]
 pub struct EpochCommittee {
-    /// On-chain epoch identifier — used by the consensus slasher's
-    /// `evidence::extract_from_*` to assert the evidence's claimed epoch
-    /// matches the committee.
+    /// On-chain epoch identifier; the consensus slasher's
+    /// `evidence::extract_from_*` asserts the evidence's claimed epoch against
+    /// it.
     pub epoch: u64,
     /// Commonware-sorted participant BiMap; signer indices in
     /// `Activity::Conflicting*` reference slots in this BiMap.
@@ -36,10 +34,10 @@ pub struct EpochCommittee {
 }
 
 impl EpochCommittee {
-    /// Trusted constructor: caller guarantees the pubkeys passed PoP
-    /// on-chain. Production callers go through
-    /// `fluentbase_consensus::scheme::epoch_committee_from_snapshot`
-    /// (reads a frozen on-chain committee at a finalized hash).
+    /// Trusted constructor: the caller guarantees the pubkeys passed PoP on-chain.
+    /// Production callers go through
+    /// `fluentbase_consensus::scheme::epoch_committee_from_snapshot`, which reads
+    /// a frozen on-chain committee at a finalized hash.
     pub fn from_pairs<I>(epoch: u64, pairs: I) -> Result<Self, commonware_utils::ordered::Error>
     where
         I: IntoIterator<Item = (PeerPubkey, BlsPubkey)>,
@@ -48,8 +46,7 @@ impl EpochCommittee {
         Ok(Self { epoch, bimap })
     }
 
-    /// Test-only constructor — does NOT carry the PoP-verified invariant.
-    /// Marked `doc(hidden)` to discourage production use.
+    /// Test-only constructor — does not carry the PoP-verified invariant.
     #[doc(hidden)]
     pub fn from_unverified(epoch: u64, bimap: BiMap<PeerPubkey, BlsPubkey>) -> Self {
         Self { epoch, bimap }
@@ -62,9 +59,8 @@ impl EpochCommittee {
 /// leaves this crate's encapsulation: the scalar clone happens internally and
 /// `ValidatorBlsKeypair::secret()` stays `pub(crate)`.
 ///
-/// Returns `None` if the keypair's public key is not present in `participants`
-/// — Commonware uses this case to express “you're not a member of this
-/// committee”.
+/// `None` means the keypair's public key is not in `participants` — commonware's
+/// way of saying "you are not a member of this committee".
 pub fn build_signer(
     namespace: &[u8],
     participants: BiMap<PeerPubkey, BlsPubkey>,
@@ -80,7 +76,7 @@ pub fn build_signer(
 ///
 /// `epoch` is the binding: the scheme refuses any subject from another epoch.
 /// `oracle` is the beacon's threshold face for that epoch — `None` ⇒ a fallback
-/// (pure-multisig) epoch, where a seedless vote is CORRECT rather than merely
+/// (pure-multisig) epoch, where a seedless vote is correct rather than merely
 /// unjudgeable.
 pub fn build_verifier(
     namespace: &[u8],
@@ -138,7 +134,6 @@ mod tests {
     #[test]
     fn build_signer_returns_none_for_non_member() {
         let (_, _bls_kps, bimap) = fixture(1, 4);
-        // Generate an outsider keypair not in the committee.
         let outsider = ValidatorBlsKeypair::generate(&mut StdRng::seed_from_u64(999));
         let scheme = build_signer(&fluent_namespace(20994), bimap, &outsider, 7, None);
         assert!(scheme.is_none());
@@ -148,6 +143,5 @@ mod tests {
     fn build_verifier_does_not_panic_with_empty_committee() {
         let empty = BiMap::<PeerPubkey, BlsPubkey>::default();
         let _ = build_verifier(&fluent_namespace(20994), empty, 7, None);
-        // Just exercises the constructor; verify-on-empty quorum is Engine concern.
     }
 }

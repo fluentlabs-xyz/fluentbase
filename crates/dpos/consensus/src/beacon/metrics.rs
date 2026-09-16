@@ -1,24 +1,15 @@
 //! Beacon observability counters, registered on the commonware metrics registry
-//! (scraped at `:19100` via `Metrics::register`, NOT the `metrics::` macro recorder
-//! which lands on reth's registry and is invisible there).
+//! (scraped at `:19100` via `Metrics::register`, not the `metrics::` macro
+//! recorder, which lands on reth's registry and is invisible there).
 //!
-//! A single [`BeaconMetrics`] is created + registered once in `dpos.rs::launch`
-//! (against the launch context) and cloned into the DKG actor, the agreement
-//! plane and the randomness provider. Each metric is `Arc`-backed, so the struct
-//! is cheap to clone and every clone shares one counter.
+//! A single [`BeaconMetrics`] is created and registered once per node class in
+//! [`crate::beacon::plane`], then cloned into the DKG actor, the agreement plane
+//! and the randomness provider. Each metric is `Arc`-backed, so the struct is
+//! cheap to clone and every clone shares one counter.
 //!
-//! This struct holds ONLY the families the randomness subsystem owns. Two groups
-//! that used to live here have moved to their real owners, keeping their family
-//! names byte-identical:
-//!
-//! - [`crate::epoch_manager::EpochEngineMetrics`] — the membership /
-//!   `Inline::genesis` counters, which are facts about the core's spawn decision
-//!   and survive a randomness implementation that has no DKG at all.
-//! - [`crate::executor::ExecutorMetrics`] — the per-derived-block seed
-//!   observation, incremented by the executor on BOTH node classes.
-//!
-//! Exactly one owner registers each family per node class; the split is what
-//! keeps the core from having to name a beacon type to count its own spawns.
+//! This struct holds only the families the randomness subsystem owns; other
+//! subsystems' counters live with their owners. Exactly one owner registers each
+//! family per node class.
 
 use commonware_runtime::Metrics;
 use prometheus_client::{
@@ -27,9 +18,9 @@ use prometheus_client::{
 };
 
 /// Why an epoch is stalled — the `reason` label of `dpos_dkg_stalled` and the
-/// payload of the DKG actor's `Stalled{reason}` event (§5.2/§5.4 of the beacon
-/// design). Latched per `(epoch, reason)` by the actor: one log line, one gauge
-/// step, until the epoch keys or ages out.
+/// payload of the DKG actor's `Stalled{reason}` event. Latched per `(epoch,
+/// reason)` by the actor: one log line, one gauge step, until the epoch keys or
+/// ages out.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum StallReason {
     /// Every pinned body is held and no dealer quorum is selectable within the
@@ -41,10 +32,10 @@ pub enum StallReason {
     BodyLost,
     /// The epoch's boundary is here or past and this node holds no artifact for it.
     NoArtifact,
-    /// A share's disk write failed; it is not adopted (R-021).
+    /// A share's disk write failed; it is not adopted.
     PersistFailed,
     /// A share does not lie on the certified artifact's polynomial at this node's
-    /// index (F-02): refused, the epoch heals over its journal.
+    /// index: refused, the epoch heals over its journal.
     OffPolynomial,
     /// The share cannot be derived here (a journal acking a dealing it no longer
     /// holds, or a ceremony that cannot be rebuilt over the roster).
@@ -112,181 +103,135 @@ pub struct BeaconMetrics {
     /// `−1` when the epoch keys or ages out). The paired log line is bounded to one
     /// per `(epoch, reason)`; this is what scales with the condition.
     dkg_stalled: Family<StallLabels, Gauge<i64>>,
-    /// Two DIFFERENT quorum-certified artifacts reached the DKG actor for one epoch
+    /// Two different quorum-certified artifacts reached the DKG actor for one epoch
     /// — `≥ 2q−n` signers certified both. The epoch is `Conflict` on this node and
-    /// its signing stops. 0 under `≤ f`.
+    /// its signing stops.
     pub dkg_artifact_conflict: Counter,
-    /// `Conflict` verdicts whose durable marker (`beacon-conflict-e<E>.bin`) could
-    /// NOT be written by the DKG actor: the verdict holds in this process, the
-    /// share is dropped regardless, and a restart re-judges the epoch from the
-    /// artifact store's own witness (which writes the same marker first and
-    /// counts its own failure on `dpos_artifact_store_conflict_marker_failed_total`).
+    /// `Conflict` verdicts whose durable marker could not be written by the DKG
+    /// actor: the verdict holds in this process, the share is dropped regardless,
+    /// and a restart re-judges the epoch from the artifact store's own witness.
     pub dkg_conflict_marker_failed: Counter,
     /// Artifact hand-offs to the DKG actor's write-back that were refused (the
-    /// mailbox full or gone) — by the pull seam (`ArtifactBridge::adopt`) or the
-    /// transport acquisition (`TransportAcquire`). Not a lost FACT: the store owns
-    /// the artifact and the actor reads it on its next height tick; this counts
-    /// the ticks of latency a backed-up write-back costs.
+    /// mailbox full or gone). Not a lost fact: the store owns the artifact and the
+    /// actor reads it on its next height tick, so this counts ticks of latency.
     pub dkg_artifact_handoff_lost: Counter,
-    /// A dealer was PROVEN to have signed two distinct `check`-valid logs for one
-    /// epoch on this node — the pair is journaled as evidence and the dealer is
-    /// locally banned from gossip for that epoch (`ceremony.rs`). Counted once per
-    /// `(epoch, dealer)` on the node that saw both logs; nothing goes on-chain
-    /// (Д-6 defer). 0 on an honest committee.
+    /// A dealer was proven to have signed two distinct valid logs for one epoch on
+    /// this node — the pair is journaled as evidence and the dealer is locally
+    /// banned from gossip for that epoch. Counted once per `(epoch, dealer)` on the
+    /// node that saw both.
     pub dkg_dealer_equivocation: Counter,
     /// A per-epoch engine self-demoted to the cert-follow plane because it holds no
     /// local beacon polynomial for the epoch (`NoBeaconPolynomial`).
     pub engine_demoted_no_polynomial: Counter,
-    /// A would-be signer was demoted to verify-only by the promote SHARE-gate: its
-    /// resolved DKG share does not verify against its own sharing. Distinct from
-    /// the VALUE gate above, which compares the GROUP key against the network and
-    /// is a no-op before the network has attested one. Load-bearing since every
-    /// Nullify carries a seed partial: with `t == quorum`, one such member on the
-    /// plane makes the nullify quorum unreachable during a stall, when there are no
-    /// proposals to expose the bad share on the notarize path.
+    /// A would-be signer was demoted to verify-only by the promote share gate: its
+    /// resolved DKG share does not verify against its own sharing. Load-bearing
+    /// because every nullify carries a seed partial, so with `t == quorum` one such
+    /// member makes the nullify quorum unreachable during a stall.
     pub engine_demoted_bad_share: Counter,
     /// Participation withheld because the plane has not frozen its
     /// `(dpos_activation, epoch_interval)` yet — no ceremony has been able to run.
     pub engine_demoted_geometry_unfrozen: Counter,
     /// A consensus-pinned dealer-log index named a position outside the committed
-    /// committee, and the ceremony skipped it. Nothing can ever satisfy such an entry
-    /// (the resolver fetches a `(dealer, hash)` of the roster), so before the skip it held `all_held=false`
-    /// forever and wedged the epoch's DKG in silence. With the `order_block` codec
-    /// bound in place an honest chain cannot produce one: non-zero means either a
-    /// Byzantine proposer got a block past an accept-biased vote gate, or the
-    /// committee the ceremony reads disagrees with the one the logs were numbered
-    /// against — the 2026-07-21 idx-stall class. 0 on a healthy chain.
+    /// committee, and the ceremony skipped it. Nothing can satisfy such an entry, so
+    /// before the skip it held `all_held=false` forever and wedged the epoch's DKG
+    /// in silence. With the codec bound in place an honest chain cannot produce one:
+    /// non-zero means either a Byzantine proposer got a block past the vote gate, or
+    /// the committee the ceremony reads disagrees with the one the logs were
+    /// numbered against.
     pub dkg_pinned_idx_out_of_range: Counter,
-    /// A ceremony holds an agreed pinned set it cannot yet finalize over, and
-    /// deferred to the epoch boundary. Previously this wait was completely silent,
-    /// so any stall of this family could only be diagnosed post-mortem from a wedged
-    /// boundary. Counted once per epoch per reason.
+    /// A ceremony holds an agreed pinned set it cannot yet finalize over and
+    /// deferred to the epoch boundary. Counted once per epoch per reason.
     pub dkg_finalize_deferred: Counter,
-    /// Dealer logs this node held, body-checked, that the AGREED pinned set left
+    /// Dealer logs this node held, body-checked, that the agreed pinned set left
     /// out. Observability only — the agreement's acceptance predicate must never
-    /// read local state, so this counter influences no vote. A rare non-zero is a
-    /// delivery race (the proposer had not received that log yet); a persistent
-    /// non-zero on one target epoch is a proposer systematically dropping
-    /// entries, which is the only signal that separates the two.
+    /// read local state, so this influences no vote. A rare non-zero is a delivery
+    /// race; a persistent non-zero on one target is a proposer systematically
+    /// dropping entries.
     pub dkg_agree_logs_omitted: Counter,
     /// An agreement instance held a finalization certificate and never obtained the
     /// body it names, so it tore itself down without producing an artifact. The
     /// restart case: the certificate is journaled, the body buffer is in memory
-    /// only, and no live sender re-broadcasts a decided proposal. Non-zero means
-    /// that target epoch has to re-agree on a fresh instance.
+    /// only, and no live sender re-broadcasts a decided proposal.
     pub dkg_agree_body_lost: Counter,
     /// Target epochs whose agreement could not propose because too few members had
     /// confirmed they hold the pinned dealer logs. Counted once per epoch per
-    /// reason, beside the warn that names which of the two it was: below the
-    /// quorum the members are genuinely absent, between quorum and the bar the
-    /// epoch starts on its own at the margin release view. Never fatal — the plane
-    /// keeps trying.
+    /// reason, beside the warn naming which of the two it was. Never fatal — the
+    /// plane keeps trying.
     pub dkg_agree_bar_unmet: Counter,
     /// Artifact requests this node answered with the artifact itself.
     pub dkg_artifact_served: Counter,
-    /// Artifact requests this node answered `NotYet`. The NORMAL answer for most
-    /// of an epoch — a peer asking before the target's plane has converged — so a
-    /// high count is not a fault on its own; read it against `served`.
+    /// Artifact requests this node answered `NotYet`. The normal answer for most of
+    /// an epoch, so a high count is not a fault on its own; read it against
+    /// `served`.
     pub dkg_artifact_not_yet: Counter,
     /// Served artifacts refused as proven misbehaviour: bytes that do not decode,
     /// an answer about another epoch, or a certificate that fails against
-    /// `committee[epoch]`. The ONLY path that costs a peer its standing on this
-    /// engine (commonware's resolver `excluded` set has no removal path), so a
-    /// non-zero here is a real accusation and should be rare.
+    /// `committee[epoch]`. The only path that costs a peer its standing on this
+    /// engine.
     pub dkg_artifact_rejected: Counter,
-    /// Served artifacts this node could not CHECK, because `committee[epoch]` was
+    /// Served artifacts this node could not check, because `committee[epoch]` was
     /// not readable — dropped without storing and without blaming the peer. A
-    /// property of this node's chain view, not of the artifact.
+    /// property of this node's chain view.
     pub dkg_artifact_unverifiable: Counter,
     /// Pulls that ended with nobody answering inside the window. This is the
     /// exhausted one-pass walk, surfaced instead of the resolver's silent
     /// unbounded retry.
     pub dkg_artifact_pull_exhausted: Counter,
-    /// Pulls that came back holding the artifact. The pulling side had no success
-    /// counter at all — only `served` existed, and that is the SERVING node's
-    /// view, so a member whose live-epoch pull is what unblocks it was invisible
-    /// on its own metrics.
+    /// Pulls that came back holding the artifact, counted on the pulling node. The
+    /// serving side has its own `dkg_artifact_served`.
     pub dkg_artifact_pull_ok: Counter,
-    /// Epochs whose share is provably unrecoverable on this node — it acked a
-    /// dealer's private point and no longer holds it (`MissingPlayerDealing`).
-    /// Non-zero means one epoch is sat out as a verifier, NOT that the node is
-    /// unhealthy: the next epoch's ceremony is untouched. Persistently climbing
-    /// across epochs is the real alert, and it means the share directory is being
-    /// destroyed under a running node.
+    /// Epochs whose share is provably unrecoverable here — this node acked a
+    /// dealer's private point and no longer holds it. Non-zero means one epoch is
+    /// sat out as a verifier, not that the node is unhealthy; persistently climbing
+    /// across epochs means the share directory is being destroyed under a running
+    /// node.
     pub dkg_share_unrecoverable: Counter,
-    /// Shares REFUSED by the share-on-polynomial self-check inside
-    /// `DkgActor::adopt_share` — the one gate every adoption path now passes
-    /// through (П-3). A non-zero value on the LIVE finalize path means this node
-    /// computed a share that does not lie on the polynomial the certified
-    /// artifact pinned, which is an internal inconsistency and not a peer's
-    /// fault; on the recompute-heal path it is the ordinary "keep fetching"
-    /// verdict for an incomplete dealer-log set. Either way the share is not
-    /// adopted and the epoch stays verify-only, so this counter is the ONLY
-    /// witness that the refusal happened.
+    /// Shares refused by the share-on-polynomial self-check inside
+    /// `DkgActor::adopt_share`, the one gate every adoption path passes through. On
+    /// the live finalize path it means this node computed a share that does not lie
+    /// on the certified artifact's polynomial; on the recompute-heal path it is the
+    /// ordinary "keep fetching" verdict for an incomplete dealer-log set. Either way
+    /// the share is not adopted.
     pub dkg_share_off_polynomial: Counter,
-    /// Shares REFUSED because their disk write failed (§5.4 of
-    /// `.dpos-study/history/E5-BEACON-DESIGN.md`). The share is not adopted, so the
-    /// node is verify-only for the epoch and its participation probe keeps saying
-    /// so — the alternative, adopting a share no restart can reload, is "signing
-    /// now, mute after a restart" (R-021). The retry is the recompute-heal, which
-    /// finds the epoch share-less on the next height tick and re-derives it from the
-    /// retained journal, so a climbing counter with a flat
-    /// `dkg_ceremony_ok_total` means the share directory itself is unwritable.
+    /// Shares refused because their disk write failed. The share is not adopted, so
+    /// the node is verify-only for the epoch; the alternative is "signing now, mute
+    /// after a restart". The retry is the recompute-heal on the next height tick.
     pub dkg_share_persist_failed: Counter,
     /// Artifacts a `--cert-follow` follower adopted from its cert upstream after
-    /// checking them against `committee[epoch]` read from its OWN chain state.
+    /// checking them against `committee[epoch]` read from its own chain state.
     /// The follower's only key producer, so a flat zero here and a climbing
-    /// `dpos_cert_vote_only_admissions_total` is the whole of FLU-1167's symptom.
+    /// `dpos_cert_vote_only_admissions_total` is the symptom.
     pub follower_artifact_adopted: Counter,
     /// Epochs a follower wanted an artifact for and its upstream did not serve —
     /// including an upstream too old to know the method at all. Not a fault: the
     /// artifact of a live epoch legitimately does not exist yet, and the trigger
     /// re-asks on the next certificate.
     pub follower_artifact_miss: Counter,
-    /// Assembled seeds this node CHECKED against `PK_epoch` and accepted —
-    /// [`fluentbase_bls::oracle::SeedCheck::Valid`] out of a `SeedOracle::verify_seed`.
+    /// Assembled seeds this node checked against `PK_epoch` and accepted
+    /// ([`fluentbase_bls::oracle::SeedCheck::Valid`]).
     ///
-    /// THE POSITIVE EDGE FOR "THIS EPOCH LEFT VOTE-ONLY ADMISSION", and it exists
-    /// because FLU-1202 deleted the one that used to serve. That was the
-    /// `EpochSchemeProvider::register` log line `epoch scheme upgraded to PINNED`,
-    /// emitted where the OLD and NEW pin state were both in hand; a scheme holds
-    /// no key material now and reads the store live, so there is no pin
-    /// transition left to log. This counter is what replaced it, and it is
-    /// deliberately a POSITIVE reading rather than the absence of a vote-only
-    /// admission: an absence is green whenever certificates merely stopped
-    /// arriving, and this only moves when a seed slot was actually verified.
+    /// The positive edge for "this epoch left vote-only admission": a positive
+    /// reading rather than the absence of a vote-only admission, because an absence
+    /// is green whenever certificates merely stopped arriving.
     ///
-    /// GLOBAL, NOT PER-EPOCH. The old line carried `epoch=Epoch(N)`; a label here
-    /// would multiply cardinality for a precision no reader needs today — the one
-    /// consumer asserts a `0 -> non-zero` edge over a window in which the node is
-    /// verifying a single epoch. Add the label when a case needs it, with a
-    /// reason.
+    /// Global, not per-epoch: the one consumer asserts a `0 -> non-zero` edge over a
+    /// window in which the node verifies a single epoch.
     pub seed_verify_ok: Counter,
-    /// Assembled seeds this node could NOT check because it holds no key for the
-    /// epoch — [`fluentbase_bls::oracle::SeedCheck::NoKey`]. The certificate is admitted
-    /// on its multisig quorum alone and nobody consumes its σ.
+    /// Assembled seeds this node could not check because it holds no key for the
+    /// epoch ([`fluentbase_bls::oracle::SeedCheck::NoKey`]). The certificate is
+    /// admitted on its multisig quorum alone and nobody consumes its σ.
     ///
-    /// The consensus-plane twin of `dpos_cert_vote_only_admissions_total`, which
-    /// counts the same condition on the cert-inlet path only. A node with no
-    /// `--cert-upstream` runs no inlet at all, so on a plain validator this is the
-    /// ONLY place the keyless window is visible.
+    /// The consensus-plane twin of `dpos_cert_vote_only_admissions_total`; a plain
+    /// validator runs no cert inlet, so this is the only place its keyless window is
+    /// visible.
     pub seed_verify_no_key: Counter,
-    /// Assembled seeds this node checked against `PK_epoch` and REFUSED —
-    /// [`fluentbase_bls::oracle::SeedCheck::Invalid`], the accusation arm.
+    /// Assembled seeds this node checked against `PK_epoch` and refused
+    /// ([`fluentbase_bls::oracle::SeedCheck::Invalid`]).
     ///
-    /// It used to be deliberately uncounted, on the argument that every call site
-    /// already gives the refusal loud attributable handling. Row 5.2 broke that
-    /// argument in two places at once (review C-11): the ERROR line is now LATCHED
-    /// per epoch on both node classes, so repeat refusals of the same epoch are
-    /// silent; and on `--cert-follow` the loud handling never existed — that class
-    /// had no data-fault channel until this pass. A latched line without a counter
-    /// is a witness that does not scale with the attack, which is the one shape
-    /// the rule "bound the line, never the count" forbids.
-    ///
-    /// Counted at the ORACLE, so it covers both halves of Д-3 with one family: the
-    /// synchronous refusal inside `observe_certificate`, and the late one the
-    /// settle reaches when a key finally lands on a held σ. GLOBAL, not per-epoch,
-    /// for the reason `seed_verify_ok` gives.
+    /// The error line is latched per epoch, so repeat refusals are silent; this
+    /// counter is not, so a repeat forger stays visible. Counted at the oracle, so it
+    /// covers both the synchronous refusal inside `observe_certificate` and the late
+    /// one the settle reaches when a key lands on a held σ. Global, not per-epoch.
     pub seed_verify_invalid: Counter,
 }
 
@@ -305,9 +250,9 @@ impl BeaconMetrics {
             .dec();
     }
 
-    /// TEST SUPPORT: the current `dpos_dkg_stalled{reason}` — for the balance
-    /// assertions (every raise is paired with a clear by the time an epoch keys
-    /// or ages out).
+    /// Test support: the current `dpos_dkg_stalled{reason}` — for the balance
+    /// assertions (every raise is paired with a clear by the time an epoch keys or
+    /// ages out).
     #[cfg(test)]
     pub fn stalled_gauge(&self, reason: StallReason) -> i64 {
         self.dkg_stalled
@@ -315,8 +260,8 @@ impl BeaconMetrics {
             .get()
     }
 
-    /// Register every counter on the commonware registry. Call once, against the
-    /// launch context (mirrors `executor.rs`'s `pending_finalizations` gauge).
+    /// Register every counter on the commonware registry. Call once per node class,
+    /// against the launch context.
     pub fn register(&self, ctx: &impl Metrics) {
         let reasons: Vec<&str> = StallReason::ALL.iter().map(|r| r.as_str()).collect();
         ctx.register(

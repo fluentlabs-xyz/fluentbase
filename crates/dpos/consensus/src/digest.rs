@@ -1,8 +1,7 @@
 //! [`Digest`] — the Fluent block hash ([`B256`]) used as the commonware
-//! Simplex digest. The consensus digest IS the EVM block hash; no
-//! `blake3`, no hand-rolled `H(header‖state_root‖tx_root)` — the block
-//! hash already commits the header (hence `state_root`); non-leader
-//! execution verifies it.
+//! Simplex digest. The consensus digest is the EVM block hash: no `blake3`, no
+//! hand-rolled `H(header‖state_root‖tx_root)`, since the block hash already
+//! commits the header (hence `state_root`), and non-leader execution verifies it.
 
 use alloy_primitives::B256;
 use commonware_codec::{FixedSize, Read, ReadExt as _, Write};
@@ -31,12 +30,9 @@ impl Deref for Digest {
     }
 }
 
-/// Random `Digest` for test fixtures only. The production digest IS the
-/// EVM block hash — random bytes produced here do NOT correspond to any
-/// real block. The impl exists because commonware test helpers in this
-/// crate and others (verified via grep: all `Digest::random` call sites
-/// are inside `#[cfg(test)]` modules or `tests/` directories) require it.
-/// Do not invoke from non-test code.
+/// Random `Digest` for test fixtures only: the production digest is the EVM block
+/// hash, so bytes produced here do not correspond to any real block. Required by
+/// commonware test helpers.
 impl commonware_math::algebra::Random for Digest {
     fn random(mut rng: impl rand_core::CryptoRngCore) -> Self {
         let mut array = B256::ZERO;

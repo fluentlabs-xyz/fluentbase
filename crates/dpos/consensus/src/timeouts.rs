@@ -2,7 +2,7 @@
 //! pre-validated against commonware's construction-time invariants.
 //!
 //! commonware sets `leader_deadline` and `certification_deadline` both from
-//! the same view-entry instant (NOT additive) and **panics** at
+//! the same view-entry instant (not additive) and **panics** at
 //! `voter/actor.rs:136` if `leader_timeout > certification_timeout`; the
 //! config doc also requires `skip_timeout ≤ activity_timeout`. We surface
 //! both as a typed `Err` *before* they reach the engine (same philosophy as
@@ -32,17 +32,14 @@ pub struct ConsensusTimeouts {
 
 impl ConsensusTimeouts {
     /// Fluent 1 block/sec set. Deadlines are measured from view entry
-    /// (commonware `voter/state.rs`: `enter_view` arms both from the same
-    /// instant — NOT additive). Derived from the cadence source of truth
-    /// (`application::BLOCK_INTERVAL` / `VERIFY_EXEC_BUDGET`) so a retune
-    /// there cannot silently invalidate the timeouts:
-    ///   leader        = pace component (≤ BLOCK_INTERVAL by construction:
-    ///                   the pace sleep is capped at one interval from now)
-    ///                   + 750ms build/propagation/skew margin (tempo
-    ///                   geo-prod calibration: their leader = pace + 750ms);
-    ///   certification = leader + verify exec-gate budget
-    ///                   (`VERIFY_EXEC_BUDGET`: worst-case derive+execute of
-    ///                   one block, 1000ms)
+    /// (commonware arms both from the same instant, not additively). Derived from
+    /// the cadence source of truth (`application::BLOCK_INTERVAL` /
+    /// `VERIFY_EXEC_BUDGET`) so a retune there cannot silently invalidate the
+    /// timeouts:
+    ///   leader        = pace component (≤ BLOCK_INTERVAL) + 750ms build /
+    ///                   propagation / skew margin;
+    ///   certification = leader + verify exec-gate budget (`VERIFY_EXEC_BUDGET`,
+    ///                   worst-case derive+execute of one block, 1000ms)
     ///                   + 450ms vote collection;
     ///   timeout_retry = 1000ms nullify re-broadcast cadence;
     ///   fetch         = 1000ms resolver fetch (worst-case 4 MB block).
@@ -60,16 +57,11 @@ impl ConsensusTimeouts {
     }
 
     /// Enforce commonware's construction-time invariants up-front so a
-    /// misconfiguration is an actionable error, not a deep panic
-    /// (`leader ≤ certification` — `voter/actor.rs:136`; `skip ≤ activity` —
-    /// `config.rs` doc).
+    /// misconfiguration is an actionable error rather than a deep panic.
     pub fn validated(self) -> Result<Self, &'static str> {
-        // Mirror commonware `simplex::Config::assert()` (config.rs:160-201) for
-        // the fields this struct owns, so a misconfiguration is an actionable
-        // error here rather than a deep panic inside `Engine::new`. Commonware
-        // asserts EVERY timeout > 0 (leader, certification, timeout_retry, and
-        // fetch_timeout), leader ≤ certification, activity ≠ 0, skip ≠ 0, and
-        // skip ≤ activity — these checks reproduce that exact set (not stricter).
+        // Mirror commonware `simplex::Config::assert()` for the fields this struct
+        // owns: every timeout > 0, leader ≤ certification, activity ≠ 0, skip ≠ 0,
+        // and skip ≤ activity.
         if self.leader.is_zero()
             || self.certification.is_zero()
             || self.timeout_retry.is_zero()
@@ -88,11 +80,10 @@ impl ConsensusTimeouts {
         if self.skip.get() > self.activity.get() {
             return Err("skip_timeout > activity_timeout");
         }
-        // Fluent-specific tripwires on top of commonware's set: the verify
-        // exec-gate polls up to VERIFY_EXEC_BUDGET inside the certification
-        // window, and paced proposals consume up to BLOCK_INTERVAL of the
-        // leader window — timeouts that don't leave room for either cause
-        // systematic nullify storms that nothing else would attribute.
+        // Fluent-specific tripwires on top of commonware's set: the verify exec-gate
+        // polls up to VERIFY_EXEC_BUDGET inside the certification window, and paced
+        // proposals consume up to BLOCK_INTERVAL of the leader window; without room
+        // for either, nullify storms follow that nothing else would attribute.
         if self.certification < self.leader + VERIFY_EXEC_BUDGET {
             return Err(
                 "certification leaves less than VERIFY_EXEC_BUDGET after the leader deadline",

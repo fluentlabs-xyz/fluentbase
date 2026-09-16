@@ -10,17 +10,15 @@ use std::{
 
 /// Validators observed tombstoned on chain, keyed by consensus peer key.
 ///
-/// **Driven from chain state, not from held evidence** — that is what makes the
-/// reaction survive a restart. A restarted node re-reads the tombstone from the
-/// committee snapshot on its first read and reaches the same conclusion; an
-/// in-memory list of who misbehaved starts empty.
+/// Driven from chain state, not from held evidence, which is what makes the reaction
+/// survive a restart: a restarted node re-reads the tombstone from the committee
+/// snapshot and reaches the same conclusion.
 ///
-/// The set only grows, and that is sound rather than sloppy: a tombstone is
-/// permanent on chain (`Staking`'s `tombstoned` map is written once and never
-/// cleared), so an entry can never become wrong. A node's view of it therefore
-/// converges from below and never oscillates — the property that lets the
-/// refuse-to-bind gate read it without a quorum agreeing on the exact block at
-/// which each node noticed.
+/// The set only grows, and that is sound: a tombstone is permanent on chain
+/// (`Staking`'s `tombstoned` map is written once and never cleared), so an entry can
+/// never become wrong. A node's view converges from below and never oscillates, which
+/// lets the refuse-to-bind gate read it without a quorum agreeing on the exact block
+/// at which each node noticed.
 #[derive(Clone, Default, Debug)]
 pub struct TombstoneSet(Arc<RwLock<HashSet<PeerPubkey>>>);
 
@@ -30,13 +28,12 @@ impl TombstoneSet {
         self.read().contains(peer)
     }
 
-    /// Record every tombstoned member of `snapshot` and return the ones this
-    /// call newly added.
+    /// Record every tombstoned member of `snapshot` and return the ones this call
+    /// newly added.
     ///
     /// The delta is the return value on purpose: the caller's reaction to a new
-    /// tombstone is a transport ban lasting four hours, which must fire once per
-    /// peer rather than once per read of a snapshot that keeps reporting the
-    /// same permanent flag.
+    /// tombstone is a transport ban, which must fire once per peer rather than once
+    /// per read of a snapshot that keeps reporting the same permanent flag.
     pub fn observe(&self, snapshot: &ValidatorSetSnapshot) -> Vec<PeerPubkey> {
         let mut set = self.0.write().unwrap_or_else(PoisonError::into_inner);
         snapshot
@@ -48,10 +45,9 @@ impl TombstoneSet {
             .collect()
     }
 
-    /// A poisoned lock means a holder panicked mid-update. The set holds owned
-    /// keys and cannot be torn, so recovering keeps one panic from disarming the
-    /// reaction for the rest of the process — the same discipline the charge
-    /// store applies.
+    /// A poisoned lock means a holder panicked mid-update. The set holds owned keys
+    /// and cannot be torn, so recovering keeps one panic from disarming the reaction
+    /// for the rest of the process.
     fn read(&self) -> std::sync::RwLockReadGuard<'_, HashSet<PeerPubkey>> {
         self.0.read().unwrap_or_else(PoisonError::into_inner)
     }

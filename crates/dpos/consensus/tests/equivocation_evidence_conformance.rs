@@ -1,15 +1,11 @@
 //! Cross-language equivocation-evidence conformance pin.
 //!
-//! Builds **real** Commonware `ConflictingNotarize` / `ConflictingFinalize`
-//! / `NullifyFinalize` (signed via the shipped `bls12381_multisig` scheme
-//! over a deterministic committee), `.encode()`s them, and pins the wire
-//! bytes, the fields the Solidity `SimplexEvidenceDecoder` must extract,
-//! and a full valid slash tuple. A Simplex consensus wire-format change
-//! (byte encoding is the Commonware codec) makes this
-//! FAIL LOUDLY — it is the gate for equivocation slashing. Single
-//! source; self-documented (no companion markdown,
-//! same convention as the eip2537/ed25519/hash_to_g1 pins). `EXPECTED`
-//! is mirrored by-hand into the Solidity test in the SAME PR.
+//! Builds real Commonware `ConflictingNotarize` / `ConflictingFinalize` /
+//! `NullifyFinalize` (signed via the shipped `bls12381_multisig` scheme over a
+//! deterministic committee), encodes them, and pins the wire bytes, the fields
+//! the Solidity `SimplexEvidenceDecoder` must extract, and a full valid slash
+//! tuple. `EXPECTED` is mirrored by hand into the Solidity test, so a Simplex
+//! wire-format change fails here.
 //!
 //! Regenerate after a deliberate Commonware/blst bump:
 //! `cargo test -p fluentbase-consensus --test equivocation_evidence_conformance -- --ignored print_corpus --nocapture`
@@ -66,14 +62,13 @@ fn committee(seed: u64) -> (Vec<ValidatorBlsKeypair>, BiMap<PeerPubkey, BlsPubke
     (bls_kps, bimap)
 }
 
-/// The committee in **generation order** (peer ed25519 pubkey 32 B,
-/// bls pubkey 96 B compressed). The Solidity end-to-end test registers
-/// these 4 validators + their consensus keys and `commitEpochCommittee`s
-/// epoch 7; the contract sorts by peerPubkey into the Simplex committee
-/// order (Commonware `BiMap` codec; pinned by
-/// `ed25519_ordering_conformance`), so
-/// `resolveSigner(7, signerIdx)` resolves to the offender =
-/// generation-index `OFFENDER`, whose `blsPubkey` is the `pkCompressedRef`.
+/// The committee in generation order (peer ed25519 pubkey 32 B, bls pubkey
+/// 96 B compressed). The Solidity end-to-end test registers these validators
+/// and their consensus keys and commits epoch 7; the contract sorts by
+/// `peerPubkey` into Simplex committee order (Commonware `BiMap` codec, pinned
+/// by `ed25519_ordering_conformance`), so `resolveSigner(7, signerIdx)`
+/// resolves to generation index `OFFENDER`, whose `blsPubkey` is the
+/// `pkCompressedRef`.
 fn committee_dump() -> Vec<(String, String)> {
     let mut rng = StdRng::seed_from_u64(1);
     let peer: Vec<_> = (0..COMMITTEE_N)
@@ -88,14 +83,12 @@ fn committee_dump() -> Vec<(String, String)> {
         .collect()
 }
 
-/// PoP corpus for the committee keys (same generation order as
-/// [`committee_dump`] / [`committee`]). `setConsensusKeys` now enforces
-/// on-chain Proof-of-Possession, so the Solidity end-to-end slash test must
-/// register each committee validator with a valid PoP. Returns
-/// `(pop48, popUnc128, pkUnc256)` per key: `ns = fluent_namespace(C_MAIN)`,
-/// DST = MinSig `PROOF_OF_POSSESSION` (the same PoP path pinned by
-/// `hash_to_g1_conformance`). Extends THIS corpus (same file, same pin
-/// discipline) — not a new corpus.
+/// PoP corpus for the committee keys, in the same generation order as
+/// [`committee_dump`] and [`committee`]. `setConsensusKeys` enforces on-chain
+/// proof of possession, so the Solidity end-to-end slash test must register each
+/// validator with a valid PoP. Returns `(pop48, popUnc128, pkUnc256)` per key,
+/// over `ns = fluent_namespace(C_MAIN)`, the same PoP path pinned by
+/// `hash_to_g1_conformance`.
 fn committee_pop_dump() -> Vec<(String, String, String)> {
     let (kps, _bimap) = committee(1);
     let ns = fluent_namespace(C_MAIN);
@@ -185,7 +178,7 @@ fn sig48(att_sig_bytes: &[u8]) -> [u8; 48] {
 }
 
 /// Project a combined-scheme attestation onto its `VoteScheme` (48-B multisig)
-/// half — the form that is actually submitted on-chain. This is an INDEPENDENT
+/// half, the form actually submitted on-chain. This is an independent
 /// re-implementation of `slasher::evidence::vote_attestation`: the fixture
 /// builds the on-chain wire bytes this way, while the production extractor
 /// reaches them by decoding the raw combined blob — both must agree.
@@ -390,7 +383,7 @@ fn nullify_finalize() -> (
         kind1: 1, // Nullify (message = Round.encode())
         msg1: hex::encode(round().encode()),
         sig1: hex::encode(s1),
-        kind2: 2, // Finalize
+        kind2: 2,
         msg2: hex::encode(prop.encode()),
         sig2: hex::encode(s2),
         pk_unc: hex::encode(pubkey_compressed_to_eip2537(&pk96).unwrap()),
@@ -408,7 +401,7 @@ fn all() -> Vec<Vector> {
     ]
 }
 
-// Filled verbatim from `print_corpus`; reviewed in PR; mirrored into Solidity.
+// Mirrored by hand into the Solidity test.
 const EXPECTED: &[Expected] = &[
     Expected {
         label: "conflicting_notarize",
@@ -458,10 +451,8 @@ const EXPECTED: &[Expected] = &[
 ];
 
 fn assert_row(v: &Vector, e: &Expected) {
-    // A drift anywhere here means the Simplex consensus wire format
-    // (Commonware codec) changed:
-    // regenerate via `--ignored print_corpus`, review the diff, and mirror
-    // into the Solidity test in the same PR.
+    // A drift here means the Simplex wire format changed: regenerate via
+    // `--ignored print_corpus` and mirror into the Solidity test.
     assert_eq!(v.label, e.label, "label drift");
     assert_eq!(v.evidence, e.evidence, "{} evidence drift", v.label);
     assert_eq!(v.epoch, e.epoch, "{} epoch drift", v.label);
@@ -562,17 +553,11 @@ fn helper_extract_args_matches_pinned_corpus() {
     assert_eq!(args_nf.kind, SlashKind::NullifyFinalize);
 }
 
-/// Literal 4-byte selectors of the three slash entry points the node calls.
-///
-/// **Hardcoded on purpose.** These are the independent half of the pin: they
-/// were computed with `cast sig "<signature>"` and are asserted against the
-/// production `sol!` in `slasher::actor`. Deriving them from that same `sol!`
-/// (`SomeCall::SELECTOR`) would check the declaration against itself, catching
-/// a typo but never a rename — which is the whole failure this file guards.
-///
-/// Rename a slash function and the assertions below fail naming both sides.
-/// The contract-side counterparts (different, by six-vs-four arguments) are in
-/// the merge checklist at the top of `crates/dpos/consensus/src/slasher/actor.rs`.
+/// Literal 4-byte selectors of the three slash entry points the node calls,
+/// computed with `cast sig "<signature>"`, the independent half of the pin
+/// against the production `sol!` in `slasher::actor`; deriving them from that
+/// same declaration would check it against itself, catching a typo but never a
+/// rename.
 mod pinned {
     /// `cast sig "slashEquivocationNotarize(bytes,bytes,bytes,bytes)"`
     pub const SEL_NOTARIZE: [u8; 4] = [0xe2, 0x8d, 0x2f, 0x63];
@@ -591,10 +576,9 @@ mod pinned {
         "slashEquivocationNullifyFinalize(bytes,bytes,bytes,bytes)";
 }
 
-/// The production `sol!` declaration — the one the slasher actually encodes
-/// through — pinned against the literal selectors and signature strings above.
-///
-/// Nothing here derives the expected value from the declaration under test.
+/// The production `sol!` declaration the slasher encodes through, pinned against
+/// the literal selectors and signature strings above; nothing here derives the
+/// expected value from the declaration under test.
 #[test]
 fn slash_abi_signatures_and_selectors_are_pinned() {
     use alloy_sol_types::SolCall;
@@ -648,9 +632,9 @@ fn slash_abi_signatures_and_selectors_are_pinned() {
 
 /// Byte-for-byte literal calldata for the production encoder, on a degenerate
 /// charge (empty evidence, all-zero key and signatures) whose every word is
-/// therefore predictable by hand. This is the argument-ORDER and ABI-LAYOUT
-/// pin the selector cannot give: swap two `bytes` parameters, or add a fifth,
-/// and the head offsets below move.
+/// therefore predictable by hand. This is the argument-order and ABI-layout pin
+/// the selector cannot give: swap two `bytes` parameters, or add a fifth, and
+/// the head offsets below move.
 ///
 /// Sizes: `pkUncompressed` is 256 B (EIP-2537 uncompressed G2),
 /// `sig{1,2}Uncompressed` 128 B each (uncompressed G1). Head is four dynamic
@@ -712,11 +696,11 @@ fn slash_calldata_layout_is_pinned_literally() {
     }
 }
 
-/// Full-pin extension: extract → ABI-encode via the PRODUCTION encoder
-/// (`slasher::actor::encode_calldata`) → check the selector against the
+/// Extract, ABI-encode via the production encoder
+/// (`slasher::actor::encode_calldata`), then check the selector against the
 /// literal pin and the arguments against the corpus. Drift here means a
-/// Solidity function signature change, a `SlashCallArgs` field-order change, or
-/// an `alloy-sol-types` ABI codec change — any of which break the
+/// Solidity signature change, a `SlashCallArgs` field-order change, or an
+/// `alloy-sol-types` codec change — any of which breaks the
 /// `equivocation_slashing` on-chain path.
 #[test]
 fn helper_extract_then_abi_encode_matches_pinned_calldata() {
@@ -808,10 +792,8 @@ fn helper_extract_then_abi_encode_matches_pinned_calldata() {
         &args_nf.sig2_uncompressed[..]
     );
 
-    // All three selectors must be distinct (a name collision would route
-    // to the wrong Solidity branch). Compared as LITERALS — comparing the
-    // three `SELECTOR` constants to each other would hold even if all three
-    // functions were renamed together.
+    // Compared as literals: comparing the three `SELECTOR` constants to each
+    // other would hold even if all three functions were renamed together.
     assert_ne!(pinned::SEL_NOTARIZE, pinned::SEL_FINALIZE);
     assert_ne!(pinned::SEL_FINALIZE, pinned::SEL_NULLIFY_FINALIZE);
     assert_ne!(pinned::SEL_NOTARIZE, pinned::SEL_NULLIFY_FINALIZE);

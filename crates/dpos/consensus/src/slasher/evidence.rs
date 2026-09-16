@@ -1,10 +1,9 @@
-//! Slashing-evidence bridge: convert Simplex `Activity::Conflicting*`
-//! events into the four `slashEquivocation*` calldata arguments expected
-//! by `Staking.sol`.
+//! Slashing-evidence bridge: convert Simplex `Activity::Conflicting*` events into
+//! the four `slashEquivocation*` calldata arguments expected by `Staking.sol`.
 //!
-//! This is a **stateless** module — every helper takes the evidence
-//! struct + a per-epoch committee `BiMap` and returns the four bytes
-//! the on-chain `Staking.slashEquivocation*` entry points expect.
+//! This is a stateless module: every helper takes the evidence struct plus a
+//! per-epoch committee `BiMap` and returns the byte arrays the on-chain entry
+//! points expect.
 //!
 //! # Pipeline overview
 //!
@@ -29,15 +28,10 @@
 //!
 //! ## Why re-decode instead of accessor methods
 //!
-//! Commonware's `ConflictingNotarize<S, D>`, `ConflictingFinalize<S, D>`,
-//! and `NullifyFinalize<S, D>` have **private** inner fields and provide
-//! no accessor methods (only `Attributable::signer` / `Epochable::epoch`
-//! / `Viewable::view` from traits — none expose the inner `Notarize` /
-//! `Finalize` / `Nullify` values). The wire format `Write`/`Read` impls
-//! ARE public, so we round-trip through `.encode()` →
-//! `Notarize::read_cfg` to access the inner sig material. One extra
-//! in-memory codec pass per evidence (~168 B) — equivocation events are
-//! rare, so cost is irrelevant.
+//! `ConflictingNotarize`, `ConflictingFinalize` and `NullifyFinalize` keep their
+//! inner fields private and expose no accessors, but their `Write`/`Read` impls
+//! are public, so the inner signature material is reached by an encode/decode
+//! round-trip. Equivocation events are rare, so the extra pass is irrelevant.
 
 use commonware_codec::{Encode, Read as _};
 use commonware_consensus::{
@@ -59,12 +53,8 @@ use fluentbase_bls::{
 use fluentbase_p2p::constants::MAX_COMMITTEE_SIZE;
 use rand_core::{CryptoRngCore, OsRng};
 
-/// Discriminator for the three `slashEquivocation*` entry points.
-///
-/// Pairs 1:1 with the `Staking.sol` functions: `ConflictingNotarize` →
-/// `slashEquivocationNotarize`, `ConflictingFinalize` →
-/// `slashEquivocationFinalize`, `NullifyFinalize` →
-/// `slashEquivocationNullifyFinalize`.
+/// Discriminator for the three `slashEquivocation*` entry points, pairing 1:1 with
+/// the `Staking.sol` functions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SlashKind {
     ConflictingNotarize,
@@ -73,13 +63,10 @@ pub enum SlashKind {
 }
 
 /// Decode cap for the equivocation charge an [`crate::order_block::OrderBlock`]
-/// carries: the encoded commonware `Activity` for one of the three attributable
-/// Byzantine variants — a one-byte tag plus two single-signer votes, each a
-/// round, a 32-byte proposal digest, a signer index and a 97-byte
-/// `CombinedSignature`, so ~290 B at the widest. 1 KiB is generous headroom and
-/// keeps the carve-out this reserves out of the block's tx budget
-/// ([`crate::order_block::EQUIVOCATION_FRAMING`]) negligible; the ~290 B figure
-/// is pinned by `an_assembled_charge_encodes_well_under_the_block_cap`.
+/// carries: a one-byte tag plus two single-signer votes, each a round, a 32-byte
+/// proposal digest, a signer index and a 97-byte `CombinedSignature`, so ~290 B at
+/// the widest. 1 KiB leaves generous headroom and keeps the block's equivocation
+/// carve-out negligible.
 pub const MAX_EQUIVOCATION_SIZE: usize = 1024;
 
 /// Why a block-carried equivocation charge was refused.
@@ -104,16 +91,13 @@ pub enum ChargeError {
 }
 
 /// Verify the charge a block carries against the committee of the block's own
-/// epoch: the vote-time gate every committee member runs before backing the
+/// epoch — the vote-time gate every committee member runs before backing the
 /// block (`application::equivocation_gate_decision`).
 ///
-/// `epoch` is the block's epoch, and a charge for any other epoch is refused.
-/// That is not a tidiness rule — only the committee of a charge's own epoch can
-/// verify it (a past epoch's `signer_idx → BLS key` mapping is not
-/// reconstructible from a running node), so accepting an older charge would mean
-/// accepting one nobody can check. It is what makes the verifier this function
-/// needs always available, and it is why a charge that outlives its epoch leaves
-/// by the transaction fallback instead.
+/// A charge for any other epoch is refused: only the committee of a charge's own
+/// epoch can verify it (a past epoch's `signer_idx → BLS key` mapping is not
+/// reconstructible from a running node), which is why a charge that outlives its
+/// epoch leaves by the transaction fallback instead.
 ///
 /// The decode does the structural work: `Conflicting*::read_cfg` re-checks the
 /// same signer/round/proposal invariants `Conflicting*::new` asserts, so
@@ -127,8 +111,8 @@ pub fn verify_block_charge(
 ) -> Result<(), ChargeError> {
     let mut buf = evidence;
     // The cfg bounds a certificate variant's signer bitmap; those variants are
-    // refused right below, but the bound has to hold at DECODE time so a peer
-    // cannot buy an unbounded allocation with a one-byte tag.
+    // refused below, but the bound must hold at decode time so a peer cannot buy an
+    // unbounded allocation with a one-byte tag.
     let activity = Activity::<Scheme, crate::digest::Digest>::read_cfg(
         &mut buf,
         &(MAX_COMMITTEE_SIZE as usize),
@@ -178,8 +162,6 @@ impl SlashKind {
     /// Filter an `Activity` event to its `SlashKind`, or `None` if not a
     /// slashable variant.
     ///
-    /// Useful for matching out evidence from a generic Activity stream:
-    ///
     /// ```ignore
     /// if let Some(kind) = SlashKind::from_activity(&activity) {
     ///     // dispatch to extract_from_* + ABI-encode + submit
@@ -218,11 +200,11 @@ pub struct SlashCallArgs {
     pub sig2_uncompressed: [u8; SIGNATURE_EIP2537_BYTES],
 }
 
-/// Encode the ATTRIBUTABLE multisig half of a combined-scheme signature
-/// (= G1 compressed, 48 B) into the fixed buffer the contract expects. The
-/// per-vote signature is `CombinedSignature{vote, seed}` (97 B = vote 48 ‖ flag 1 ‖ seed slot 48); equivocation
-/// evidence is over the `vote` half only — the threshold `seed` partial is
-/// non-attributable and never submitted on-chain.
+/// Encode the attributable multisig half of a combined-scheme signature (G1
+/// compressed, 48 B) into the fixed buffer the contract expects. The per-vote
+/// signature is `CombinedSignature{vote, seed}`; equivocation evidence is over the
+/// `vote` half only — the threshold `seed` partial is non-attributable and never
+/// submitted on-chain.
 fn sig_compressed(sig: &CombinedSignature) -> Result<[u8; SIGNATURE_BYTES], Error> {
     sig.vote()
         .encode()
@@ -235,8 +217,8 @@ fn sig_compressed(sig: &CombinedSignature) -> Result<[u8; SIGNATURE_BYTES], Erro
 /// (`VoteScheme`) half, dropping the non-attributable threshold seed partial.
 /// Re-encoding the evidence over `VoteScheme` keeps each signature 48 B on the
 /// wire — the layout `SimplexEvidenceDecoder.sol` parses (`uvarint(signer) ‖
-/// sig[48]`). The combined signature is 97 B (vote ‖ flag ‖ seed slot); a raw
-/// `ConflictingNotarize<Scheme>::encode()` would desync the on-chain decoder.
+/// sig[48]`). A raw `ConflictingNotarize<Scheme>::encode()` would desync the
+/// on-chain decoder.
 fn vote_attestation(att: &Attestation<Scheme>) -> Result<Attestation<VoteScheme>, Error> {
     let combined = att.signature.get().ok_or(Error::InvalidSignature)?;
     Ok(Attestation {
@@ -292,18 +274,15 @@ where
     check_epoch_match(ev, committee)?;
     let raw = ev.encode().to_vec();
 
-    // Re-decode the two inner Notarize structs (Conflicting* fields are
-    // private; Write/Read traits are public — round-trip is the only
-    // path to the inner sig material).
+    // Re-decode the two inner Notarize structs; `Conflicting*` fields are private,
+    // so the public `Write`/`Read` traits are the only path to the inner signatures.
     let mut buf: &[u8] = &raw;
     let n1 = Notarize::<Scheme, D>::read_cfg(&mut buf, &()).map_err(|_| Error::InvalidSignature)?;
     let n2 = Notarize::<Scheme, D>::read_cfg(&mut buf, &()).map_err(|_| Error::InvalidSignature)?;
 
-    // Re-establish the equivocation structural invariant before paying gas
-    // (mirrors commonware `ConflictingNotarize::new`/`read_cfg`, which `verify`
-    // does NOT re-check). Defends against a future non-`read_cfg` ingress (e.g.
-    // `Arbitrary`/direct construction) slashing an honest validator. Compare
-    // `round` (epoch+view), not just view.
+    // Re-establish the equivocation structural invariant before paying gas; it
+    // mirrors commonware's `ConflictingNotarize::new`/`read_cfg`, and `verify` does
+    // not re-check it. Compare round (epoch+view), not just view.
     if n1.signer() != n2.signer() || n1.round() != n2.round() || n1.proposal == n2.proposal {
         return Err(Error::NonConflictingEvidence);
     }
@@ -323,8 +302,8 @@ where
     let sig2 = sig_compressed(sig2_g1)?;
     let pk96 = pk_compressed(ev.signer().get(), &committee.bimap)?;
 
-    // Re-encode over `VoteScheme` so each signature is the 48-B multisig half
-    // the on-chain decoder expects (the seed partial is consensus-internal).
+    // Re-encode over `VoteScheme` so each signature is the 48-byte multisig half
+    // the on-chain decoder expects.
     let evidence = ConflictingNotarize::<VoteScheme, D>::new(
         Notarize {
             proposal: n1.proposal.clone(),
@@ -383,7 +362,7 @@ where
     let sig2 = sig_compressed(sig2_g1)?;
     let pk96 = pk_compressed(ev.signer().get(), &committee.bimap)?;
 
-    // Re-encode over `VoteScheme` (48-B-per-signature wire layout) — see
+    // Re-encode over `VoteScheme` (48-byte-per-signature wire layout) — see
     // `extract_from_conflicting_notarize`.
     let evidence = ConflictingFinalize::<VoteScheme, D>::new(
         Finalize {
@@ -425,9 +404,9 @@ where
     let finalize =
         Finalize::<Scheme, D>::read_cfg(&mut buf, &()).map_err(|_| Error::InvalidSignature)?;
 
-    // Structural invariant (mirrors `NullifyFinalize::new`/`read_cfg`): same
-    // signer + same round. NO proposals-differ check — a Nullify has no
-    // proposal; adding one would over-reject valid evidence.
+    // Structural invariant (mirrors `NullifyFinalize::new`/`read_cfg`): same signer
+    // and same round. There is no proposals-differ check — a nullify has no
+    // proposal, and adding one would over-reject valid evidence.
     if nullify.signer() != finalize.signer() || nullify.round != finalize.round() {
         return Err(Error::NonConflictingEvidence);
     }
@@ -447,7 +426,7 @@ where
     let sig2 = sig_compressed(sig2_g1)?;
     let pk96 = pk_compressed(ev.signer().get(), &committee.bimap)?;
 
-    // Re-encode over `VoteScheme` (48-B-per-signature wire layout) — see
+    // Re-encode over `VoteScheme` (48-byte-per-signature wire layout) — see
     // `extract_from_conflicting_notarize`.
     let evidence = NullifyFinalize::<VoteScheme, D>::new(
         Nullify {
@@ -472,17 +451,12 @@ where
 }
 
 /// Local cryptographic verify of an `Activity` event before submitting it
-/// on-chain.
+/// on-chain. Wraps `Activity::verify` with the `Sequential` strategy (one Activity
+/// is two pairings, so fork-join overhead exceeds the benefit).
 ///
-/// Wraps `Activity::verify` with `Sequential` strategy (one Activity =
-/// two pairings; fork-join overhead > benefit). Defends against local
-/// memory corruption / bit-flip before paying gas on-chain.
-///
-/// Does NOT verify equivocation invariants (`round_1 == round_2 &&
-/// signer_1 == signer_2 && proposal_1 != proposal_2` — already enforced
-/// by `Conflicting*::new` and `Read::read_cfg`) and does NOT verify
-/// on-chain state (validator registration, tombstone) — those are
-/// Solidity concerns.
+/// Does not verify equivocation invariants (already enforced by
+/// `Conflicting*::new` and `Read::read_cfg`) or on-chain state (validator
+/// registration, tombstone) — those are Solidity concerns.
 pub fn verify_pre_submit<D, R>(
     activity: &Activity<Scheme, D>,
     scheme: &Scheme,
@@ -499,31 +473,22 @@ where
     }
 }
 
-/// Project an attributable `Activity<Scheme, D>` — a slashable `Conflicting*`
-/// pair or a single `Notarize`/`Finalize`/`Nullify` off the evidence channel —
-/// onto its attributable VoteScheme
-/// half and verify ONLY the multisig vote signatures against a VoteScheme
-/// verifier built from the committee bimap.
+/// Verify an attributable `Activity<Scheme, D>` — a slashable `Conflicting*` pair or
+/// a single `Notarize`/`Finalize`/`Nullify` off the evidence channel — against a
+/// `VoteScheme` verifier built from the committee bimap.
 ///
-/// This is the verify path used when the per-epoch [`Scheme`] is pruned from
-/// the scheme provider and must be rebuilt from the recovered committee bimap:
-/// the per-epoch DKG polynomial (needed by [`Scheme::verify_attestation`]'s
-/// SEEDED arm) is NOT recoverable at slash time, so a rebuilt
-/// `build_verifier(.., None)` (beacon = `None`) would WRONGLY reject a seeded
-/// Notarize/Finalize equivocation vote on a beacon-active chain (the
-/// `_ => combined.seed.is_none()` fallback arm rejects a present seed). The
-/// equivocation evidence submitted on-chain is over the vote half only (the
-/// threshold seed partial is non-attributable and dropped — see
-/// [`vote_attestation`]); verifying just that attributable half is the correct
-/// and sufficient pre-submit check, and it never needs the polynomial.
+/// This is the verify path used when the per-epoch `Scheme` is pruned from the
+/// scheme provider and must be rebuilt from the recovered committee bimap: the
+/// per-epoch DKG polynomial needed by [`Scheme::verify_attestation`]'s seeded arm
+/// is not recoverable at slash time, so a rebuilt `build_verifier(.., None)` would
+/// wrongly reject a seeded vote on a beacon-active chain. The on-chain evidence is
+/// over the vote half only, so verifying just that half is the correct and
+/// sufficient pre-submit check.
 ///
-/// The projection drops the seed partial via [`vote_attestation`] and
-/// reconstructs the `Activity<VoteScheme, D>` so `Activity::verify` checks the
-/// same signer/round/proposal-bound multisig signatures the on-chain decoder
-/// will see. The attributable signer index is preserved verbatim (the projection
-/// copies `attestation.signer` and the proposal/round). NB: an equivocation
-/// attestation is single-signer (a scalar `signer` index), not a bitmap — a
-/// bitmap exists only in an aggregated certificate, which is not involved here.
+/// The projection drops the seed partial and reconstructs the
+/// `Activity<VoteScheme, D>` so `Activity::verify` checks the same
+/// signer/round/proposal-bound signatures the on-chain decoder will see. An
+/// equivocation attestation is single-signer, not a bitmap.
 pub fn verify_pre_submit_vote_only<D, R>(
     activity: &Activity<Scheme, D>,
     vote_scheme: &VoteScheme,
@@ -542,15 +507,13 @@ where
 }
 
 /// Re-project an `Activity<Scheme, D>` onto `Activity<VoteScheme, D>`,
-/// dropping the threshold seed half of every attestation. Mirrors the
-/// per-variant `extract_from_*` re-encoding (same `vote_attestation` +
-/// `Conflicting*::new` reconstruction) but returns the typed Activity so it can
-/// be re-verified rather than ABI-encoded.
+/// dropping the threshold seed half of every attestation. Mirrors the per-variant
+/// `extract_from_*` re-encoding, but returns the typed Activity so it can be
+/// re-verified rather than ABI-encoded.
 ///
 /// The three single-vote variants are here for the evidence channel
-/// ([`crate::slasher::gossip`]), which verifies one peer-forwarded vote at a
-/// time. Their inner fields are public, so they need no encode round-trip —
-/// that detour exists only because `Conflicting*` keeps its halves private.
+/// ([`crate::slasher::gossip`]), which verifies one peer-forwarded vote at a time;
+/// their inner fields are public, so they need no encode round-trip.
 fn project_activity_to_vote<D>(
     activity: &Activity<Scheme, D>,
 ) -> Result<Activity<VoteScheme, D>, Error>
@@ -632,9 +595,8 @@ where
             round: n.round,
             attestation: vote_attestation(&n.attestation)?,
         })),
-        // A certificate variant carries an aggregated bitmap, not an
-        // attributable single-signer attestation, so it has no vote-only
-        // projection.
+        // A certificate variant carries an aggregated bitmap, not an attributable
+        // single-signer attestation, so it has no vote-only projection.
         _ => Err(Error::NonConflictingEvidence),
     }
 }
@@ -729,14 +691,12 @@ mod tests {
     #[test]
     fn from_activity_returns_none_for_non_conflicting_variants() {
         let (ev, _) = build_ev_conflicting_notarize(1);
-        // Conflicting variant — must produce Some
         let conflicting = Activity::<Scheme, Sha256Digest>::ConflictingNotarize(ev);
         assert_eq!(
             SlashKind::from_activity(&conflicting),
             Some(SlashKind::ConflictingNotarize)
         );
 
-        // Non-conflicting Notarize — must produce None
         let (kps, bimap) = small_committee(2, 4);
         let s = build_signer(
             &fluent_namespace(TEST_CHAIN_ID),
@@ -754,8 +714,7 @@ mod tests {
     #[test]
     fn extract_returns_signer_index_out_of_range_for_empty_committee() {
         let (ev, _) = build_ev_conflicting_notarize(1);
-        // Empty BiMap wrapped in an EpochCommittee with the same epoch
-        // as the event (7) so the SignerIndexOutOfRange path is reached.
+        // Same epoch as the event so the `SignerIndexOutOfRange` path is reached.
         let empty_committee = EpochCommittee::from_unverified(7, BiMap::default());
         let err = extract_from_conflicting_notarize(&ev, &empty_committee)
             .expect_err("must reject signer_idx >= empty bimap");
@@ -773,9 +732,8 @@ mod tests {
 
     #[test]
     fn extract_rejects_epoch_mismatch() {
-        // Event has epoch=7 (per `round()` helper); pass an EpochCommittee
-        // with epoch=8 → must short-circuit with EpochMismatch BEFORE the
-        // signer-index lookup is even attempted.
+        // The event is at epoch 7; an epoch-8 committee must short-circuit with
+        // `EpochMismatch` before the signer-index lookup.
         let (ev, bimap) = build_ev_conflicting_notarize(1);
         let wrong_epoch_committee = EpochCommittee::from_unverified(8, bimap);
         let err = extract_from_conflicting_notarize(&ev, &wrong_epoch_committee)
@@ -797,8 +755,6 @@ mod tests {
         let (ev, bimap) = build_ev_conflicting_notarize(1);
         let activity = Activity::<Scheme, Sha256Digest>::ConflictingNotarize(ev);
 
-        // Build a verifier scheme over the same committee so the activity
-        // is verifiable in principle.
         let scheme = fluentbase_bls::scheme::build_verifier(
             &fluent_namespace(TEST_CHAIN_ID),
             bimap,
@@ -807,13 +763,10 @@ mod tests {
         );
         let mut rng = StdRng::seed_from_u64(0xdeadbeef);
 
-        // Sanity: clean activity must verify.
         verify_pre_submit(&activity, &scheme, &mut rng).expect("clean activity must verify");
 
-        // Tamper: re-encode, flip a byte deep inside sig1's 48-byte body,
-        // re-decode. Flipping a body byte (offset 50 = bit 14 of x-coord
-        // in sig1) keeps Read invariants (signer/round unchanged) intact
-        // but fails verification at .get() blst decode or pairing check.
+        // Flip a byte in sig1's body (offset 50): the Read invariants (signer,
+        // round) stay intact but the pairing check fails.
         let bytes = match &activity {
             Activity::ConflictingNotarize(ev) => ev.encode().to_vec(),
             _ => unreachable!(),
@@ -830,10 +783,10 @@ mod tests {
         assert!(matches!(err, Error::InvalidSignature), "got: {err:?}");
     }
 
-    /// Build a SEEDED (beacon-active) `ConflictingNotarize`: the offender signs
-    /// two conflicting proposals at the same round with a combined scheme that
-    /// carries a real threshold seed partial. Mirrors the production beacon-active
-    /// path — `Notarize` votes carry `CombinedSignature{vote, seed: Some(..)}`.
+    /// Build a seeded (beacon-active) `ConflictingNotarize`: the offender signs two
+    /// conflicting proposals at the same round with a combined scheme that carries a
+    /// real threshold seed partial, so `Notarize` votes carry
+    /// `CombinedSignature{vote, seed: Some(..)}`.
     fn build_seeded_ev_conflicting_notarize(
         seed: u64,
     ) -> (
@@ -846,9 +799,8 @@ mod tests {
             deal_anonymous::<MinSig, N3f1>(&mut rng, Default::default(), 4u32.try_into().unwrap());
         let ns = fluent_namespace(TEST_CHAIN_ID);
         let seed_ns = seed_namespace(&ns);
-        // Offender = committee member 0. Its threshold share index must equal its
-        // Simplex Participant index (BiMap slot) — resolve via the signer's
-        // `me()` (CombinedScheme delegates to the VoteScheme).
+        // The threshold share index must equal the offender's Simplex participant
+        // index (its BiMap slot), so resolve it through the signer's `me()`.
         let probe = build_signer(&ns, bimap.clone(), &kps[0], EV_EPOCH, None)
             .expect("offender is a member");
         let me = SchemeTrait::me(&probe).expect("signer carries a Participant index");
@@ -870,18 +822,14 @@ mod tests {
 
     #[test]
     fn vote_only_verify_accepts_seeded_evidence_that_combined_none_verifier_rejects() {
-        // REGRESSION GUARD: on a beacon-active chain the offender's
-        // conflicting Notarize votes carry a seed partial. A rebuilt combined
-        // verifier with `beacon = None` (the only thing recoverable at slash
-        // time — the per-epoch DKG polynomial is gone) WRONGLY rejects them via
-        // the `_ => combined.seed.is_none()` fallback arm. The vote-only verify
-        // path must ACCEPT them by checking just the attributable multisig half.
+        // On a beacon-active chain the offender's votes carry a seed partial. A
+        // rebuilt combined verifier with `beacon = None` (all that is recoverable at
+        // slash time) rejects them; the vote-only path must accept them by checking
+        // just the attributable multisig half.
         let (ev, bimap) = build_seeded_ev_conflicting_notarize(7);
         let activity = Activity::<Scheme, Sha256Digest>::ConflictingNotarize(ev);
         let mut rng = StdRng::seed_from_u64(0xabcd);
 
-        // 1. The rebuilt combined verifier (beacon = None) rejects the seeded
-        //    evidence — the exact bug this fix routes around.
         let combined_none = fluentbase_bls::scheme::build_verifier(
             &fluent_namespace(TEST_CHAIN_ID),
             bimap.clone(),
@@ -893,8 +841,6 @@ mod tests {
             "combined verifier with beacon=None must reject seeded evidence (the regression)"
         );
 
-        // 2. The vote-only verifier accepts it — checks the attributable vote
-        //    half against the committee bimap, no polynomial needed.
         let vote_scheme = VoteScheme::verifier(&fluent_namespace(TEST_CHAIN_ID), bimap);
         verify_pre_submit_vote_only(&activity, &vote_scheme, &mut rng)
             .expect("vote-only verify must accept seeded equivocation evidence");
@@ -902,18 +848,17 @@ mod tests {
 
     #[test]
     fn vote_only_verify_rejects_tampered_seeded_evidence() {
-        // The vote-only path must still reject a corrupted vote-half signature
-        // (it is a real crypto check, not a structural rubber-stamp).
+        // The vote-only path must still reject a corrupted vote-half signature: it
+        // is a real crypto check, not a structural rubber-stamp.
         let (ev, bimap) = build_seeded_ev_conflicting_notarize(11);
         let activity = Activity::<Scheme, Sha256Digest>::ConflictingNotarize(ev);
         let mut rng = StdRng::seed_from_u64(0x1234);
         let vote_scheme = VoteScheme::verifier(&fluent_namespace(TEST_CHAIN_ID), bimap.clone());
 
-        // Sanity: clean seeded evidence verifies vote-only.
         verify_pre_submit_vote_only(&activity, &vote_scheme, &mut rng)
             .expect("clean seeded evidence must verify vote-only");
 
-        // Tamper a byte deep in sig1's 48-byte vote body, re-decode, re-verify.
+        // Tamper a byte in sig1's vote body, then re-decode and re-verify.
         let bytes = match &activity {
             Activity::ConflictingNotarize(ev) => ev.encode().to_vec(),
             _ => unreachable!(),
@@ -931,18 +876,12 @@ mod tests {
 
     #[test]
     fn extract_returns_signer_index_out_of_range_for_short_committee() {
-        // `build_ev_conflicting_notarize(1)` (= committee seed 1, OFFENDER=0)
-        // is the same recipe as `equivocation_evidence_conformance.rs`'s
-        // `committee(1)` + `OFFENDER=0`. Its EXPECTED corpus pins
-        // `signer_idx = 3` (BiMap-sorted, see conformance pin EXPECTED).
+        // `build_ev_conflicting_notarize(1)` sorts the offender to `signer_idx = 3`.
         let (ev, _) = build_ev_conflicting_notarize(1);
 
-        // 2-validator bimap → signer_idx=3 is unconditionally out of range.
-        // Peer-key identity doesn't matter for the lookup; only `signer_idx
-        // < bimap.len()`. Different seed (99) keeps the test independent
-        // of the offender's actual public key. Epoch is set to 7 to match
-        // the event so the SignerIndexOutOfRange path is reached (not the
-        // EpochMismatch short-circuit).
+        // A 2-member bimap puts signer_idx=3 out of range regardless of peer keys.
+        // The epoch matches the event so the lookup path is reached, not the epoch
+        // short-circuit.
         let (_, short_bimap) = small_committee(99, 2);
         let short_committee = EpochCommittee::from_unverified(7, short_bimap);
 
@@ -960,9 +899,9 @@ mod tests {
         );
     }
 
-    /// A block-charge fixture over the block digest type the OrderBlock carries
-    /// (the tests above use a Sha256 digest, which `verify_block_charge` does not
-    /// accept — it decodes the concrete `Activity` a real block holds).
+    /// A block-charge fixture over the block digest type the `OrderBlock` carries;
+    /// the tests above use a Sha256 digest, which `verify_block_charge` does not
+    /// accept.
     fn block_charge(
         seed: u64,
     ) -> (
@@ -1060,7 +999,7 @@ mod tests {
         );
 
         // A lone vote is well-formed and correctly signed, but it is not evidence
-        // of anything — nobody may be convicted on it.
+        // of anything.
         let (kps, plain_bimap) = small_committee(13, 4);
         let signer = build_signer(
             &fluent_namespace(TEST_CHAIN_ID),
@@ -1086,9 +1025,8 @@ mod tests {
             ChargeError::NotAttributable
         );
 
-        // The epoch invariant: only the committee of a charge's own epoch can
-        // verify it, so a charge from any other epoch is refused outright rather
-        // than checked against a committee that cannot describe its signer.
+        // Only the committee of a charge's own epoch can verify it, so a charge from
+        // any other epoch is refused outright.
         assert_eq!(
             check(&bytes, accused, epoch + 1, TEST_CHAIN_ID),
             ChargeError::EpochMismatch {

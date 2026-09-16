@@ -1,11 +1,11 @@
 //! Deriver-side beacon helpers: decode the epoch threshold material, and turn a
 //! recovered seed into the EVM `prev_randao` (gated against `PK_epoch`).
 //!
-//! The seed CRYPTO (round-keyed sign / recover / verify-partial) lives in
+//! The seed crypto (round-keyed sign / recover / verify-partial) lives in
 //! [`fluentbase_bls::beacon`] — the combined consensus scheme recovers the seed
 //! from the notarization/finalization certificate. This module defines the
-//! per-height [`Seed`] wire type, the EVM-facing pieces (it owns the alloy
-//! types) and the key loaders.
+//! per-height [`Seed`] wire type, the EVM-facing pieces (it owns the alloy types)
+//! and the key loaders.
 
 use alloy_primitives::{keccak256, B256};
 use bytes::{Buf, BufMut};
@@ -74,14 +74,12 @@ pub fn prev_randao_from_seed(seed: &Seed) -> B256 {
     keccak256(seed.signature.encode())
 }
 
-// ── The seedless arm's base ───────────────────────────────────────────────────
-//
-// The leader elector falls back to these where a round's certificate carries no
-// threshold seed (view 1 of an epoch, nullify-justified views). They live HERE,
-// not beside the elector, because choosing what stands in for randomness is a
-// randomness decision: an implementation that computes the seed from a hash
-// substitutes its own base with it, and the consensus core reads both only as
-// opaque 32-byte values.
+// The seedless arm's base: the leader elector falls back to these where a round's
+// certificate carries no threshold seed (view 1 of an epoch, nullify-justified
+// views). They live here, not beside the elector, because choosing what stands in
+// for randomness is a randomness decision: an implementation that computes the seed
+// from a hash substitutes its own base with it, and the consensus core reads both
+// only as opaque 32-byte values.
 
 /// Last-resort base for the seedless arm: `sha256(epoch_be ‖ sorted peer
 /// pubkeys)`, derivable from constants and therefore predictable an epoch ahead.
@@ -106,12 +104,11 @@ pub fn constant_fallback_seed(snap: &ValidatorSetSnapshot) -> [u8; 32] {
 }
 
 /// Compress the previous epoch's terminal-round seed into the seedless arm's base.
-/// Deliberately NOT [`prev_randao_from_seed`]: that value is a header field, and
-/// D6 requires the leader draw to stay disjoint from it.
+/// Deliberately not [`prev_randao_from_seed`]: that value is a header field, and the
+/// leader draw must stay disjoint from it.
 ///
-/// The name still says "witness" for the σ it once read off the terminal block's
-/// `parent_seed`; since FLU-1204 the same σ comes from the store pin at that
-/// block's own round. Same value, same round — a different way of holding it.
+/// The σ comes from the store pin at that block's own round; the name still says
+/// "witness" for the block field it once read.
 pub fn witness_fallback_seed(seed: &Seed) -> [u8; 32] {
     let mut h = Sha256::new();
     h.update(seed.signature.encode().as_ref());

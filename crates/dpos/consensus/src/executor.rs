@@ -1,51 +1,44 @@
 //! Executor: drives the reth EL from ordering-finalized [`OrderBlock`]s —
-//! derive → execute (import via `new_payload`) → two-tier FCU.
+//! derive, execute (`new_payload`), then a two-tier forkchoice update.
 //!
-//! Three-tier forkchoice: `head` follows the locally derived (speculative)
-//! executed tip; `safe` rides the BFT ORDERING-finalized tip (~0 lag,
-//! content-immutable the moment it is finalized); `finalized` follows RESULT
-//! finality = `ordering_finalized − K` (clamped to the cold-start anchor), i.e.
-//! the height whose derived hash the committee has attested by agreeing the
-//! OrderBlock K heights above it. Invariant `finalized ⊆ safe ⊆ head` holds at
-//! every FCU (result-final ⊆ ordering-final ⊆ speculative tip, one chain).
+//! Three-tier forkchoice: `head` follows the locally derived speculative tip;
+//! `safe` rides the ordering-finalized tip, content-immutable the moment it is
+//! finalized; `finalized` follows result finality `ordering_finalized − K`,
+//! clamped to the cold-start anchor — the height whose derived hash the
+//! committee attested by agreeing the OrderBlock K heights above it. The
+//! invariant `finalized ⊆ safe ⊆ head` holds at every update.
 //!
-//! Derive pipeline: the beacon seed for height `h` is σ of `h`'s OWN agreed
-//! round — `Round(epoch(h), h.proposal_view)` — read from the local seed store,
-//! so `h` derives at ITS OWN delivery and no block carries another block's
-//! randomness. The resolution is PREDICATE FIRST: `mandatory_at(epoch(h))`
-//! decides before the store is consulted, so a σ filed at a round the agreed
-//! epoch map calls beacon-INACTIVE is ignored (and counted), never obeyed —
-//! ignoring derives exactly what the rest of the network derives, where halting
-//! would turn one bad journal record into an outage. A MISS on a beacon-active
-//! round HOLDS the block in [`Actor::awaiting_seed`]; the only exit is "σ
-//! arrived" (the seed-record notify), never a timer and never the
-//! `order.digest()` fallback — deriving with the fallback on a beacon-active
-//! link re-rolls `prev_randao` and forks.
-//! No park, no re-poke, no by-height re-fetch, no timer; the executor never
-//! reads a certificate on the derive path.
+//! Derive pipeline: the beacon seed for height `h` is σ of `h`'s own agreed
+//! round, `Round(epoch(h), h.proposal_view)`, read from the local seed store,
+//! so no block carries another block's randomness. Resolution is predicate
+//! first: `mandatory_at(epoch(h))` decides before the store is consulted, so a
+//! σ filed at a round the agreed epoch map calls beacon-inactive is ignored and
+//! counted, never obeyed — ignoring derives what the rest of the network
+//! derives, where halting would turn one bad journal record into an outage. A
+//! miss on a beacon-active round holds the block in [`Actor::awaiting_seed`],
+//! whose only exit is the seed-record notify — never a timer and never the
+//! `order.digest()` fallback, which re-rolls `prev_randao` and forks. The derive
+//! path never parks, re-pokes, re-fetches by height, or reads a certificate.
 //!
-//! Ack flow: the marshal's `Exact` ack fires only after derive + import, so
-//! marshal backpressure (MAX_PENDING_ACKS) IS execution backpressure.
+//! Ack flow: the marshal's `Exact` ack fires only after derive and import, so
+//! marshal backpressure (`MAX_PENDING_ACKS`) is execution backpressure.
 //!
-//! Ack invariant (normative): the executor NEVER acknowledges a block it has not
-//! derived, and NEVER drops an `Exact` while the marshal is alive — a dropped
-//! `Exact` cancels, and the marshal treats a Canceled ack as fatal (its `run`
-//! returns), killing the component that serves blocks + certs to peers. Every
-//! ack is therefore (a) acknowledged after derive+import, (b) held in
-//! [`Actor::awaiting_seed`] until σ arrives, (c) parked with a
-//! deferred block (guard #2's absent `h+K` body — the only park), or (d)
-//! RETAINED un-resolved forever by [`Actor::park_halted`] when a Phase-3
-//! `SafetyHalt` engages — the halt posture is "stop participating, stay
-//! observable", so progress stops (the marshal's `last_processed_height`
-//! freezes) while the marshal keeps serving peers. The sole path that disposes a
-//! parked/held ack differently is `reseed_forward`, which `acknowledge()`s it
-//! because the floor MOVES past the parked height (pruned, not skipped). At
-//! SHUTDOWN the held ack is dropped DELIBERATELY: the executor and the marshal
-//! die together at the runtime drop (a dropped task is never polled again, so
-//! the marshal's fatal ack arm cannot observe the cancellation), and the
-//! withheld ack IS the restart self-heal — `last_processed_height` advances
-//! only on `Ok`, so the restarted marshal re-dispatches the held height and it
-//! derives on the next run. Acking it at shutdown would durably skip it forever.
+//! The executor never acknowledges a block it has not derived, and never drops
+//! an `Exact` while the marshal is alive: a dropped `Exact` cancels, and the
+//! marshal treats a canceled ack as fatal, killing the component that serves
+//! blocks and certs to peers. An ack is therefore (a) acknowledged after derive
+//! and import, (b) held in [`Actor::awaiting_seed`] until σ arrives, (c) parked
+//! with a deferred block (an absent `h+K` body is the only park), or (d)
+//! retained unresolved by [`Actor::park_halted`] when a `SafetyHalt`
+//! engages — the halt posture stops progress while the marshal keeps serving
+//! peers. `reseed_forward` is the only path that disposes a parked or held ack
+//! differently, acknowledging it because the floor moves past the parked height
+//! (pruned, not skipped). At shutdown the held ack is dropped deliberately: the
+//! executor and the marshal die together at the runtime drop, so the marshal's
+//! fatal ack arm cannot observe the cancellation, and the withheld ack is the
+//! restart self-heal — `last_processed_height` advances only on `Ok`, so the
+//! restarted marshal re-dispatches the held height to derive on the next run.
+//! Acknowledging it at shutdown would durably skip it forever.
 
 use crate::digest::Digest;
 use crate::{
@@ -85,20 +78,13 @@ use std::{
 use tokio::{select, sync::broadcast, sync::mpsc};
 use tracing::{debug, error, error_span, info, info_span, instrument, warn, Level, Span};
 
-/// Pacing of an execution-layer call (`fork_choice_updated`, `import_derived`).
-///
-/// Production runs under commonware's tokio runtime, whose `Pacer::pace`
-/// returns the future unchanged (`runtime/src/tokio/runtime.rs:773-785`;
-/// `Cell<C>` only delegates, `runtime/src/utils/cell.rs:191-201`), so the
-/// `fcu_pace` latency has never delayed an EL call on a node. The deterministic
-/// implementation — a `Waiter` that blocks the OS thread until the future is
-/// ready — was reachable only through the runtime's `external` feature, which
-/// this crate no longer enables: under it the deterministic runtime sleeps a
-/// real millisecond per cycle and never skips idle time, which pins every test
-/// in the crate to wall-clock time. This local extension keeps the call sites
-/// and the `fcu_pace` knob in place with the production (tokio) semantics.
+/// Pacing seam for execution-layer calls (`fork_choice_updated`, `import_derived`).
+/// `commonware_runtime::Pacer::pace` is a no-op under the tokio runtime; the
+/// deterministic `Pacer` blocks the OS thread and sits behind the runtime's
+/// `external` feature, which makes that runtime sleep real time and pins every test
+/// to the wall clock. The seam keeps the `fcu_pace` call sites and knob in place.
 trait PaceElCall: std::future::Future + Sized {
-    /// Run the call immediately; `expected_latency` is documentation only.
+    /// Runs the call immediately; `expected_latency` is documentation only.
     fn pace_el_call(self, _expected_latency: Duration) -> Self {
         self
     }
@@ -106,54 +92,45 @@ trait PaceElCall: std::future::Future + Sized {
 
 impl<F: std::future::Future> PaceElCall for F {}
 
-/// One executor command paired with its tracing span (preserves the causal
-/// `parent` for `#[instrument]`).
+/// An executor command paired with its tracing span, preserving the causal
+/// `parent` for `#[instrument]`.
 pub struct Message {
     pub cause: Span,
     pub command: Command,
 }
 
 pub enum Command {
-    /// Derive + import a finalized ordering artifact (`Update::Block`) or
-    /// refresh the catch-up target (`Update::Tip`).
+    /// Derive and import a finalized ordering artifact, or refresh the catch-up
+    /// target.
     Finalize(Box<Update<OrderBlock>>),
-    /// A block was NOTARIZED (round-1 quorum) — speculatively derive + import
-    /// it now, ahead of finalization, to hide execution latency under the
-    /// finalization rounds. Best-effort: `try_derive` (finalized path) stays the sole
-    /// authority and reconciles (skip-if-matched / re-derive + reorg). Boxed to
-    /// keep the enum small (mirrors `Finalize`).
+    /// Speculatively derive and import a just-notarized block ahead of finalization,
+    /// to hide execution latency under the finalization rounds. Best-effort:
+    /// `try_derive` stays the sole authority and reconciles a mismatch (reuse or
+    /// re-derive + reorg). Boxed to keep the enum small.
     SpecNotarized(Box<Notarized>),
 }
 
-/// Payload of [`Command::SpecNotarized`]: the ordering digest + the seed
-/// recovered from the Notarization certificate (the round rides in
-/// `seed.target_round`). The block body is fetched from the marshal by digest
-/// at execution time.
+/// Payload of [`Command::SpecNotarized`]: the ordering digest and the seed
+/// recovered from the notarization certificate (the round rides in
+/// `seed.target_round`); the body is fetched from the marshal by digest at
+/// execution time.
 pub struct Notarized {
     pub digest: crate::digest::Digest,
     pub seed: Option<crate::beacon::Seed>,
 }
 
-/// Value stored per speculatively-executed height in [`Actor::spec_executed`]:
-/// the notarized ordering DIGEST, the ROUND of the seed the speculation was
-/// derived with (`None` on a no-beacon, seed-independent height), and the EVM
-/// hash of the PARENT the block was speculatively executed against. The
-/// finalized-path reconcile ([`Actor::try_derive`]'s `correctly_speculated`)
-/// keeps the speculation only when ALL THREE match the finalized fork — same
-/// ordering block, same seed round, AND parent-linked to the block that is
-/// canonical at `height − 1` NOW. After the §4.1 re-canonicalisation the round
-/// sides are `Round::new(Ep, block.proposal_view)` — a pure function of the same
-/// agreed block — so a digest match with a DIFFERENT round is an ANOMALY, not
-/// routine churn: it is counted (`dpos_spec_round_mismatch_total`, expected 0)
-/// and the block re-derives from σ of its own round (the agreed value). The digest half
-/// stays a real branch (a speculated sibling that lost to a nullify/re-propose).
-/// The `parent_hash` half guards the deep-speculation reorg: a head rollback at
-/// `height − 1` re-derives the parent to a DIFFERENT hash, so a speculated block
-/// still present at `height` was executed against a now-orphaned parent (wrong
-/// pre-state) and MUST re-derive — the same fork-safety family as the spec-seed-
-/// blind divergence. (Rollback also proactively invalidates the suffix; this
-/// check is the belt-and-suspenders that also catches a stale parent with no
-/// rollback event.)
+/// Value stored per speculatively-executed height in `Actor::spec_executed`: the
+/// notarized ordering digest, the round of the seed the speculation used (`None`
+/// on a seed-independent height), and the EVM hash of the parent it executed
+/// against. `try_derive` keeps the speculation only when all three match the
+/// finalized fork: same ordering block, same seed round, and parent-linked to the
+/// block canonical at `height − 1` now.
+///
+/// A digest match with a different round is an anomaly, not routine churn — both
+/// sides are `Round(Ep, block.proposal_view)` — and re-derives from σ of its own
+/// round. The parent hash catches a head rollback at `height − 1` that re-derived
+/// the parent to a different hash: such a block was executed against an orphaned
+/// parent (wrong pre-state) and must re-derive.
 #[derive(Clone)]
 struct SpecExecuted {
     digest: crate::digest::Digest,
@@ -161,29 +138,15 @@ struct SpecExecuted {
     parent_hash: B256,
 }
 
-/// What caused a [`Actor::try_eager_finalized_derive`] attempt — used only to
-/// pick the metric label so the record-vs-delivery race stays observable.
+/// Why a `try_eager_finalized_derive` attempt was made — it only selects the
+/// metric label, so the record-vs-delivery race stays observable.
 ///
-/// - `Delivery`: the attempt made when the block is delivered/held (the normal
-///   record-lag closer). A miss here is the transient race and is counted
-///   (`outcome="miss"`); a hit is `outcome="hit"`.
-/// - `Notified`: an event-driven re-attempt fired by the executor's wake-up
-///   `select!` arm ([`Beacon::subscribe`](crate::beacon::Beacon::subscribe)) when
-///   a block is still held and a seed was just recorded (the seed for its round
-///   may have JUST landed). A hit here is counted `outcome="recovered"` — the race
-///   fired and self-healed WITHOUT a further finalized delivery (the
-///   deadlock-breaker, since finality only advances via new blocks). A miss is a
-///   silent no-op.
-///
-///   WHAT MAKES THE RE-ATTEMPT CORRECT IS NO LONGER A STORED PERMIT. It used to
-///   be: the arm waited on a `notify_one`, which holds one permit even with no
-///   waiter parked, so a record racing the miss could not be lost. The stream is
-///   a `broadcast` now, and a broadcast DROPS a send that has no receiver — so the
-///   property rests entirely on `subscribe()` being taken before this actor's
-///   first seed read (`Actor::run`, ahead of the loop). Move that subscription
-///   into the loop, or behind an `awaiting_seed.is_some()` guard, and a σ landing
-///   in the window is gone for good: the held height never derives and the marshal
-///   ack is held forever.
+/// `Delivery` is the attempt made when the block is delivered or held (the normal
+/// record-lag closer): a miss is the transient race (`outcome="miss"`), a hit
+/// `outcome="hit"`. `Notified` is the event-driven re-attempt fired when a block
+/// is still held and a seed was just recorded; a hit is `outcome="recovered"` —
+/// the race healed without a further finalized delivery, which matters because
+/// finality only advances via new blocks. A miss is a silent no-op.
 #[derive(Clone, Copy)]
 enum EagerTrigger {
     Delivery,
@@ -196,17 +159,16 @@ enum EagerTrigger {
 enum SeedWake {
     /// Re-run the eager finalized derive of the held tip.
     Derive,
-    /// A wake-up for ANOTHER consumer: no derive, stay armed.
+    /// A wake-up for another consumer: no derive, stay armed.
     Ignore,
-    /// The beacon's sender is gone. A closed `broadcast` receiver returns
-    /// `Closed` IMMEDIATELY and forever, so an armed arm would spin without ever
-    /// awaiting while a tip is HELD. The arm disarms itself instead — the park
-    /// the `Notify` shape had for free, since it also held its own sender.
+    /// The beacon's sender is gone. A closed `broadcast` receiver returns `Closed`
+    /// immediately and forever, so an armed arm would spin while a tip is held; the
+    /// arm disarms itself instead.
     Disarm,
 }
 
-/// The wake-up arm's whole classification, out of line so it can be pinned by a
-/// test: the spin this closes is only observable through a live `select!`.
+/// The wake-up arm's whole classification, out of line so a test can pin it: the
+/// spin it closes is only observable through a live `select!`.
 fn classify_seed_wake(
     event: &Result<crate::beacon::BeaconEvent, broadcast::error::RecvError>,
 ) -> SeedWake {
@@ -221,18 +183,16 @@ fn classify_seed_wake(
     }
 }
 
-/// A notarized speculative block PARKED (rather than dropped) because it arrived
-/// ahead of `spec_head` (a gap) or before its parent had executed. Holds exactly
-/// the data [`Command::SpecNotarized`] carries so [`Actor::try_drain_parked`] can
-/// re-drive [`Actor::spec_execute`] verbatim once `spec_head` catches up.
+/// A notarized speculative block parked (not dropped) because it arrived ahead of
+/// `spec_head` (a gap) or before its parent had executed. Holds exactly the data
+/// [`Command::SpecNotarized`] carries so [`Actor::try_drain_parked`] can re-drive
+/// [`Actor::spec_execute`] once `spec_head` catches up.
 ///
-/// Parking restores the speculation invariant: once the executor falls behind
-/// (e.g. after a sibling-nullification rollback) an incoming notarization for a
-/// height beyond `spec_head + 1` would otherwise be dropped forever, and
-/// speculation would stay dead until finalization independently caught the tip
-/// up — the death spiral. Overwrite-by-height is deliberate: a later-view sibling
-/// notarization at the same height replaces the earlier guess (a wrong guess is
-/// safe — `correctly_speculated` reconciles it at finalization).
+/// Without the park, a notarization beyond `spec_head + 1` would be dropped
+/// forever after the executor falls behind, and speculation would stay dead until
+/// finalization caught the tip up. Overwrite-by-height is deliberate: a later-view
+/// sibling replaces the earlier guess, and a wrong guess is reconciled at
+/// finalization.
 #[derive(Clone)]
 struct ParkedSpec {
     digest: crate::digest::Digest,
@@ -249,14 +209,14 @@ impl Mailbox {
         Self { tx }
     }
 
-    /// Test-only constructor used by `application.rs` unit tests to inject a
-    /// drain-only mailbox without spawning a real executor.
+    /// Builds a drain-only mailbox for tests that need one without spawning an
+    /// executor.
     #[cfg(test)]
     pub(crate) fn new_for_test(tx: mpsc::UnboundedSender<Message>) -> Self {
         Self { tx }
     }
 
-    /// Sync send — `tokio::sync::mpsc::UnboundedSender::send` never blocks.
+    /// Sync send; `UnboundedSender::send` never blocks.
     // SendError<Message> carries the rejected message verbatim so the
     // caller can retry; boxing solely to silence the lint would add an
     // alloc on the hot path.
@@ -266,25 +226,21 @@ impl Mailbox {
     }
 }
 
-// LastCanonicalized — monotonic projection of forkchoice state.
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct LastCanonicalized {
     forkchoice: ForkchoiceState,
     head_height: Height,
-    /// Ordering-final tier (the BFT cert tip): the engine-API `safe` tag. Its
-    /// OWN monotone guard, distinct from `finalized_height` — `safe` rides the
-    /// just-finalized ordering tip (~0 lag) while `finalized` lags by K (the
-    /// committee-attested result). Invariant: `finalized ⊆ safe ⊆ head`.
+    /// Ordering-final tier (the BFT cert tip): the engine-API `safe` tag. Distinct
+    /// from `finalized_height`, which lags by K (the committee-attested result);
+    /// invariant `finalized ⊆ safe ⊆ head`.
     safe_height: Height,
     finalized_height: Height,
 }
 
 impl LastCanonicalized {
-    /// Result-final tier (committee-attested execution, `ordering − K`). Sets
-    /// ONLY `finalized` — `safe` is the ordering-final tier, advanced by
-    /// `update_safe`. The `head >=` clause is kept so a finalized delivery with
-    /// no speculative lead still pushes `head` (mirrors `update_safe`).
+    /// Result-final tier (committee-attested execution, `ordering − K`). Sets only
+    /// `finalized`; the `head >=` clause pushes `head` so a finalized delivery with
+    /// no speculative lead still advances it.
     fn update_finalized(mut self, height: Height, hash: B256) -> Self {
         if height > self.finalized_height {
             self.finalized_height = height;
@@ -299,26 +255,18 @@ impl LastCanonicalized {
 
     /// Ordering-final tier (the BFT cert tip) → the engine-API `safe` tag.
     ///
-    /// Guard is `height >= self.safe_height` (NOT strict `>`), mirroring
-    /// `update_head`'s finalized-fork allow: monotone in HEIGHT (never rolls
-    /// backward) but lets the HASH FOLLOW a same-height re-finalization. A
-    /// same-height sibling reorg (`height == safe_height`) re-pins `safe` to
-    /// the freshly-finalized canonical hash the caller passes; a strict `>`
-    /// would pin `safe` to an orphaned sibling after `head` reorgs away from it
-    /// → `safe ⊄ head` → reth `-38002` (or a silent orphan-`safe`). Do NOT
-    /// tighten to `>`.
+    /// The guard is `height >= self.safe_height` (not strict `>`): monotone in
+    /// height but lets the hash follow a same-height re-finalization. A strict `>`
+    /// would leave `safe` on an orphaned sibling after `head` reorgs away from it,
+    /// giving `safe ⊄ head` and reth `-38002`. Do not tighten to `>`.
     ///
-    /// A `height < safe_height` delivery is a NO-OP, and this is LEGITIMATE (not
-    /// asserted against): a deep-catch-up follower's `init` seeds `safe_height`
-    /// at the cold-start anchor (the live frontier), then the executor derives
-    /// the K blocks BELOW that anchor (marshal floor = `anchor − K`). Those
-    /// below-anchor finalized deliveries call `update_safe` with a height below
-    /// the seeded `safe_height`; the no-op keeps `safe` at the anchor (it must
-    /// not roll back below where the node trust-anchored).
+    /// A `height < safe_height` delivery is a legitimate no-op: a deep-catch-up
+    /// follower seeds `safe_height` at the cold-start anchor and then derives the K
+    /// blocks below it, and those deliveries must not roll `safe` back below where
+    /// the node trust-anchored.
     ///
-    /// Touches ONLY `safe_*`: `head` is owned by `update_finalized`'s head
-    /// clause + `update_head`, so there is no `update_safe`-vs-`update_head`
-    /// head-write interaction in the rollback path (D1/D13).
+    /// Touches only `safe_*`; `head` is owned by `update_finalized` and
+    /// `update_head`.
     fn update_safe(mut self, height: Height, hash: B256) -> Self {
         if height >= self.safe_height {
             self.safe_height = height;
@@ -328,9 +276,8 @@ impl LastCanonicalized {
     }
 
     fn update_head(mut self, height: Height, hash: B256) -> Self {
-        // A lower-height head on the finalized fork (a legitimate reorg of an
-        // unfinalized tail — e.g. the migration cold-start where reth's head
-        // sits on an orphaned tail) MUST be allowed to roll the head back.
+        // A lower-height head on the finalized fork (a reorg of an unfinalized
+        // tail) is allowed to roll the head back.
         if height > self.finalized_height || hash == self.forkchoice.finalized_block_hash {
             self.head_height = height;
             self.forkchoice.head_block_hash = hash;
@@ -339,7 +286,7 @@ impl LastCanonicalized {
     }
 }
 
-// BlockFetcher — minimal trait so we don't depend on the full marshal Mailbox type.
+// Minimal trait so the executor does not depend on the concrete marshal mailbox.
 
 pub trait BlockFetcher: Clone + Send + Sync + 'static {
     fn fetch_block_by_height(
@@ -347,57 +294,46 @@ pub trait BlockFetcher: Clone + Send + Sync + 'static {
         height: Height,
     ) -> impl std::future::Future<Output = Option<OrderBlock>> + Send;
 
-    /// Best-effort LOCAL lookup of a block by its ordering digest. Used by the
-    /// speculative path: at notarization the body is in the marshal buffer (we
-    /// voted on it), so a `None` simply means "not local yet" → skip
-    /// speculation (the finalized path will derive it).
+    /// Best-effort local lookup of a block by its ordering digest. A `None` means
+    /// "not local yet", so the speculative path skips and the finalized path derives
+    /// it.
     fn fetch_block_by_digest(
         &self,
         digest: crate::digest::Digest,
     ) -> impl std::future::Future<Output = Option<OrderBlock>> + Send;
 
-    /// LOCAL read of the `(finalization, block)` pair the marshal archived at
-    /// `height`, or `None` on an archive miss. No network, no verification, and
-    /// none needed: the only writer of that archive is `store_finalization` AFTER
-    /// `verify_delivered` (CW `marshal/core/actor.rs:1404-1463`), so what comes
-    /// back is already committee-authenticated — which is what makes it usable as
-    /// a jump TARGET (§5.2).
+    /// Local read of the `(finalization, block)` pair archived at `height`, or
+    /// `None` on an archive miss. The archive is written only after
+    /// `verify_delivered`, so a hit is already committee-authenticated and usable
+    /// as a jump target.
     ///
-    /// On the trait rather than on the concrete mailbox because the target is read
-    /// through it (`maybe_re_jump`), and the unit tests drive that path through
-    /// [`FakeMarshal`]. Separate from [`Self::fetch_block_by_height`] rather than
-    /// composed out of it: the two answer different questions (a body for derive
-    /// vs an attested pair for the jump) and a test that counts one must not see
-    /// the other.
+    /// Separate from [`Self::fetch_block_by_height`]: one returns a body for
+    /// derive, the other an attested pair for the jump.
     fn pair_at(
         &self,
         height: Height,
     ) -> impl std::future::Future<Output = Option<(Finalization<BlsScheme, Digest>, OrderBlock)>> + Send;
 
-    /// Ask peers for the finalization at `height` (fills `finalizations_by_height`
-    /// durably). Fire-and-forget; the marshal skips it if already local.
+    /// Ask peers for the finalization at `height`. Fire-and-forget; the marshal skips
+    /// it when already local.
     fn hint_finalization(
         &self,
         height: Height,
         targets: NonEmptyVec<PeerPubkey>,
     ) -> impl std::future::Future<Output = ()> + Send;
 
-    /// Advance the RUNNING marshal's in-order dispatch floor to `height` (prunes
-    /// below + resumes contiguous dispatch from `floor + 1`). Raises-only.
-    /// Threaded onto the trait seam (the concrete `Mailbox::set_floor` lives on
-    /// the marshal mailbox) so the steady-state re-jump can re-seed a running
-    /// marshal and the test [`FakeMarshal`] can record the call.
+    /// Advance the running marshal's in-order dispatch floor to `height`, resuming
+    /// contiguous dispatch from `floor + 1`. Raises-only.
     fn set_floor(&self, height: Height) -> impl std::future::Future<Output = ()> + Send;
 
-    /// Store an already-authenticated finalization+block through the sanctioned
+    /// Store an already-authenticated finalization and block through the marshal's
     /// inlet ingress (`verified`, then `report(Finalization)`).
     ///
-    /// Exists so a caller can seed an entry BEFORE raising the floor past it. The
-    /// ordering is the caller's responsibility and it is load-bearing: these two
-    /// messages and [`Self::set_floor`] share one mailbox that the marshal drains a
+    /// Exists so a caller can seed an entry before raising the floor past it, and that
+    /// order is load-bearing: this and [`Self::set_floor`] share one mailbox drained a
     /// message per loop turn, and the below-floor write gate is evaluated at
-    /// message-processing time — so a store enqueued first lands and stays readable
-    /// forever, while one enqueued after `set_floor` is dropped.
+    /// message-processing time, so a store enqueued first stays readable while one
+    /// enqueued after `set_floor` is dropped.
     fn store_verified_finalization(
         &self,
         round: Round,
@@ -406,8 +342,8 @@ pub trait BlockFetcher: Clone + Send + Sync + 'static {
     ) -> impl std::future::Future<Output = ()> + Send;
 }
 
-/// Explicit impl for the concrete marshal mailbox.
-/// Orphan rule OK — BlockFetcher local, Mailbox foreign.
+/// Concrete marshal mailbox impl; the orphan rule allows it because `BlockFetcher`
+/// is local and the mailbox foreign.
 impl BlockFetcher
     for commonware_consensus::marshal::core::Mailbox<
         fluentbase_bls::Scheme,
@@ -426,14 +362,9 @@ impl BlockFetcher
         &self,
         height: Height,
     ) -> Option<(Finalization<BlsScheme, Digest>, OrderBlock)> {
-        // ONE body for this concrete mailbox, not two (review B1-15): the same
-        // question already has an implementation on the same type under
-        // `FrontierMarshal`, which is what `plane_upstream::serve` answers a
-        // `Finalized{h}` fetch from. The two traits exist for different reasons —
-        // this one is the executor's erased seam, that one is the frontier
-        // producer's — but the read is identical, and duplicating it is how the
-        // `Identifier::Latest` trap it avoids (a block finalizing between the two
-        // awaits pairs `fin@h` with `block@h+1`) would get fixed in one copy only.
+        // Delegate rather than duplicate: `FrontierMarshal` already answers this for
+        // the same type, and the two-await read has a trap (a block finalizing between
+        // the awaits pairs `fin@h` with `block@h+1`) that must stay fixed in one copy.
         crate::plane_upstream::FrontierMarshal::pair_at(self, height).await
     }
 
@@ -457,51 +388,38 @@ impl BlockFetcher
     }
 }
 
-/// Idle cadence of the frozen-tip frontier probe ([`ReJump::probe`]) — the
-/// discovery tick for a node whose marshal tip stopped advancing. One
-/// `get_latest` resolver fetch against one peer, far under the 16/s
-/// frontier-channel quota, and skipped entirely while the tip advances via
-/// consensus or an inlet.
+/// Idle cadence of the frozen-tip frontier probe (`ReJump::probe`): one `get_latest`
+/// resolver fetch against one peer, well under the frontier-channel quota, skipped
+/// while the tip advances via consensus or an inlet.
 const FRONTIER_PROBE_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Fast catch-up cadence: while probes are actively discovering new frontier
-/// heights (a demoted plane-native validator in steady-state live-follow), the
-/// probe re-arms at this interval so the node trails the chain by ~one RTT
-/// rather than a whole idle tick — byte-identical multi-node convergence (and
-/// operator finalized-lag expectations) match the WS-inlet PUSH path only when
-/// the pull loop is this tight. 5/s per node, still well under the 16/s
-/// per-peer quota.
+/// Fast catch-up cadence used while probes are discovering new frontier heights, so
+/// the node trails the chain by about one RTT instead of a whole idle tick. 5/s per
+/// node, well under the per-peer quota.
 const FRONTIER_PROBE_INTERVAL_FAST: Duration = Duration::from_millis(200);
 
-/// How many probe ticks stay fast after the last PRODUCTIVE probe (one that
-/// hinted a new frontier). 15 ticks ≈ 3 s at the fast cadence — enough to
-/// bridge the ~1 blk/s arrival gaps so a continuously-following node never
-/// decays to the idle tick between blocks, while a truly caught-up or wedged
-/// node decays within ~3 s.
+/// Probe ticks that stay fast after the last productive probe (one that hinted a new
+/// frontier): 15 ticks ≈ 3 s at the fast cadence, enough to bridge the ~1 blk/s
+/// arrival gaps so a continuously-following node does not decay to the idle tick
+/// between blocks.
 const FRONTIER_PROBE_FAST_BURST: u8 = 15;
 
-/// Backoff between transient engine-API TRANSPORT retries at the finalize FCU
-/// (#14 self-heal). Short — an RPC/channel blip clears in ms; the durable-stuck
-/// signal is the `dpos_sync_degraded{reason=engine_retry}` gauge, not a crash
-/// (Decision A: never `process::exit` on an external/correlated cause).
+/// Backoff between transient engine-API transport retries at the finalize FCU.
+/// Short, because an RPC/channel blip clears in ms; a durable stall is reported
+/// through `dpos_sync_degraded{reason=engine_retry}` rather than a crash.
 const ENGINE_TRANSPORT_RETRY_BACKOFF: Duration = Duration::from_millis(200);
 
 /// How many times the finalized re-apply loop may re-walk on a still-invisible
-/// parent before it dies loudly. At `ENGINE_TRANSPORT_RETRY_BACKOFF` per
-/// iteration this is the SAME ~10 s budget `derive_with_visibility_retry`
-/// already spends on this exact transient (`application.rs`'s `DEADLINE`),
-/// expressed as a count because the loop's own backoff sets the cadence. The
-/// bound is the point: an unbounded retry here is the silent spin this gate
-/// exists to remove.
+/// parent before it dies loudly. At `ENGINE_TRANSPORT_RETRY_BACKOFF` per iteration
+/// this is a ~10 s budget, and the bound is the point: an unbounded retry here would
+/// spin silently.
 const REAPPLY_PARENT_VISIBILITY_RETRIES: u32 = 50;
 
-/// How many times the finalized-tier postcondition re-reads the EL before an
-/// absent block at a finalized height becomes a corruption verdict. At
-/// `ENGINE_TRANSPORT_RETRY_BACKOFF` per re-read this is the SAME ~10 s budget
-/// `REAPPLY_PARENT_VISIBILITY_RETRIES` spends, for the same reason: a height the
-/// devp2p backfill just landed is by-NUMBER invisible for a moment
-/// (`reseed_forward` leans on a belt for exactly this), and killing a node that
-/// would have healed is the worse error.
+/// How many times the finalized-tier postcondition re-reads the EL before an absent
+/// block at a finalized height becomes a corruption verdict. ~10 s at
+/// `ENGINE_TRANSPORT_RETRY_BACKOFF` per re-read, because a height devp2p just landed
+/// can be invisible for a moment and killing a node that would have healed is the
+/// worse error.
 const FINALIZED_TIER_VISIBILITY_RETRIES: u32 = 50;
 
 /// Returns the current committee's peers to target for a finalization re-fetch,
@@ -510,39 +428,23 @@ const FINALIZED_TIER_VISIBILITY_RETRIES: u32 = 50;
 pub type PeersForFinalization =
     std::sync::Arc<dyn Fn() -> Option<NonEmptyVec<PeerPubkey>> + Send + Sync>;
 
-/// Steady-state self-healing re-jump callback. Invoked from the `Update::Tip`
-/// arm when the marshal tip runs more than [`ReJump::threshold`] finalized
-/// blocks ahead of the highest derived ordering height (the upstream's serving
-/// window is exactly that wide, so beyond it `UpstreamResolver::fetch` returns
-/// nothing forever → the marshal floor freezes → the executor wedges). The
-/// callback runs the SAME forward-only [`crate::cold_start_jump::jump_to_target`]
-/// the cold-start path runs, fast-forwarding reth via one FCU + devp2p backfill.
+/// Steady-state self-healing re-jump callback, invoked from the `Update::Tip` arm
+/// when the marshal tip runs more than `ReJump::threshold` finalized blocks ahead of
+/// the highest derived ordering height: beyond that window the upstream resolver
+/// serves nothing, the marshal floor freezes and the executor wedges. It runs the
+/// same forward-only `cold_start_jump::jump_to_target` as the cold-start path,
+/// fast-forwarding reth with one FCU and devp2p backfill.
 ///
-/// The generics of the underlying jump (committee source / EL-sync) are ERASED
-/// behind this boxed `Fn` so the executor [`Actor`] gains NO new generic params.
-/// The executor SPAWNS the future as a READ-ONLY waiter (the same spawned-fetch
-/// idiom the inlet uses) and reacts to its terminal
-/// [`crate::cold_start_jump::JumpOutcome`] on a `oneshot` `select!` arm — NOT an
-/// in-task poll. The jump's only reth touch is the read-side `sync_to` FCU, which
-/// reth ancestor-skips when backward, so the spawned waiter cannot corrupt the
-/// executor's own forward FCUs.
+/// The jump's generics are erased behind this boxed `Fn` so the executor actor gains
+/// no new generic params. The executor spawns the future as a read-only waiter and
+/// reacts to its terminal `JumpOutcome` on a `oneshot` `select!` arm; the jump's only
+/// reth touch is the read-side `sync_to` FCU, which ancestor-skips when backward, so
+/// it cannot corrupt the executor's own forward FCUs.
 ///
-/// TWO arguments, and the second is the §5.2 change: `from` = the trigger's
-/// `ordering_finalized`, and the TARGET — the `(finalization, block)` pair the
-/// executor read out of its OWN marshal archive at the tip it is triggering on.
-/// The callback no longer asks anybody for a target: the only writer of that
-/// archive is `store_finalization` after `verify_delivered` (CW
-/// `marshal/core/actor.rs:1404-1463`), so the target is already
-/// committee-authenticated before the jump sees it.
-///
-/// It returns the typed terminal [`crate::cold_start_jump::JumpOutcome`] (the
-/// spawn owns the whole backfill wait, so there is no in-progress variant):
-/// `Landed` ⇒ re-seed + advance the running marshal floor; `Lagging` ⇒ no-op;
-/// `Stalled` ⇒ NON-fatal transport stall (re-evaluated on the next
-/// `Update::Tip`); `InvalidTarget` ⇒ the EL did not land on the attested branch.
-/// There is no `BadTarget` / `AuthFailed` any more: the two `verify_jump_*` stages
-/// behind them re-checked what the target already carried, and pass Б2 removed
-/// stages and variants together.
+/// `from` is the trigger's `ordering_finalized`; the target is the
+/// `(finalization, block)` pair read from this node's own marshal archive, whose only
+/// writer is `store_finalization` after `verify_delivered`, so it is already
+/// committee-authenticated.
 pub type ReJumpFn = std::sync::Arc<
     dyn Fn(
             u64,
@@ -552,254 +454,202 @@ pub type ReJumpFn = std::sync::Arc<
         + Sync,
 >;
 
-/// `dpos_frontier_step_unserved_total` — one probe tick where the tip was frozen,
-/// the ladder step `Finalized{last(T+1)}` was REQUESTED, and nobody in
-/// `committee[T+1]` served it inside the fetch bound. §5.4 calls this outcome
-/// "догон вместо прыжка": the node is not stuck, it keeps walking contiguously
-/// from the floor and the next tick asks again.
+/// `dpos_frontier_step_unserved_total` counts one probe tick where the tip was frozen,
+/// the ladder step `Finalized{last(T+1)}` was requested, and nobody in
+/// `committee[T+1]` served it inside the fetch bound. The node is not stuck: it keeps
+/// walking contiguously from the floor and the next tick asks again.
 const FRONTIER_STEP_UNSERVED: &str = "dpos_frontier_step_unserved_total";
 
-/// `dpos_frontier_step_skipped_total{reason}` — one probe tick where the ladder
-/// step was NOT put at all. Either this node cannot NAME `committee[T+1]`
+/// `dpos_frontier_step_skipped_total{reason}` counts one probe tick where the ladder
+/// step was not put at all: either this node cannot name `committee[T+1]`
 /// (`no_tracked_epoch`, `no_geometry`, `out_of_window`, `not_readable`,
-/// `read_failed`, `no_participants`), or the marshal would discard it
+/// `read_failed`, `no_participants`) or the marshal would discard it
 /// (`at_or_below_the_floor`). The probe then asks `Latest` alone.
-///
-/// `above_the_frontier` is GONE (§5.2, review A2-01): the step used to wait for
-/// an unauthenticated `Latest` height to witness that the network had produced
-/// `last(T+1)`, and that witness went with the unauthenticated trigger input it
-/// shared. A step nobody has costs one unanswered fetch, which §5.4 already
-/// calls "догон вместо прыжка".
 pub(crate) const FRONTIER_STEP_SKIPPED: &str = "dpos_frontier_step_skipped_total";
 
-/// What one frontier probe tick produced — one answer and one ADDRESS.
+/// What one frontier probe tick produced: the `Latest` answer and the ladder step to
+/// name.
 ///
-/// The probe does two things per tick (§5.2 "Триггер и лестница"), and only one
-/// of them is a network call here. It ASKS the upstream for `Latest`, whose
-/// height is the hint / re-jump driver. And it NAMES the ladder step —
-/// `Finalized{last(T+1)}` and the committee to address it at — which the
-/// executor then puts on the marshal's own resolver, because that resolver is
-/// the one whose deliveries end in `store_finalization`, the single writer §5.2
-/// names. Naming it here rather than fetching it here is what keeps this file
-/// from becoming a second writer of the same finalization.
+/// Only the `Latest` fetch is a network call here; the ladder step is named, not
+/// fetched, because the marshal resolver is the writer whose deliveries end in
+/// `store_finalization`, and fetching here would make this file a second writer of the
+/// same finalization.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ProbeOutcome {
-    /// The height of a `Latest` answer that passed `deliver`, or `None` when the
-    /// probe was not served / the answer was refused or dropped as
-    /// unauthenticated.
+    /// The height of a `Latest` answer that passed `deliver`, or `None` when the probe
+    /// was not served or the answer was refused as unauthenticated.
     ///
-    /// ONE consumer left: `hint_finalization(frontier)` when it stands above the
-    /// marshal tip — a HINT, which the marshal answers by fetching the height and
-    /// running its own `verify_delivered` before anything is stored. It no longer
-    /// feeds the jump trigger (that reads the marshal tip alone, §5.2) and no
-    /// longer gates the ladder step (`servable` is gone, review A2-01), so an
-    /// unauthenticated height can now buy exactly one by-height fetch and nothing
-    /// else.
+    /// Its one consumer is `hint_finalization(frontier)` when the height stands above
+    /// the marshal tip — a hint the marshal answers with its own fetch and
+    /// `verify_delivered` before storing anything, so an unauthenticated height buys
+    /// one by-height fetch and nothing else.
     pub frontier: Option<Height>,
-    /// `(last(T+1), committee[T+1])` — the ladder step and its addressees.
-    /// `None` when this node cannot name them yet: no epoch tracked, no frozen
-    /// geometry, or `committee[T+1]` outside the read window / not readable at
-    /// this anchor. The probe then asks `Latest` alone.
+    /// `(last(T+1), committee[T+1])` — the ladder step and its addressees. `None` when
+    /// this node cannot name them yet: no epoch tracked, no frozen geometry, or
+    /// `committee[T+1]` unreadable at this anchor. The probe then asks `Latest` alone.
     pub step: Option<(Height, NonEmptyVec<PeerPubkey>)>,
 }
 
-/// Erased frontier probe (see [`ReJump::probe`]): asks the upstream for `Latest`
-/// and names the ladder step for the tracked epoch `T`. The argument is `T` —
-/// `None` before the node has tracked any epoch, which is the one state with no
-/// step to take.
+/// Erased frontier probe (see `ReJump::probe`): asks the upstream for `Latest` and
+/// names the ladder step for the tracked epoch `T`. The argument is `T`; `None` before
+/// any epoch is tracked, the one state with no step to take.
 ///
-/// The `Latest` HEIGHT it returns is still trusted height-only, and that is now a
-/// much narrower claim: the answer it came from passed the five checks of
-/// [`crate::plane_upstream::FrontierHandler`]'s `deliver`, so an inflated tip is
-/// refused at the channel instead of at the end of a wasted backfill.
+/// The returned `Latest` height is trusted height-only: the answer passed
+/// `FrontierHandler`'s `deliver` checks, so an inflated tip is refused at the channel
+/// rather than at the end of a wasted backfill.
 pub type FrontierProbeFn =
     std::sync::Arc<dyn Fn(Option<u64>) -> BoxFuture<'static, ProbeOutcome> + Send + Sync>;
 
-/// Erased "which epoch did this node last hand to `track`" — `T` of §5.2, read
-/// from the process's ONE `EpochTransition` (`last_tracked_epoch`, which advances
-/// only once the boundary trigger has been delivered,
-/// `epoch_transition.rs:768-791`).
+/// Erased "which epoch did this node last hand to `track`" — `T`, read from the
+/// process's `EpochTransition::last_tracked_epoch`, which advances only once the
+/// boundary trigger has been delivered.
 ///
-/// `None` until the first epoch is tracked. Synchronous and cheap: it reads a
-/// cell the transition's own bridge forwarder writes, never the transition's
-/// async mutex, so a probe tick can never block on the epoch machine it is
-/// asking about.
+/// `None` until the first epoch is tracked. Synchronous and cheap: it reads a cell the
+/// transition's bridge forwarder writes, never the transition's async mutex, so a probe
+/// tick cannot block on the epoch machine it is asking about.
 pub type TrackedEpochFn = std::sync::Arc<dyn Fn() -> Option<u64> + Send + Sync>;
 
-/// Erased "this node's history now begins here" publisher: raises
-/// `EpochTransition`'s read-height floor to the `u64` argument. The re-jump
-/// landing's twin of [`Config::boundary_enter`], and AWAITED where that one is
-/// fire-and-forget — the floor must be in place before the entry's first committee
-/// read, and the state machine sits behind an async mutex, so a spawn would race
-/// the very entry this unblocks.
+/// Erased "this node's history now begins here" publisher: raises `EpochTransition`'s
+/// read-height floor to the `u64` argument. Awaited rather than spawned because the
+/// floor must be in place before the entry's first committee read and the state machine
+/// sits behind an async mutex, so a spawn would race the entry it unblocks.
 pub type BoundaryReadFloorFn = std::sync::Arc<dyn Fn(u64) -> BoxFuture<'static, ()> + Send + Sync>;
 
-/// The committee module's "my anchor moved" wake-up, erased to the ONE verb the
-/// executor owes it.
+/// The committee module's "my anchor moved" wake-up, erased to the one verb the executor
+/// owes it.
 ///
-/// The module reads every epoch committee at `executed_state_hash(anchor)`
-/// where `anchor` is this node's ordering-finalized cursor — the very cursor
-/// this actor raises. Nothing else in the process knows when that happens, so
-/// the executor tells it, STRICTLY AFTER each of the three
-/// `ExecutedChain::advance_finalized` calls (init seed, jump landing, finalized
-/// derive). Calling before merely loses one wake-up, which the next one makes
-/// good; not calling at all leaves every consumer parked on
-/// `CommitteeError::NotReadable` until some other read happens to succeed.
+/// The module reads every epoch committee at `executed_state_hash(anchor)`, where
+/// `anchor` is this node's ordering-finalized cursor — the cursor this actor raises — so
+/// the executor tells it after each `ExecutedChain::advance_finalized` call. Not calling
+/// leaves consumers parked on `CommitteeError::NotReadable` until some other read
+/// happens to succeed.
 ///
-/// A one-verb handle rather than the `Arc<dyn Committee>` itself, deliberately:
-/// the executor must not grow a committee read of its own beside the two tiers
-/// it already reconciles.
+/// A one-verb handle rather than the committee itself: the executor must not grow a
+/// committee read of its own beside the two tiers it reconciles.
 pub type AnchorAdvancedFn = std::sync::Arc<dyn Fn() + Send + Sync>;
 
 /// The steady-state re-jump callback bundled with the signal its trigger reads.
 #[derive(Clone)]
 pub struct ReJump {
-    /// The forward-only jump onto a target read from this node's own marshal
-    /// archive (`(from, target)`); see the callback notes above.
+    /// The forward-only jump onto a target read from this node's own marshal archive;
+    /// see the callback notes above.
     pub call: ReJumpFn,
     /// Forward-only re-jump need-gate, mirrored into the spawned jump's own gate
-    /// (`jump_to_target`). The defer deadlock is EPOCH-relative
-    /// ("≥2 epochs behind ⇒ `committee[E]` uncommitted"), so its recovery gate is
-    /// epoch-relative too: `min(JUMP_THRESHOLD, epoch_block_interval)` (real-prod
-    /// epochs ≫ 1024 keep the 1024 serving-window size; a compressed test epoch
-    /// scales down to ~1 epoch so a short-epoch node heals within an epoch instead
-    /// of waiting for a fixed 1024-block gap).
-    ///
-    /// BOTH node kinds use the epoch-relative value — the follower and the
-    /// validator-with-upstream alike (`dpos.rs` computes the same
-    /// `JUMP_THRESHOLD.min(interval)` on each path). Only the tests construct a
-    /// bare `JUMP_THRESHOLD`. There is no cold-start jump beside it any more (pass
-    /// Б2): a node with an empty archive anchors at its own EL-finalized tag and
-    /// climbs from there, so this is the only jump gate in the system.
+    /// (`jump_to_target`). The defer deadlock is epoch-relative, so the recovery gate
+    /// is too: `min(JUMP_THRESHOLD, epoch_block_interval)`, which keeps the 1024-block
+    /// serving-window size on production epochs and lets a compressed test epoch heal
+    /// within an epoch instead of after a fixed 1024-block gap.
     pub threshold: u64,
-    /// The inlet's EXISTING upstream-rotation escape ([`crate::cert_inlet::RotateUpstream`]),
-    /// the SAME `CertUpstream::rotate_callback()` the data-fault inlet uses. Fired
-    /// when the re-jump's terminal outcome is a fault (Rule L). After pass Б2 the
-    /// ONLY arm that fires it is `Stalled`, and only after `MAX_UPSTREAM_FAULTS`
-    /// consecutive ones (an honest transient stall must not insta-rotate) — the two
-    /// insta-rotating arms, `BadTarget` and `AuthFailed`, are gone with the stages
-    /// that produced them. `InvalidTarget` does NOT rotate (review B1-04): its
-    /// target is this node's own attested archive pair, so the contradiction is
-    /// local and §5.4 files it as `Fault::corruption`.
-    /// `Option` so unit tests / a no-rotate config leave it `None`.
+    /// The inlet's upstream-rotation escape, the same `CertUpstream::rotate_callback()`
+    /// the data-fault inlet uses. Fired only on a `Stalled` outcome, and only after
+    /// `MAX_UPSTREAM_FAULTS` consecutive ones so an honest transient stall does not
+    /// instantly rotate. `InvalidTarget` does not rotate: its target is this node's own
+    /// attested archive pair, so the contradiction is local corruption. `None` in tests
+    /// and no-rotate configs.
     pub rotate: Option<crate::cert_inlet::RotateUpstream>,
-    /// Upstream frontier-discovery probe, fired from the executor's 1 s probe
-    /// tick whenever `last_tip_height` did NOT advance since the previous tick
-    /// (the marshal is learning no new finalizations). This is the LIVE-FOLLOW
-    /// driver for a validator with no cert-inlet (the plane-native default): a
-    /// ROTATED-OUT validator participates in no consensus and has no inlet, so
-    /// without the probe its marshal tip freezes at the demotion boundary — no
-    /// `Update::Tip`, no prehints ⇒ a permanent silent wedge.
+    /// Upstream frontier-discovery probe, fired from the probe tick whenever
+    /// `last_tip_height` did not advance since the previous tick. It is the live-follow
+    /// driver for a validator with no cert-inlet: a rotated-out validator takes part in
+    /// no consensus, so without the probe its marshal tip freezes at the demotion
+    /// boundary and it wedges silently.
     ///
-    /// Everything the probe produces now lands on the MARSHAL and nowhere else:
-    /// the ladder step `Finalized{last(T+1)}` addressed at `committee[T+1]`, and
-    /// `hint_finalization(frontier)` when the answered `Latest` stands above the
-    /// tip. The marshal fetches, verifies against the epoch scheme, stores, and
-    /// the normal `Update::Tip` pipeline walks the gap — which is also how the
-    /// jump trigger learns anything, since it reads that tip alone (§5.2).
-    /// Self-silencing while live: an advancing tip skips the network probe
-    /// entirely. `None` in unit tests.
+    /// Everything the probe produces lands on the marshal: the ladder step
+    /// `Finalized{last(T+1)}` addressed at `committee[T+1]`, and
+    /// `hint_finalization(frontier)` when the answered `Latest` stands above the tip.
+    /// The marshal fetches, verifies and stores, and the normal `Update::Tip` pipeline
+    /// walks the gap. An advancing tip skips the network probe entirely. `None` in unit
+    /// tests.
     pub probe: Option<FrontierProbeFn>,
-    /// `T` for the ladder step the probe takes — see [`TrackedEpochFn`]. `None`
-    /// in unit tests and wherever no `EpochTransition` is wired; the probe then
-    /// asks `Latest` alone, exactly as it did before the ladder existed.
+    /// `T` for the ladder step the probe takes — see [`TrackedEpochFn`]. `None` in unit
+    /// tests and wherever no `EpochTransition` is wired, leaving the probe to ask
+    /// `Latest` alone.
     pub tracked_epoch: Option<TrackedEpochFn>,
 }
 
-/// A finalized block PARKED by guard #2 (the node is ≥ K behind — `last_tip
-/// >= h + K` — but the committee-attested body at `h + K` is not backfilled
-/// yet, so the convergence check cannot run). The ONLY park in the executor.
-/// The seed was already resolved when the park was taken, so the
-/// re-poke re-derives with ZERO lookups. The `pending_finalizations` drain is
-/// paused while this is `Some`, which preserves strict derive order and lets
-/// the marshal's `MAX_PENDING_ACKS` backpressure bound the queue. Event-driven:
-/// re-poked by the marshal's live `Update::Tip`/`Update::Block` delivery stream
-/// + the FCU heartbeat — NEVER a wall-clock give-up (§8.11).
+/// A finalized block parked by guard #2: the node is ≥ K behind (`last_tip >=
+/// h + K`) but the committee-attested body at `h + K` is not backfilled yet, so the
+/// convergence check cannot run. The seed is already resolved, so a re-poke re-derives
+/// with no lookups, and the `pending_finalizations` drain is paused while this is
+/// `Some`, preserving strict derive order under the marshal's `MAX_PENDING_ACKS`
+/// backpressure.
+///
+/// Re-poked by the marshal's `Update::Tip`/`Update::Block` stream and the FCU
+/// heartbeat; there is no wall-clock give-up.
 struct Deferred {
     cause: Span,
     order: OrderBlock,
     ack: Exact,
-    /// The resolved σ for this block's own round, retained with the park so
-    /// `repoke_deferred` is a plain "is `h + K`'s body here yet" retry.
+    /// The resolved σ for this block's own round, retained so `repoke_deferred` is a
+    /// plain "is `h + K`'s body here yet" retry.
     seed: Option<crate::beacon::Seed>,
 }
 
-/// A finalized block HELD for σ of its own round — the executor's only hold, and
-/// NOT a park: no gauge, no hint, no re-poke, no deadline. The sole exit is σ
-/// arriving on the seed-record notify.
+/// A finalized block held for σ of its own round — the executor's only hold, not a
+/// park: no gauge, no hint, no re-poke, no deadline. Its sole exit is σ arriving on
+/// the seed-record notify.
 struct HeldForSeed {
     cause: Span,
     order: OrderBlock,
     ack: Exact,
-    /// When the block FIRST entered the hold. PRESERVED across every miss
-    /// re-hold, so [`Actor::detect_stalled_seed_hold`] measures the age of the
-    /// HOLD rather than the age of the last failed lookup — a notify storm that
-    /// reset this would silence the detector exactly when it matters most.
+    /// When the block first entered the hold, preserved across every miss re-hold so
+    /// the stall detector measures the age of the hold rather than of the last failed
+    /// lookup; a notify storm resetting it would silence the detector when it matters
+    /// most.
     since: SystemTime,
-    /// This hold has already been reported. The warn + counter fire ONCE per
-    /// hold, not once per heartbeat: a stall outliving its threshold is one
-    /// event, and repeating it every tick would bury the log it exists to make
-    /// readable.
+    /// This hold has already been reported: the warn and counter fire once per hold,
+    /// not once per heartbeat, since a stall outliving its threshold is one event and
+    /// repeating it would bury the log it exists to make readable.
     reported: bool,
 }
 
-/// How long a block may sit in [`Actor::awaiting_seed`] before the DETECTOR
-/// reports it. **Not a deadline** — nothing derives, skips or aborts when it
-/// elapses (see [`Actor::detect_stalled_seed_hold`]); it only decides when a
-/// stall becomes visible.
+/// How long a block may sit in the awaiting-seed hold before the detector reports it.
+/// Not a deadline — nothing derives, skips or aborts when it elapses; it only decides
+/// when a stall becomes visible.
 ///
-/// 60 s is 60 blocks of ordering at the 1 blk/s target rate — progress the
-/// executor has not followed. Every honest source of a hold is far shorter: σ is
-/// filed from the SAME finalization certificate that makes the marshal dispatch
-/// the body, so the record-vs-delivery race is one certificate wide, and the
-/// slowest legitimate case — a follower whose σ stays `Pending` until `PK_epoch`
-/// lands — is bounded by one artifact fetch. It is also far below the horizon
-/// where the re-jump takes over (`JUMP_THRESHOLD` = 1024 blocks ≈ 17 min at
-/// 1 blk/s), so a stall is named as a SEED hold before a deep-gap jump can paper
-/// over it.
+/// 60 s is 60 ordering blocks at the 1 blk/s target, far longer than any honest hold: σ
+/// is filed from the same finalization certificate that makes the marshal dispatch the
+/// body, so the record-vs-delivery race is one certificate wide, and the slowest
+/// legitimate case (a follower whose σ stays `Pending` until `PK_epoch` lands) is bounded
+/// by one artifact fetch. It is also far below the re-jump horizon, so a stall is named
+/// as a seed hold before a deep-gap jump can paper over it.
 const SEED_HOLD_STALL_THRESHOLD: Duration = Duration::from_secs(60);
 
-/// What [`Actor::seed_at_own_round`] found for a height's own agreed round.
+/// What `seed_at_own_round` found for a height's own agreed round.
 enum OwnRoundSeed {
     /// The beacon is active in this height's epoch and σ is in the store.
     Present(crate::beacon::Seed),
-    /// The beacon is NOT mandatory in this height's epoch (or the epocher cannot
-    /// name it): the agreed derivation is `None` and no σ can change that.
+    /// The beacon is not mandatory in this height's epoch (or the epocher cannot name
+    /// it): the agreed derivation is `None` and no σ can change that.
     Inactive,
-    /// Beacon-active, σ not recorded yet — the block must WAIT, never fall back.
+    /// Beacon-active, σ not recorded yet — the block must wait, never fall back.
     Missing,
 }
 
 /// Result of attempting to derive a finalized block.
 enum DeriveOutcome {
-    /// Derived + imported + FCU'd + acked.
+    /// Derived, imported, FCU'd and acked.
     Done,
-    /// Guard #2 could not run: the node is ≥ K behind but the committee-attested
-    /// body at `height + K` is not backfilled yet. The park payload (block, ack
-    /// AND the already-resolved σ) is handed back to be PARKED + re-poked
-    /// event-driven; boxed to keep the hot `Done` arm small.
+    /// Guard #2 could not run: the node is ≥ K behind but the committee-attested body
+    /// at `height + K` is not backfilled yet. The park payload (block, ack and the
+    /// already-resolved σ) is handed back to be parked and re-poked event-driven; boxed
+    /// to keep the hot `Done` arm small.
     NeedAttestation(Box<Deferred>),
-    /// The gap-walk's canonicalization FCU could not land — reth answers SYNCING
-    /// while a backfill holds the engine exclusively, and the cold-start jump
-    /// starts exactly such a backfill. The parent stays invisible, so the derive
-    /// cannot proceed and MUST NOT be fatal: park and re-poke, the way reth warns
-    /// and heals rather than dying. Same payload as [`Self::NeedAttestation`]; a
-    /// distinct variant because the fresh-park side effects differ (no `h + K`
-    /// hint — nothing is missing from the archive here).
+    /// The gap-walk's canonicalization FCU could not land: reth answers syncing while a
+    /// backfill holds the engine exclusively, which the cold-start jump starts. The
+    /// parent stays invisible, so the derive cannot proceed and must not be fatal: park
+    /// and re-poke. Same payload as [`Self::NeedAttestation`], a distinct variant because
+    /// the fresh-park side effects differ — nothing is missing from the archive here, so
+    /// no `h + K` hint.
     NeedParentVisible(Box<Deferred>),
-    /// A gap-walk PREFIX element sits on a beacon-active round whose σ is not in
-    /// the store yet. The walk reports the typed leaf; THIS is where it parks.
-    /// The payload carries the DELIVERED height's σ, never the prefix element's —
-    /// the prefix lookup re-runs inside the walk on every re-poke, so the value
-    /// that was missing is re-resolved rather than carried forward. That is why
-    /// the main path's "a park would carry `None`" objection does not reach this
-    /// arm: there is no `None` to carry.
+    /// A gap-walk prefix element sits on a beacon-active round whose σ is not in the
+    /// store yet. The payload carries the delivered height's σ, never the prefix
+    /// element's: the prefix lookup re-runs inside the walk on every re-poke, so the
+    /// missing value is re-resolved rather than carried forward.
     NeedPrefixSeed(Box<Deferred>),
 }
 
-/// What the run loop must do after [`Actor::dispatch_fault`] disposed of a
-/// fault. A `ForkSafety` fault never produces one of these — the router parks
-/// forever instead of returning.
+/// What the run loop must do after `dispatch_fault` disposed of a fault. A `ForkSafety`
+/// fault never produces one: the router parks forever instead of returning.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Disposition {
     /// Transient / deferred: keep looping.
@@ -834,107 +684,91 @@ pub struct Config<BE, D, XC, MarshalMailbox> {
     pub last_execution_finalized_height: u64,
     pub initial_finalized: (Height, B256),
     pub initial_head: (Height, B256),
-    /// The marshal floor this node boots with — the SAME value `outer.rs` sends in
-    /// its buffered `SetFloor`. Seeds the stale-dispatch guard so it is live from
-    /// tick zero rather than from the first `reseed_forward`.
+    /// The marshal floor this node boots with, matching the value `outer.rs` sends in
+    /// its buffered `SetFloor`. Seeds the stale-dispatch guard so it is live from tick
+    /// zero rather than from the first `reseed_forward`.
     pub initial_marshal_floor: u64,
     /// Authenticated by-height seam for boundary seeding at `reseed_forward`.
     pub boundary_fetch: Option<crate::cert_follow::BoundaryFetchFn>,
-    /// Epoch-entry seam — see [`crate::outer::OuterBuilder::boundary_enter`]. Invoked once
-    /// per successful re-jump landing.
+    /// Epoch-entry seam (see [`crate::outer::OuterBuilder::boundary_enter`]), invoked
+    /// once per successful re-jump landing.
     pub boundary_enter: std::sync::Arc<dyn Fn(u64) + Send + Sync>,
-    /// Read-floor seam — see [`crate::outer::OuterBuilder::boundary_read_floor`]. Awaited
-    /// immediately BEFORE [`Self::boundary_enter`] on a re-jump landing.
+    /// Read-floor seam (see [`crate::outer::OuterBuilder::boundary_read_floor`]), awaited
+    /// immediately before [`Self::boundary_enter`] on a re-jump landing.
     pub boundary_read_floor: BoundaryReadFloorFn,
-    /// Chain-wide sequencer→DPoS activation block — the origin of the
-    /// `result_target` pre-activation window (`height < activation + K` ⇒
-    /// `result` MUST be ZERO). A CHAIN constant, NOT this node's cold-start
-    /// anchor: a deep-catch-up follower trust-anchors at the live frontier
-    /// (`initial_finalized` ≫ activation) yet still derives the K-below-anchor
-    /// blocks, which are post-activation and carry real (non-zero) results.
-    /// Keying the cross-check on the anchor would mis-classify those as
-    /// pre-activation and reject the chain.
+    /// Chain-wide sequencer→DPoS activation block — the origin of the `result_target`
+    /// pre-activation window (`height < activation + K` requires a zero result). A chain
+    /// constant, not this node's cold-start anchor: a deep-catch-up follower
+    /// trust-anchors above activation yet still derives the K below-anchor blocks, which
+    /// are post-activation and carry real results. Keying the cross-check on the anchor
+    /// would reject the chain.
     pub dpos_activation_block: u64,
     pub fcu_pace: Duration,
     pub peers_for_finalization: PeersForFinalization,
-    /// The randomness handle (cross-epoch singleton from `outer.rs`). The
-    /// executor reads exactly three operations off it:
-    /// [`crate::beacon::Beacon::mandatory_at`], the network-agreed "is the beacon active in
-    /// this epoch" that gates every seed lookup; [`crate::beacon::Beacon::seed`], to
-    /// re-canonicalise the SPECULATIVE seed round to the block's own
-    /// `proposal_view` and to resolve the finalized derive's own round; and
-    /// [`crate::beacon::Beacon::subscribe`], to wake when a seed lands. A provider with no
-    /// seeds degrades both to "skip speculation on a spin-round notarization"
-    /// and "hold the tip until σ arrives" — never to speculating with a
-    /// known-wrong seed.
+    /// The randomness handle. The executor reads three operations off it:
+    /// [`crate::beacon::Beacon::mandatory_at`], the network-agreed "is the beacon
+    /// active in this epoch" gate on every seed lookup;
+    /// [`crate::beacon::Beacon::seed`], to re-canonicalise the speculative seed round
+    /// to the block's own `proposal_view` and to resolve the finalized derive's round;
+    /// and [`crate::beacon::Beacon::subscribe`], to wake when a seed lands. A provider
+    /// with no seeds degrades to skipping speculation and holding the tip until σ
+    /// arrives, never to speculating with a known-wrong seed.
     pub randomness: std::sync::Arc<dyn crate::beacon::Beacon>,
-    /// Cross-epoch block→epoch map (the same singleton threaded into marshal +
-    /// `epoch_manager`, `outer.rs`). Used to form `h`'s own seed round
-    /// `Round(epocher.containing(h).epoch(), h.proposal_view)` — a pure function
-    /// of AGREED data, so every honest node resolves the identical σ and a wrong
-    /// epoch can only MISS, never yield a wrong seed.
+    /// Cross-epoch block→epoch map. Used to form `h`'s own seed round
+    /// `Round(epocher.containing(h).epoch(), h.proposal_view)` — a pure function of
+    /// agreed data, so every honest node resolves the identical σ and a wrong epoch can
+    /// only miss, never yield a wrong seed.
     pub epocher: crate::epocher::OriginEpocher,
-    /// The committee module's anchor wake-up — see [`AnchorAdvancedFn`]. Called
-    /// at the three sites that raise the finalized-execution cursor, and
-    /// nowhere else.
+    /// The committee module's anchor wake-up (see [`AnchorAdvancedFn`]). Called at every
+    /// site that raises the finalized-execution cursor.
     pub anchor_advanced: AnchorAdvancedFn,
-    /// The executor's own counters (cross-launch singleton from
-    /// `dpos.rs::launch`, already registered there): `seed_active` /
-    /// `digest_fallback`, one increment per derived block.
+    /// The executor's own counters (`seed_active` / `digest_fallback`), one increment
+    /// per derived block.
     pub metrics: ExecutorMetrics,
-    /// Self-heal observability handle (cross-launch singleton from
-    /// `dpos.rs::launch`, already registered there). The executor raises
-    /// `dpos_sync_degraded{reason=engine_retry}` while retrying a transient
-    /// engine-API TRANSPORT error at the finalize FCU (#14), and CLEARS
-    /// `{reason=crash_recover}` when the STARTUP BACKFILL DRAIN finishes — the #12
-    /// cold start (`dpos.rs`, `RecoverOutcome::DeferToElSync`) anchors at reth's
-    /// tip and defers closing its EL gap to exactly that drain, not to a jump.
+    /// Self-heal observability handle. The executor raises
+    /// `dpos_sync_degraded{reason=engine_retry}` while retrying a transient engine-API
+    /// transport error at the finalize FCU, and clears `{reason=crash_recover}` when the
+    /// startup backfill drain finishes — the `RecoverOutcome::DeferToElSync` cold start
+    /// anchors at reth's tip and defers closing its EL gap to that drain.
     pub sync_metrics: SyncMetrics,
-    /// Fork-safety latch (Phase 3). The executor ENGAGES it on #2/#3 result
-    /// divergence, #15 an EL `Ok(Invalid)` verdict, and #10 an L1-fork re-jump —
-    /// halting instead of extending a rejected branch. Engaging stops the executor
-    /// driving reth, demotes the node to verify-only permanently (never
-    /// re-promoted), and keeps marshal + `consensus`-RPC alive (the OuterEngine
-    /// supervisor parks rather than abort-all). Cross-launch singleton from
-    /// `dpos.rs::launch`, shared with `epoch_manager` + the supervisor.
+    /// Fork-safety latch. The executor engages it on result divergence, an EL
+    /// `Ok(Invalid)` verdict, and an L1-fork re-jump, halting instead of extending a
+    /// rejected branch. Engaging stops the executor driving reth and demotes the node
+    /// to verify-only permanently, while marshal and `consensus`-RPC stay alive (the
+    /// supervisor parks rather than aborting all).
     pub safety_halt: crate::sync_metrics::SafetyHalt,
-    /// Fired on every ordering-finalized advance so [`crate::epoch_manager`] can
-    /// re-poke a per-epoch engine spawn parked on the `Inline::genesis(E)`
-    /// precondition (the E-1 boundary block landing in marshal storage IS an
-    /// executor finalized-advance). Event-driven re-poke, no clock poll.
+    /// Fired on every ordering-finalized advance so `epoch_manager` can re-poke a
+    /// per-epoch engine spawn parked on the `Inline::genesis(E)` precondition: the E-1
+    /// boundary block landing in marshal storage is an executor finalized-advance.
+    /// Event-driven, no clock poll.
     pub spawn_unblocked: std::sync::Arc<tokio::sync::Notify>,
-    /// Steady-state self-healing re-jump (see [`ReJump`]). `Some` on any
-    /// upstream-configured node (follower or validator-with-upstream); `None`
-    /// for a plain validator (it catches up on the consensus-plane treadmill)
-    /// and in tests that do not exercise the re-jump.
+    /// Steady-state self-healing re-jump (see [`ReJump`]). `None` for a plain validator,
+    /// which catches up on the consensus-plane treadmill, and in tests that do not
+    /// exercise it.
     pub re_jump: Option<ReJump>,
 }
 
 /// The two counters the executor owns: one per derived block, saying whether
 /// `prev_randao` was the verified threshold seed or the digest fallback.
 ///
-/// Split out of `BeaconMetrics` with both family names unchanged. Owned HERE and
-/// registered on BOTH node classes, because the executor runs on both and cannot
-/// tell which it is on — making these "beacon-owned on a validator, absent-owned
-/// on a follower" would register them twice on every follower, which
-/// `prometheus_client::Registry` accepts silently and only a scrape reveals.
+/// Registered on both node classes, because the executor runs on both and cannot tell
+/// which it is on; making them class-specific would register them twice on every
+/// follower, which `prometheus_client::Registry` accepts silently.
 #[derive(Clone, Debug, Default)]
 pub struct ExecutorMetrics {
     /// A block's `prev_randao` was the verified threshold seed (`assurance=true`).
     pub seed_active: prometheus_client::metrics::counter::Counter,
     /// A beacon-active block fell back to `order.digest()` (seed absent or failed
-    /// σ-verify vs `PK_E`). The Stage-2 certify hook Nullifies a beacon-active
-    /// boundary before it finalizes, so this counts the LOCAL pre-Nullify observation
-    /// on a node that derived ahead of the Nullify; smoke D1 asserts it is 0
-    /// post-anchor on a healthy chain.
+    /// σ-verify vs `PK_E`). A beacon-active boundary is nullified before it finalizes,
+    /// so this counts the local pre-nullify observation on a node that derived ahead of
+    /// it; it is 0 post-anchor on a healthy chain.
     pub digest_fallback: prometheus_client::metrics::counter::Counter,
 }
 
 impl ExecutorMetrics {
-    /// Register both counters. Call ONCE per process, against the SAME context
-    /// the other metric structs are registered against — commonware prefixes
-    /// each family with the context's label path, so a labelled child context
-    /// would rename them in the scrape without any gate noticing.
+    /// Register both counters. Call once per process, against the same context the other
+    /// metric structs use: commonware prefixes each family with the context's label path,
+    /// so a labelled child context would rename them in the scrape.
     pub fn register(&self, ctx: &impl commonware_runtime::Metrics) {
         ctx.register(
             "beacon_seed_active_total",
@@ -963,55 +797,45 @@ pub struct Actor<E, BE, D, XC, MarshalMailbox> {
     /// Fork-safety latch (see [`Config::safety_halt`]).
     safety_halt: crate::sync_metrics::SafetyHalt,
     spawn_unblocked: std::sync::Arc<tokio::sync::Notify>,
-    /// Steady-state self-healing re-jump callback (see [`ReJump`]). Fired from
-    /// the `Update::Tip` arm when the frontier runs > `JUMP_THRESHOLD` ahead of
-    /// `ordering_finalized`.
+    /// Steady-state self-healing re-jump callback (see [`ReJump`]).
     re_jump: Option<ReJump>,
-    /// Consecutive steady-state re-jump `Stalled` outcomes since the last reset. At
-    /// `MAX_UPSTREAM_FAULTS` the executor `rotate()`s (Rule L) and resets. Reset to 0
-    /// on that rotate and on `Landed`/`Lagging` (progress / the gap closed under the
-    /// threshold) — so a streak accrued on URL A NEVER carries into URL B (critic r2:
-    /// cross-URL carryover → A→B→A oscillation). A SECOND, independent streak from the inlet's data-fault
-    /// counter ([`crate::cert_inlet::CertInlet`]); both feed the SAME `rotate()` sink,
-    /// deduped at the WS actor.
+    /// Consecutive re-jump `Stalled` outcomes since the last reset; at
+    /// `MAX_UPSTREAM_FAULTS` the executor rotates and resets. Reset also on
+    /// `Landed`/`Lagging`, so a streak accrued on one upstream never carries into the
+    /// next (cross-upstream carryover would oscillate between them). A second,
+    /// independent streak from the inlet's data-fault counter feeds the same `rotate()`
+    /// sink.
     rejump_fault_streak: u32,
-    /// Completion channel of the in-flight spawned re-jump waiter. `Some` ⇒ a
-    /// re-jump is running; its terminal [`crate::cold_start_jump::JumpOutcome`]
-    /// is consumed in a dedicated `select!` arm (mirror of `pending_backfill`'s
-    /// OptionFuture + manual clear). The waiter is SPAWNED (a read-only `sync_to`
-    /// wait), so the executor's `select!` loop stays responsive during the
+    /// Completion channel of the in-flight spawned re-jump waiter; its terminal
+    /// `JumpOutcome` is consumed in a dedicated `select!` arm. The waiter is spawned as
+    /// a read-only `sync_to` wait, so the executor's loop stays responsive during the
     /// multi-minute backfill.
     jump_done: OptionFuture<oneshot::Receiver<crate::cold_start_jump::JumpOutcome>>,
     /// Handle of the spawned re-jump waiter, aborted on shutdown so the spawned
     /// `sync_to` wait does not outlive the executor task.
     jump_handle: Option<Handle<()>>,
-    /// Highest marshal-frontier height observed via `Update::Tip`. The FCU
-    /// heartbeat re-pokes `maybe_re_jump` with THIS height so a re-jump whose
-    /// transport `Stalled` (or whose reth backfill stalled) is re-evaluated even
-    /// if the upstream frontier has plateaued (no further `Update::Tip` to
-    /// re-trigger it). Without the heartbeat re-poke the Stalled retry depends
-    /// solely on the next tip → a plateaued frontier is a silent permanent wedge.
+    /// Highest marshal-frontier height observed via `Update::Tip`. The FCU heartbeat
+    /// re-pokes `maybe_re_jump` with this height so a stalled re-jump is re-evaluated
+    /// even when the upstream frontier has plateaued and sends no further `Update::Tip`;
+    /// without it, a plateaued frontier is a silent permanent wedge.
     last_tip_height: Height,
 
-    /// The RUNNING marshal floor (landing − K), mirrored from the last
-    /// `reseed_forward`'s `set_floor`. `0` on every non-jump path (inert). Guards
-    /// the `Update::Block` arm against the stale-backlog ESCAPE: `set_floor` is
-    /// fire-and-forget, and each disposal `acknowledge()` in `reseed_forward` frees
-    /// a marshal slot whose biased select can dispatch the next OLD-range block into
-    /// the executor mailbox BEFORE the marshal processes `SetFloor`. Such escaped
-    /// `≤ floor` deliveries are acked-without-derive here (the marshal already
-    /// pruned them; deriving against `db_tip = landing` is the deep-overlay walk the
-    /// jump exists to avoid) rather than parked on a pruned `h + K` (permanent
-    /// deferred park).
-    /// Keyed STRICTLY on the marshal floor, never on `anchor`/`safe_height`: legit
-    /// below-safe deliveries in the `anchor − K + 1 ..= anchor` deep-catch-up window
-    /// must still derive.
+    /// The running marshal floor (landing − K), mirrored from the last
+    /// `reseed_forward`'s `set_floor`; 0 on non-jump paths. Guards the `Update::Block`
+    /// arm against a stale-backlog escape: `set_floor` is fire-and-forget, so a slot
+    /// freed by a disposal can dispatch an old-range block before the marshal processes
+    /// `SetFloor`, and deriving it against `db_tip = landing` is the deep-overlay walk
+    /// the jump exists to avoid. Such `≤ floor` deliveries are acked without deriving.
+    ///
+    /// Keyed strictly on the marshal floor, never on `anchor`/`safe_height`: the
+    /// legitimate below-safe deliveries in the `anchor − K + 1 ..= anchor` deep-catch-up
+    /// window must still derive.
     marshal_floor: u64,
     /// Authenticated by-height seam for seeding an epoch-boundary block the floor is
-    /// about to bury (`reseed_forward`). `None` without an upstream.
-    /// Used by `seed_boundary_below_floor` to locate the epoch terminal a floor
-    /// raise would bury; the pre-existing `epocher` field below supplies the
-    /// geometry, so seeding can never disagree with the gate it satisfies.
+    /// about to bury (`reseed_forward`); `None` without an upstream. Used by
+    /// `seed_boundary_below_floor` to locate the epoch terminal a floor raise would
+    /// bury; the `epocher` field supplies the geometry, so seeding cannot disagree with
+    /// the gate it satisfies.
     boundary_fetch: Option<crate::cert_follow::BoundaryFetchFn>,
     /// Epoch-entry seam — see [`crate::outer::OuterBuilder::boundary_enter`].
     boundary_enter: std::sync::Arc<dyn Fn(u64) + Send + Sync>,
@@ -1019,64 +843,55 @@ pub struct Actor<E, BE, D, XC, MarshalMailbox> {
     boundary_read_floor: BoundaryReadFloorFn,
 
     last_canonicalized: LastCanonicalized,
-    /// Highest ordering-finalized height processed; drives the result-final
-    /// cursor (`− K`, clamped to the anchor). Restart-seeded from the marshal's
-    /// DURABLE ACKED cursor (`last_consensus_finalized_height`), NOT the reth
-    /// head — same soundness argument as the finalized-execution cursor (see the
-    /// seed comment in `init`); the reth head is a SPECULATIVE tip that may carry
-    /// a nullified sibling above the ack.
+    /// Highest ordering-finalized height processed; drives the result-final cursor
+    /// (`− K`, clamped to the anchor). Restart-seeded from the marshal's durable acked
+    /// cursor, not the reth head, which is a speculative tip that may carry a nullified
+    /// sibling above the ack.
     ordering_finalized: u64,
     /// Anchor floor for the finalized cursor: the cold-start finalized point
     /// is result-final by construction (committee-external trust root).
     anchor_finalized: (Height, B256),
-    /// Chain-wide activation block for the `result_target` pre-activation
-    /// window (see [`Config::dpos_activation_block`]). Distinct from
-    /// `anchor_finalized.0` (the cold-start trust/finalized floor): they
-    /// coincide only on the FreshMigration signer path.
+    /// Chain-wide activation block for the `result_target` pre-activation window (see
+    /// [`Config::dpos_activation_block`]). Coincides with `anchor_finalized` only on the
+    /// fresh-migration signer path.
     dpos_activation_block: u64,
 
     fcu_heartbeat_interval: Duration,
     fcu_heartbeat_timer: Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
     fcu_pace: Duration,
 
-    /// Tick driving [`ReJump::probe`] (the frozen-tip frontier probe). Armed
-    /// unconditionally; the arm no-ops when no probe is wired or the tip advanced.
-    /// Cadence: [`FRONTIER_PROBE_INTERVAL_FAST`] while `probe_fast_left > 0`
-    /// (active catch-up), else the idle [`FRONTIER_PROBE_INTERVAL`].
+    /// Tick driving [`ReJump::probe`]. Armed unconditionally; the arm no-ops when no
+    /// probe is wired or the tip advanced. Cadence is the fast interval while
+    /// `probe_fast_left > 0`, else the idle one.
     frontier_probe_timer: Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
-    /// `last_tip_height` snapshot at the previous probe tick — the frozen-tip
-    /// detector (tip advanced since ⇒ the marshal is live ⇒ skip the network probe).
+    /// `last_tip_height` snapshot at the previous probe tick: if the tip advanced since,
+    /// the marshal is live and the network probe is skipped.
     probe_prev_tip: Height,
     /// A ladder step was put on the previous probe tick and the tip has not moved
-    /// since. The ONLY thing it decides is whether
-    /// `dpos_frontier_step_unserved_total` ticks: a step is "unserved" exactly
-    /// when it was asked for, a whole tick passed, and the tip stayed frozen
-    /// (this arm runs only at a frozen tip). Not a state machine — the ladder is
-    /// the repetition of the tick, and this bit is a metric's memory.
+    /// since. It only decides whether `dpos_frontier_step_unserved_total` ticks: a step
+    /// is unserved exactly when it was asked for, a whole tick passed, and the tip stayed
+    /// frozen. Not a state machine — the bit is a metric's memory.
     probe_step_pending: bool,
     /// Fast-cadence hysteresis: reset to [`FRONTIER_PROBE_FAST_BURST`] on every
-    /// PRODUCTIVE probe (one that hinted a new frontier), decremented per tick
-    /// otherwise. While non-zero the probe fires every tick (even if the tip just
-    /// advanced — that advance was the probe's own delivery, not an independent
-    /// live source) so a demoted follower trails by ~one RTT, not a whole tick.
+    /// productive probe (one that hinted a new frontier) and decremented per tick
+    /// otherwise. While non-zero the probe fires every tick even if the tip just
+    /// advanced, since that advance was the probe's own delivery, so a demoted follower
+    /// trails by about one RTT.
     probe_fast_left: u8,
 
     finalized_heights_to_backfill: RangeInclusive<u64>,
     pending_backfill: OptionFuture<BoxFuture<'static, (u64, Option<OrderBlock>)>>,
     pending_finalizations: FuturesOrdered<Ready<(Span, OrderBlock, Exact)>>,
 
-    /// Ops-visibility gauge for `pending_finalizations.len()`. Alert on
-    /// sustained values > 4 — indicates EL is falling behind consensus
-    /// (`MAX_PENDING_ACKS = 16` is the marshal-side ceiling).
+    /// Gauge for `pending_finalizations.len()`. Sustained values above 4 mean the EL is
+    /// falling behind consensus (`MAX_PENDING_ACKS = 16` is the marshal-side ceiling).
     pending_finalizations_gauge: Gauge<i64>,
 
-    /// Height of the block currently PARKED by guard #2 awaiting the
-    /// committee-attested `h + K` body (0 = none). Set on a fresh park, reset on
-    /// derive / re-jump disposal. `0` in steady state — the pipeline HOLDS the
-    /// tip, it does not park it. A constant non-zero value is the durably-parked
-    /// signal for a Prometheus alert (`deferred_height != 0 for > Xm`) — the
-    /// "how long" lives in the alert, NOT an in-process counter (there is
-    /// deliberately no executor wall-clock, §8.11).
+    /// Height of the block currently parked by guard #2 awaiting the committee-attested
+    /// `h + K` body (0 = none). Set on a fresh park, reset on derive / re-jump disposal;
+    /// 0 in steady state, since the pipeline holds the tip rather than parking it. A
+    /// constant non-zero value is the durable-park alert signal; "how long" lives in the
+    /// alert, not in an in-process counter.
     deferred_height: Gauge<i64>,
 
     /// Heartbeat FCUs are suppressed until consensus advances from the
@@ -1084,76 +899,61 @@ pub struct Actor<E, BE, D, XC, MarshalMailbox> {
     /// canonical chain that moved without us.
     has_advanced_since_init: bool,
 
-    /// Highest height the executor has imported (speculatively OR finalized).
-    /// Speculation only fires for `spec_head + 1`, and is tracked here rather
-    /// than via `executed_tip()` to avoid reth's `best_number` lag race.
+    /// Highest height the executor has imported, speculatively or finalized. Speculation
+    /// fires only for `spec_head + 1`; tracked here rather than via `executed_tip()` to
+    /// avoid reth's `best_number` lag race.
     spec_head: u64,
-    /// Heights speculatively executed at notarization but not yet finalized:
-    /// height → the notarized ordering digest AND the speculation's seed round
-    /// (see [`SpecExecuted`]). On finalized delivery a digest AND seed-round
-    /// match means the speculation was correct (skip re-derive, keep the head
-    /// lead); a digest mismatch (notarized-then-nullified, sibling finalized) OR
-    /// a seed-round mismatch (notarized at round A, finalized at round B) forces
-    /// a re-derive + head reorg with the finalization seed back onto the
-    /// finalized fork.
+    /// Heights speculatively executed at notarization but not yet finalized (see
+    /// [`SpecExecuted`]). On finalized delivery, matching digest and seed round means the
+    /// speculation was correct, so the derive is skipped and the head lead kept; a digest
+    /// mismatch (nullified sibling finalized) or a seed-round mismatch forces a re-derive
+    /// and head reorg.
     spec_executed: BTreeMap<u64, SpecExecuted>,
-    /// Notarized speculative blocks that arrived AHEAD of `spec_head` (a gap)
-    /// or before their parent had executed — PARKED here instead of dropped,
-    /// keyed by height. Re-driven by [`Self::try_drain_parked`] on the next
-    /// `spec_head` advance (the live spec tail OR the finalized reconcile), so
-    /// speculation resumes after any transient fall-behind. Bounded to ≈K by
-    /// the drain's leading `split_off` (entries ≤ `spec_head` are already
-    /// executed speculatively or finalized ⇒ stale) — no arbitrary cap.
+    /// Notarized speculative blocks that arrived ahead of `spec_head` or before their
+    /// parent executed, keyed by height and parked rather than dropped. Re-driven by
+    /// [`Self::try_drain_parked`] on the next `spec_head` advance, so speculation resumes
+    /// after a transient fall-behind. Bounded to about K by the drain's leading
+    /// `split_off`; entries ≤ `spec_head` are already executed or finalized.
     parked_spec: BTreeMap<u64, ParkedSpec>,
 
     peers_for_finalization: PeersForFinalization,
-    /// A finalized block PARKED by guard #2 (see [`Deferred`]); held with its
-    /// `Exact` ack AND its already-resolved σ. The `pending_finalizations`
-    /// drain is paused while this is `Some` (preserves strict order). Re-poked
-    /// event-driven off the marshal's live delivery stream
-    /// (`Update::Tip`/`Update::Block`) PLUS the existing FCU heartbeat (the
-    /// last-catch-up-block completeness backstop: a body landing at
-    /// `height <= tip` fires no `Update::Tip`, so pure delivery re-poke would
-    /// deadlock there — [[dpos-deferred-catchup-invariants]] #3). There is NO
-    /// give-up timer: a never-arriving body keeps the block parked, never shuts
-    /// the executor down (§8.11).
+    /// A finalized block parked by guard #2 (see [`Deferred`]), held with its `Exact`
+    /// ack and resolved σ; the `pending_finalizations` drain is paused while this is
+    /// `Some`, preserving strict order. Re-poked off the marshal's delivery stream and
+    /// the FCU heartbeat — the heartbeat is the completeness backstop, since a body
+    /// landing at `height <= tip` fires no `Update::Tip`. No give-up timer.
     deferred: Option<Deferred>,
 
-    /// The delivered, not-yet-derived finalized block whose σ has not landed
-    /// yet. Beacon-ACTIVE rounds only: an inactive round derives `None`
-    /// immediately and never reaches this slot. It is HELD (not parked: no
-    /// gauge, no hint, no re-poke, no deadline) and derived by the seed-record
-    /// notify arm the moment σ lands — the ONLY exit, since nothing else can
-    /// supply the value. Both block feeders (the `pending_finalizations` drain
-    /// and the startup-backfill walk) are gated on this slot being empty, which
-    /// is what keeps a second delivery from overwriting a live `Exact`.
-    /// Two dispositions for the held ack, and they are NOT the same: on a re-jump
-    /// (`reseed_forward`) it is acked `Ok` — the floor MOVES, so the height is
-    /// pruned, not skipped; on shutdown / task exit it is DROPPED, deliberately,
-    /// never acked — the withheld ack IS the restart self-heal (module docs).
-    /// Needs no persistence. On a `SafetyHalt` it joins `park_halted`'s retained
-    /// set, exactly like `deferred.ack`.
+    /// The delivered, not-yet-derived finalized block whose σ has not landed yet.
+    /// Beacon-active rounds only: an inactive round derives `None` immediately and
+    /// never reaches this slot. It is held, not parked (no gauge, no hint, no re-poke, no
+    /// deadline), and derived by the seed-record notify arm the moment σ lands — the only
+    /// exit. Both block feeders, the `pending_finalizations` drain and the
+    /// startup-backfill walk, are gated on this slot being empty, which keeps a second
+    /// delivery from overwriting a live `Exact`.
+    ///
+    /// On a re-jump the held ack is acked `Ok` — the floor moves, so the height is
+    /// pruned, not skipped; on shutdown it is dropped deliberately, never acked, and that
+    /// withheld ack is the restart self-heal (see the module doc). On a `SafetyHalt` it
+    /// joins `park_halted`'s retained set.
     awaiting_seed: Option<HeldForSeed>,
 
-    /// See [`Config::randomness`]. Read by `spec_execute`'s §4.1 round
-    /// re-canonicalisation AND by [`Self::seed_at_own_round`], the sole seed
-    /// source of the finalized derive.
+    /// See [`Config::randomness`]. Read by `spec_execute`'s round re-canonicalisation and
+    /// by [`Self::seed_at_own_round`], the sole seed source of the finalized derive.
     randomness: std::sync::Arc<dyn crate::beacon::Beacon>,
 
-    /// See [`Config::epocher`]. Read ONLY by [`Self::seed_at_own_round`] to form
-    /// `h`'s own agreed seed round.
+    /// See [`Config::epocher`]. Read only by [`Self::seed_at_own_round`] to form `h`'s own
+    /// agreed seed round.
     epocher: crate::epocher::OriginEpocher,
 
-    /// See [`Config::anchor_advanced`]. Called from the three sites that raise
-    /// the finalized-execution cursor, immediately after each one.
+    /// See [`Config::anchor_advanced`]. Called immediately after each site that raises
+    /// the finalized-execution cursor.
     anchor_advanced: AnchorAdvancedFn,
 
-    /// The `Exact` ack of the block currently inside [`Self::try_derive`], moved
-    /// into this slot at entry and taken back at every non-`Err` exit (the
-    /// `NeedAttestation` parks and the final `acknowledge()`). On an `Err` exit the ack
-    /// stays here instead of being dropped inside `try_derive`'s frame — so a
-    /// `SafetyHalt` `Err` reaches [`Self::park_halted`] with the ack alive and
-    /// retainable (the ack-invariant in the module docs). `None` whenever
+    /// The `Exact` ack of the block currently inside `try_derive`, moved here at entry
+    /// and taken back at every non-`Err` exit. On an `Err` exit it stays here rather than
+    /// being dropped in `try_derive`'s frame, so a `SafetyHalt` reaches `park_halted`
+    /// with the ack alive and retainable (the module doc's ack invariant). `None` whenever
     /// `try_derive` is not on the stack.
     inflight_ack: Option<Exact>,
 }
@@ -1176,52 +976,29 @@ where
         let finalized_heights_to_backfill =
             (cfg.last_execution_finalized_height + 1)..=cfg.last_consensus_finalized_height.get();
 
-        // Finalized-execution cursor (restart seed): seed from the marshal's
-        // DURABLE ACKED cursor (`last_consensus_finalized_height` = commonware
-        // marshal `last_processed_height`, LATEST_KEY 0xFF), NOT the reth head
-        // (`last_execution_finalized_height` = `provider.last_block_number()`).
-        // Every ACKED height is consensus-FINALIZED (unique — no sibling) and
-        // passed the `try_derive` canonical postcondition before its ack
-        // persisted, so the provider's canonical hash there IS the finalized
-        // hash — the cursor's stated invariant ([`FinalizedCursor`]).
+        // Finalized-execution cursor (restart seed): seed from the marshal's durable
+        // acked cursor (`last_consensus_finalized_height` = marshal
+        // `last_processed_height`), not the reth head. Every acked height is
+        // consensus-final and passed `try_derive`'s canonical postcondition before its
+        // ack persisted, so the provider's canonical hash there is the finalized hash.
         //
-        // The reth head is UNSOUND as the seed: under deferred execution
-        // `spec_execute` advances the head at NOTARIZATION latency and a clean
-        // shutdown persists it, so heights in `(acked, head]` are notarized-only
-        // and a sibling is still possible (notarize A → nullify → finalize B). A
-        // restart straddling such a nullify race, seeded from the head, could
-        // serve the orphaned sibling as `finalized_executed_hash` to a propose
-        // before the marshal re-reconciles the height — committing a wrong
-        // result (divergence, re-entered through restart).
+        // The reth head is unsound as the seed: under deferred execution `spec_execute`
+        // advances the head at notarization latency and a clean shutdown persists it, so
+        // heights in `(acked, head]` are notarized-only and a sibling is still possible
+        // (notarize A → nullify → finalize B). A restart straddling that race, seeded
+        // from the head, could serve the orphaned sibling as `finalized_executed_hash`
+        // to a propose before the marshal re-reconciles the height.
         //
-        // Seeding the cursor lets `finalized_executed_hash` resolve reth's
-        // canonical chain across a restart (a fresh process starts the cursor at
-        // 0; without the seed the first K post-restart proposals/verifies read
-        // None — a coordinated ≥ f+1 restart would wedge permanently). A provider
-        // miss at h ≤ cursor (a crash lost the reth tail above the ack ⇒ the
-        // backfill range `(last_execution+1..=last_consensus)` re-derives it, or
-        // a deep prune) returns None ⇒ propose-skip, never a wrong hash.
-        //
-        // `ordering_finalized` (the result-final cursor) is seeded from the SAME
-        // acked height for the SAME reason (:812): seeded from the reth head it
-        // would inherit the notarized-only `(acked, head]` tail — a straddled
-        // nullify race then makes `result_final = ordering_finalized − K` and the
-        // `finalized_executed_hash` reads under it resolve reth's canonical chain
-        // at heights whose sibling is still live, so a restart could pin the
-        // engine-API `finalized` onto (or serve K-below result attestations over)
-        // an orphaned sibling. Seeding at the acked height keeps every consumer of
-        // `ordering_finalized` (result_final, re-jump gap/`from`, the `.max`
-        // self-update) at or below a uniquely-finalized height; the
-        // `(acked, head]` derives are reconstructed idempotently by the
-        // marshal-driven backfill (`new_payload` on a known block = VALID) and the
-        // `update_head` reconcile — the head is left seeded at the speculative tip
-        // (`spec_head`, :827), which is allowed to lead.
+        // `ordering_finalized` is seeded from the same acked height for the same reason:
+        // seeded from the reth head it would inherit that tail and could pin the
+        // engine-API `finalized` onto an orphaned sibling. The `(acked, head]` derives
+        // are reconstructed idempotently by the marshal-driven backfill and the
+        // `update_head` reconcile, while the head is left at the speculative tip.
         cfg.executed
             .advance_finalized(cfg.last_consensus_finalized_height.get());
-        // The committee module anchors on the cursor just seeded — tell it, so
-        // the first reads of this process are taken at the restart anchor rather
-        // than at height 0. STRICTLY AFTER the seed above (see
-        // [`AnchorAdvancedFn`]).
+        // The committee module anchors on the cursor just seeded, so tell it after the
+        // seed above: the first reads of this process are then taken at the restart
+        // anchor rather than at height 0.
         (cfg.anchor_advanced)();
 
         let pending_finalizations_gauge = Gauge::<i64>::default();
@@ -1260,16 +1037,13 @@ where
             rejump_fault_streak: 0,
             jump_done: OptionFuture::default(),
             jump_handle: None,
-            // Best estimate of the marshal frontier at startup; refined by every
-            // `Update::Tip`. Drives the heartbeat re-poke (see field doc).
+            // Best estimate of the marshal frontier at startup, refined by every
+            // `Update::Tip`.
             last_tip_height: cfg.last_consensus_finalized_height,
-            // Seeded from the SAME value `outer.rs` seeds the marshal with, never 0.
-            // The guard below keys strictly on this field, and `MarshalActor::run`
-            // performs its startup `try_dispatch_blocks` BEFORE it processes the
-            // buffered `SetFloor` — so a 0 here leaves the stale-dispatch guard inert
-            // for exactly the window in which old-range blocks can escape into the
-            // deep-overlay derive it exists to prevent. Pre-existing on every
-            // jump-landing boot; unrelated to boundary seeding.
+            // Seeded from the same value `outer.rs` seeds the marshal with, never 0: the
+            // stale-dispatch guard keys on this field, and the marshal dispatches blocks
+            // before processing its buffered `SetFloor`, so a 0 here would leave the
+            // guard inert exactly while old-range blocks can escape.
             marshal_floor: cfg.initial_marshal_floor,
             boundary_fetch: cfg.boundary_fetch,
             boundary_enter: cfg.boundary_enter,
@@ -1277,9 +1051,8 @@ where
             last_canonicalized: LastCanonicalized {
                 forkchoice: ForkchoiceState {
                     head_block_hash: cfg.initial_head.1,
-                    // At cold-start there is no ordering-final tip above the
-                    // anchor yet: safe == finalized == head == anchor. They
-                    // diverge only once the chain advances (Phase 2).
+                    // At cold start there is no ordering-final tip above the anchor yet,
+                    // so safe == finalized == head == anchor.
                     safe_block_hash: cfg.initial_finalized.1,
                     finalized_block_hash: cfg.initial_finalized.1,
                 },
@@ -1318,13 +1091,10 @@ where
         spawn_cell!(self.context, self.run().await)
     }
 
-    /// Test-only snapshot of the SEED fields `reseed_forward` and `init` must
-    /// agree on at a given landing — used to pin that the steady-state reseed
-    /// mirror never diverges from the cold-start seed
-    /// (`tests::reseed_forward_agrees_with_init`). `dpos_activation_block` is
-    /// deliberately EXCLUDED: it is a chain constant `reseed_forward` never
-    /// touches (the landing carries no new activation), so a follower whose
-    /// activation ≠ anchor must keep its own value.
+    /// Test-only snapshot of the seed fields `reseed_forward` and `init` must
+    /// agree on at a landing. `dpos_activation_block` is excluded: it is a
+    /// chain constant `reseed_forward` never touches, so a follower whose
+    /// activation differs from its anchor keeps its own value.
     #[cfg(test)]
     fn seed_fields(&self) -> (u64, (Height, B256), Height, Height, u64) {
         (
@@ -1339,30 +1109,19 @@ where
     async fn run(mut self) {
         info_span!("start").in_scope(|| info!("executor starting"));
 
-        // The beacon's wake-up stream (piece D, family2_finalized_tier.md §2.2).
-        // SUBSCRIBED HERE, before the loop and therefore before this actor's first
-        // seed read: a `broadcast` buffers from the subscription onward, so an
-        // event fired before it would be lost — and the first read below is what
-        // decides whether a height is HELD at all. Held as a LOCAL so the arm's
-        // future never borrows `self`, which the arm's `&mut self` body needs. A
-        // beacon with no seeds never publishes: the arm parks forever, exactly as
-        // the old `None` did.
+        // Subscribe before the loop and before this actor's first seed read: a
+        // `broadcast` buffers only from the subscription onward, so an event
+        // fired before it would be lost. Held as a local so the arm's future
+        // never borrows `self`, which the arm's `&mut self` body needs.
         let mut beacon_events = self.randomness.subscribe();
-        // Set when the beacon's sender is gone (`RecvError::Closed`). The arm's
-        // guard reads it, because a closed `broadcast` receiver returns `Closed`
-        // IMMEDIATELY and forever: left armed, the arm would spin without ever
-        // awaiting while a tip is HELD. The HEAD shape parked on a `Notify` whose
-        // sender it also held, so there was nothing to close; disarming keeps that
-        // behaviour (park forever) instead of a hot loop.
+        // Set when the beacon's sender is gone (`RecvError::Closed`).
         let mut beacon_events_closed = false;
 
         loop {
-            // PRE-CLASS latch gate. `dispatch_fault` reads the latch only when a FAULT
-            // reaches it, so a latch engaged with NO fault in flight — the datadir
-            // marker restored at startup (`sync_metrics::SafetyHalt::restore_marker`)
-            // — left this actor driving reth anyway. The latch means "stop writing to
-            // the EL", and this is the writer: park before pulling any work, retaining
-            // every marshal ack.
+            // `dispatch_fault` reads the latch only when a fault reaches it, so a
+            // latch engaged with no fault in flight — the datadir marker restored
+            // at startup — would leave this actor driving reth. Park before
+            // pulling any work, retaining every marshal ack.
             if self.safety_halt.is_engaged() {
                 self.park_halted(
                     "halt latch engaged before dispatch",
@@ -1372,12 +1131,11 @@ where
             }
 
             // Do not pull more work while a block is deferred awaiting its h+K
-            // attested body (guard #2) — the deferred block must derive first
-            // (strict order) — nor while a block is HELD awaiting its σ (same
-            // strict-order reason, and `on_finalized_block` would otherwise
-            // overwrite a live `Exact`) — nor while a
-            // jump is in flight (bugs 6/7: the jump is the SINGLE EL writer during
-            // backfill; a competing startup-drain FCU retargets reth's backfill).
+            // attested body (the deferred block must derive first), nor while a
+            // block is held awaiting its σ (same order, and `on_finalized_block`
+            // would otherwise overwrite a live `Exact`), nor while a jump is in
+            // flight (the jump is the single EL writer during backfill; a
+            // competing startup-drain FCU retargets reth's backfill).
             if self.deferred.is_none()
                 && self.awaiting_seed.is_none()
                 && self.pending_backfill.is_none()
@@ -1403,8 +1161,8 @@ where
                 (height, maybe_block) = &mut self.pending_backfill => {
                     match maybe_block {
                         Some(block) => {
-                            // Synthetic ack (the marshal already acked these
-                            // heights on a previous run); routes through the SAME
+                            // Synthetic ack: the marshal already acked these
+                            // heights on a previous run. Routes through the same
                             // resolve-and-derive path as live dispatch.
                             let (ack, _waiter) = Exact::handle();
                             let span = info_span!("backfill_on_start", %height);
@@ -1417,49 +1175,30 @@ where
                             } else if self.finalized_heights_to_backfill.is_empty()
                                 && self.sync_metrics.degraded_value(SyncReason::CrashRecover) == 1
                             {
-                                // #12 ENDS HERE, and NOT at a jump landing (4.2 Б2).
-                                // `dpos.rs`'s `RecoverOutcome::DeferToElSync` anchors the
-                                // cold start at reth's tip and raises
-                                // `dpos_sync_degraded{reason=crash_recover}`; THIS drain is
-                                // what walks `(reth tip .. marshal cursor]` back into reth,
-                                // block by block, through the same derive+import path live
-                                // dispatch uses. `maybe_re_jump` cannot do it and never
-                                // fires there: `last_tip_height` and `ordering_finalized`
-                                // are BOTH seeded from `last_consensus_finalized_height`
-                                // (`:1264`, `:1289`), so their difference is 0 at boot, and
-                                // the gate additionally refuses to spawn while this drain
-                                // is non-empty (`maybe_re_jump`, the
-                                // `finalized_heights_to_backfill` clause). The last drained
-                                // height is therefore the one moment the deferral is over.
+                                // The crash-recover deferral ends here, at the last
+                                // drained height, not at a jump landing: this drain
+                                // is what walks `(reth tip .. marshal cursor]` back
+                                // into reth through the live derive+import path.
+                                // `maybe_re_jump` cannot do it and never fires at
+                                // boot — `last_tip_height` and `ordering_finalized`
+                                // are seeded from the same value, so the gap is 0,
+                                // and its gate refuses while this drain is non-empty.
                                 self.sync_metrics.recover(SyncReason::CrashRecover);
                                 self.sync_metrics.crash_recover_gap_blocks.set(0);
                             }
                         }
                         None => {
-                            // bug 10, named by its CAUSE (4.2 Б2 fix-1, B2-02).
-                            //
-                            // The range this drain walks is
-                            // `(reth's last block .. the marshal's acked cursor]` (`init`),
-                            // and that cursor IS the marshal's finalized floor — the same
-                            // `last_processed_height` under `LATEST_KEY` that `SetFloor`
-                            // compares against and refuses to move below
-                            // (`.claude/COMMONWARE_INTERNALS.md:190-193`: repair starts at
-                            // `last_processed_height.next()`, `HintFinalized` skips `<=`
-                            // it, `store_finalization` drops `<=` it). So EVERY height the
-                            // drain asks for is at or below the floor, and a miss here is
-                            // a hole the marshal will never repair from anywhere — not a
-                            // transient. The reachable cause is an EL rolled back (a
-                            // snapshot restore) below a range this node once JUMPED OVER
-                            // and therefore never stored.
-                            //
-                            // Fail loud AT the true site: a skip merely relocates +
-                            // mislabels the fatal — the later gap-walk
-                            // (`derive_finalized_with_gap_fill`) re-hits the same height
-                            // and fails naming the WRONG one. Routed rather than `break`n:
-                            // a bare break leaves the loop WITHOUT reading the halt latch,
-                            // so an already-halted node exits and drops every retained
-                            // marshal `Exact` into Canceled — which the marshal treats as
-                            // fatal.
+                            // Every height this drain asks for is at or below the
+                            // marshal floor (its acked cursor), and the marshal never
+                            // repairs below its floor, so a miss here is permanent,
+                            // not transient — the reachable cause is an EL rolled
+                            // back below a range this node jumped over and never
+                            // stored. The fault is raised at the true site: a skip
+                            // would only relocate it to the later gap-walk, which
+                            // re-hits the same height and names the wrong one. Routed
+                            // rather than `break`n because a bare break skips the
+                            // halt-latch read and drops retained marshal `Exact`s into
+                            // Canceled, which is fatal.
                             let floor = *self.finalized_heights_to_backfill.end();
                             let fault = Fault::corruption(eyre::eyre!(
                                 "the marshal archive has no block at height {height}. Every \
@@ -1480,17 +1219,16 @@ where
                             }
                         }
                     }
-                    // Restore post-completion .is_none() invariant — upstream
-                    // OptionFuture does not auto-clear after Poll::Ready, but the
-                    // pending_finalizations arm guard below depends on it.
+                    // `OptionFuture` does not auto-clear after `Poll::Ready`, and
+                    // the `pending_finalizations` arm guard below depends on
+                    // `is_none()`.
                     *self.pending_backfill = None;
                 }
 
-                // Terminal outcome of the SPAWNED steady-state re-jump waiter
-                // (`maybe_re_jump`), delivered over the `jump_done` oneshot.
-                // OptionFuture does NOT auto-clear after Poll::Ready (cf.
-                // pending_backfill) — clear it (and its handle) here, then act on
-                // the outcome.
+                // Terminal outcome of the spawned re-jump waiter, delivered over
+                // the `jump_done` oneshot. `OptionFuture` does not auto-clear after
+                // `Poll::Ready`; clear it (and its handle) here, then act on the
+                // outcome.
                 outcome = &mut self.jump_done => {
                     *self.jump_done = None;
                     self.jump_handle = None;
@@ -1503,41 +1241,23 @@ where
                                     break;
                                 }
                             }
-                            // Progress: clear any stale fault tally. The #12
-                            // crash-recover gauge is NOT cleared here — that deferral
-                            // ends at the startup drain's last height, not at a jump
-                            // landing (see the `pending_backfill` arm above).
                             self.rejump_fault_streak = 0;
                         }
                         Ok(crate::cold_start_jump::JumpOutcome::Lagging) => {
                             debug!("steady-state re-jump: lagging / stale target — no-op");
-                            // The gap closed under the threshold on its own — clear
-                            // any stale tally.
                             self.rejump_fault_streak = 0;
                         }
                         Ok(crate::cold_start_jump::JumpOutcome::InvalidTarget(error)) => {
-                            // §5.4 "Посадка не на заверенную ветку" / "reth Invalid":
-                            // `Fault::corruption`, and NOT the rotation this arm used
-                            // to do (review B1-04).
-                            //
-                            // The target of a steady-state jump is the
-                            // `(finalization, block)` pair this node read out of its
-                            // OWN marshal archive (`maybe_re_jump`), which only
-                            // `store_finalization` writes and only after
-                            // `verify_delivered` — so the pair carries 2f+1 under a
-                            // committee this node read itself. There is no upstream
-                            // that chose it and therefore nobody to rotate AWAY from:
-                            // rotating would move the `Latest`/by-height seam and
-                            // leave the contradiction standing.
-                            //
-                            // Two causes reach here, and both say the same thing
-                            // about THIS node: reth rendered `Invalid` on the
-                            // attested branch mid-EL-sync, or `holds(result) == false`
-                            // after a `Valid` — the EL sat down somewhere other than
-                            // the branch a quorum attested. Either way the local EL
-                            // contradicts an authenticated certificate, which is the
-                            // corruption class: loud actor death, no further EL
-                            // writes, the supervisor aborts-all.
+                            // The jump target is the `(finalization, block)` pair
+                            // this node read from its own marshal archive, written
+                            // only by `store_finalization` after `verify_delivered`,
+                            // so it carries 2f+1 under a committee this node read
+                            // itself. There is no upstream to rotate away from.
+                            // Either cause that reaches here — reth `Invalid`
+                            // mid-EL-sync, or `holds(result) == false` after a
+                            // `Valid` — leaves the local EL contradicting an
+                            // authenticated certificate, which is corruption: loud
+                            // actor death, no further EL writes.
                             let fault = Fault::corruption(eyre::eyre!(
                                 "steady-state re-jump onto this node's OWN attested \
                                  archive pair did not land on the attested branch \
@@ -1552,11 +1272,10 @@ where
                             }
                         }
                         Ok(crate::cold_start_jump::JumpOutcome::Stalled(error)) => {
-                            // NON-fatal transient transport stall: count toward the
-                            // streak; an honest momentary stall must not insta-rotate.
-                            // At MAX consecutive stalls the upstream is failed over
-                            // (Rule L). The gap is re-evaluated on the next
-                            // `Update::Tip` / heartbeat re-poke regardless.
+                            // Transient transport stall: count it rather than
+                            // rotating on one bad tick. At `MAX_UPSTREAM_FAULTS`
+                            // consecutive stalls the upstream is failed over; the
+                            // gap is re-evaluated on the next tip or heartbeat.
                             self.rejump_fault_streak += 1;
                             warn!(
                                 error = %format_args!("{error:#}"),
@@ -1572,19 +1291,12 @@ where
                             }
                         }
                         Ok(crate::cold_start_jump::JumpOutcome::StalledWithPeers(error)) => {
-                            // Connected-but-wedged EL pipeline (soak v43): reth had
-                            // peers but its executed head stayed frozen — the divergence
-                            // root cause is unknown + DETERMINISTIC, so rotating the
-                            // upstream would not help (the wedge is local to reth's
-                            // pipeline, not a bad-upstream branch). Do NOT rotate: bump
-                            // the observability counter, ERROR-log, and RE-ARM — the next
-                            // `Update::Tip` / heartbeat re-poke re-spawns the waiter
-                            // (`maybe_re_jump`), so the node keeps re-attempting on the
-                            // heartbeat cadence while the refill stays DEFERRED (the
-                            // floor is never advanced onto an un-synced tip — chain-safe).
-                            // Each re-attempt re-wedges + re-logs + re-increments, so the
-                            // node is observably stuck instead of silently frozen at the
-                            // 6-h backstop.
+                            // reth is connected but its executed head is frozen: the
+                            // wedge is local to reth's pipeline, not a bad upstream
+                            // branch, so rotating would not help. Bump the counter,
+                            // log, and re-arm — the next tip or heartbeat re-spawns
+                            // the waiter, and the floor is never advanced onto an
+                            // un-synced tip.
                             self.sync_metrics.el_sync_stalled_with_peers.inc();
                             error!(
                                 error = %format_args!("{error:#}"),
@@ -1595,13 +1307,11 @@ where
                             );
                         }
                         Ok(crate::cold_start_jump::JumpOutcome::L1Fork(error)) => {
-                            // #10 SafetyHalt (Phase 3): the EL-synced head does NOT
-                            // descend from the L1-FINALIZED checkpoint — a fork
-                            // against L1 finality, the strongest trust root. There
-                            // is nothing to rotate to — L1 finality itself disagrees
-                            // — so HALT (demote to verify-only, stop driving reth,
-                            // stay observable) and wait for the L1 proof + governance
-                            // recovery.
+                            // The EL-synced head does not descend from the
+                            // L1-finalized checkpoint, so there is no upstream to
+                            // rotate to: L1 finality itself disagrees. Halt (demote
+                            // to verify-only, stop driving reth) and wait for the L1
+                            // proof + governance recovery.
                             let fault = Fault::fork_safety(
                                 SyncReason::L1Fork,
                                 eyre::eyre!(
@@ -1616,8 +1326,6 @@ where
                             }
                         }
                         Err(_canceled) => {
-                            // The spawned waiter dropped its sender (task aborted /
-                            // panicked) without sending — nothing to act on.
                             debug!("steady-state re-jump waiter canceled before completion");
                         }
                     }
@@ -1625,27 +1333,24 @@ where
 
                 Some((cause, block, ack)) = self.pending_finalizations.next(),
                 if self.deferred.is_none()
-                    // A block HELD for its σ must derive before the next one is
+                    // A block held for its σ must derive before the next is
                     // pulled: strict order, and `on_finalized_block`'s slot
-                    // assignment would otherwise drop a live `Exact` (Canceled →
-                    // fatal to the marshal). Queued entries stay ALIVE meanwhile,
-                    // bounded by the marshal's MAX_PENDING_ACKS, exactly as under
-                    // the `deferred` gate. `maybe_re_jump` is deliberately NOT
-                    // gated on this — that gate is what bounds a σ-less node's
-                    // stall.
+                    // assignment would otherwise drop a live `Exact` into Canceled,
+                    // which is fatal to the marshal. Queued entries stay alive,
+                    // bounded by the marshal's `MAX_PENDING_ACKS`. `maybe_re_jump`
+                    // is deliberately not gated here: that gate is what bounds a
+                    // σ-less node's stall.
                     && self.awaiting_seed.is_none()
                     && self.pending_backfill.is_none()
                     && self.finalized_heights_to_backfill.is_empty()
-                    // bugs 6/7: the jump is the SINGLE EL writer while in flight — a
-                    // finalize FCU here (`try_derive`) carries a LOW finalized hash that
-                    // retargets reth's backfill away from the jump tip, so the jump's
-                    // `Valid` terminator never fires (feeds bug 5's ceiling trip). Gating
-                    // the drain on `jump_done.is_none()` also means no NEW block parks
-                    // during a jump — the ONLY parked block a jump can meet is one parked
-                    // BEFORE it spawned (§4.3), which `reseed_forward` disposes via
-                    // `ack.acknowledge()` (Ok). `repoke_deferred` is gated on
-                    // `jump_done.is_none()` too, so that held block stays untouched
-                    // mid-jump. Queued acks stay ALIVE (never dropped).
+                    // The jump is the single EL writer while in flight: a finalize
+                    // FCU here would carry a low finalized hash that retargets reth's
+                    // backfill away from the jump tip, so the jump's `Valid`
+                    // terminator never fires. Gating the drain also means no new
+                    // block parks during a jump — the only parked block a jump can
+                    // meet is one parked before it spawned, which `reseed_forward`
+                    // disposes by acknowledging. `repoke_deferred` is gated the same
+                    // way.
                     && self.jump_done.is_none() => {
                     self.pending_finalizations_gauge
                         .set(self.pending_finalizations.len() as i64);
@@ -1658,11 +1363,10 @@ where
 
                 msg = self.mailbox.recv() => {
                     let Some(msg) = msg else {
-                        // Not a fault — every sender dropped, the node is tearing this
-                        // executor down. The latch still governs whether we may LEAVE:
-                        // a halted executor holds marshal `Exact` acks, and returning
-                        // here drops them into Canceled, which the marshal treats as
-                        // fatal.
+                        // Not a fault: every sender dropped and the node is tearing
+                        // this executor down. The latch still governs whether we may
+                        // leave — a halted executor holds marshal `Exact` acks, and
+                        // returning here drops them into Canceled.
                         if self.safety_halt.is_engaged() {
                             self.park_halted(
                                 "mailbox closed",
@@ -1670,10 +1374,10 @@ where
                             )
                             .await;
                         }
-                        // Counted BELOW the park: `park_halted` never returns, so a halted
-                        // executor is still alive holding marshal acks — reporting an exit
-                        // for it would destroy the operator's only "torn down" vs "halted
-                        // but observable" discriminator.
+                        // Counted below the park: `park_halted` never returns, so a
+                        // halted executor is still alive holding marshal acks, and
+                        // reporting an exit would erase the operator's "torn down" vs
+                        // "halted but observable" discriminator.
                         metrics::counter!(
                             "dpos_executor_exit_total", "cause" => "mailbox_closed"
                         )
@@ -1688,24 +1392,14 @@ where
                     }
                 }
 
-                // Seed-record wake-up arm (replaces the `SpecNotarized` Poke).
-                // The mechanism is the beacon's `broadcast::Sender<BeaconEvent>`
-                // and its `SeedRecorded` variant (`beacon/seed_index.rs`), NOT a
-                // `Notify`: a broadcast buffers only FROM THE SUBSCRIPTION
-                // onward and drops a send with no receiver, where a `notify_one`
-                // permit survived having no waiter at all
-                // (`beacon/surface.rs:236-243`). A HELD tip's own round seed just
-                // landed in the `SeedIndex` — the
-                // record-vs-delivery race the on-delivery eager derive missed.
-                // Gated on a tip being HELD and no predecessor parked / jump in
-                // flight (the same suppression `try_eager_finalized_derive`
-                // enforces internally — the guard just avoids a redundant wake).
-                // The subscription is taken before this actor's first seed read,
-                // so a record that lands between the miss lookup and this await is
-                // buffered rather than lost; a spurious wake (an event for an
-                // unrelated round) is a harmless idempotent re-check (a miss
-                // re-holds). Fires the FINALIZED-tier derive, so a
-                // SafetyHalt-class error PROPAGATES.
+                // Seed-record wake-up arm. Uses the beacon's
+                // `broadcast::Sender<BeaconEvent>` and its `SeedRecorded` variant
+                // rather than a `Notify`: a broadcast buffers only from the
+                // subscription onward and drops a send with no receiver, whereas a
+                // `notify_one` permit survived having no waiter. A held tip's own
+                // round seed may land after the delivery that missed it, so this
+                // arm re-attempts the finalized-tier derive; a spurious wake is a
+                // harmless idempotent re-check.
                 event = beacon_events.recv(), if !beacon_events_closed
                     && self.awaiting_seed.is_some()
                     && self.deferred.is_none()
@@ -1713,9 +1407,6 @@ where
                     match classify_seed_wake(&event) {
                         SeedWake::Ignore => continue,
                         SeedWake::Disarm => {
-                            // The beacon is gone. Disarm rather than re-poll: one
-                            // line, then this arm never runs again for the life of
-                            // the actor.
                             beacon_events_closed = true;
                             error!(
                                 "beacon wake-up channel closed; held tips will only \
@@ -1744,20 +1435,17 @@ where
                             break;
                         }
                     }
-                    // Re-evaluate the steady-state re-jump on the heartbeat tick.
-                    // The re-jump's `Stalled` retry otherwise depends solely on the
-                    // next `Update::Tip`; if the upstream frontier has plateaued
-                    // while reth's backfill is the thing stalled, no further tip
-                    // arrives → silent permanent wedge. `maybe_re_jump` self-gates
-                    // on the gap / in-flight, so it is a no-op whenever the node is
-                    // not actually behind. (Cannot error.)
+                    // Re-evaluate the steady-state re-jump on the heartbeat tick: a
+                    // `Stalled` retry otherwise depends on the next tip, and if the
+                    // upstream frontier has plateaued while reth's backfill is
+                    // stalled no further tip arrives, leaving a silent permanent
+                    // wedge.
                     let _ = self.maybe_re_jump(self.last_tip_height).await;
-                    // Delivery-independent re-poke of a parked block (§4.5): a cert
-                    // landing at `height <= tip` fires no `Update::Tip`, so pure
-                    // delivery re-poke deadlocks on the last catch-up block
-                    // ([[dpos-deferred-catchup-invariants]] #3). This existing tick
-                    // (reused, no new timer) re-checks `get_finalization` — it never
-                    // shuts down; a still-missing body just re-stays parked.
+                    // Delivery-independent re-poke of a parked block: a cert landing
+                    // at a height at or below the tip fires no tip update, so a
+                    // delivery-only re-poke would deadlock on the last catch-up
+                    // block. Reuses this tick; a still-missing body just re-stays
+                    // parked.
                     if let Err(fault) = self.repoke_deferred().await {
                         if self.dispatch_fault("deferred re-poke", fault).await
                             == Disposition::Shutdown
@@ -1765,18 +1453,16 @@ where
                             break;
                         }
                     }
-                    // Observation only (see `detect_stalled_seed_hold`): reads the
-                    // clock on this existing tick and cannot complete, abort or
-                    // re-key the hold.
+                    // Observation only: reads the clock on this existing tick and
+                    // cannot complete, abort or re-key the hold.
                     self.detect_stalled_seed_hold();
                     self.reset_fcu_heartbeat_timer();
                 }
 
-                // Frozen-tip frontier probe (see `ReJump::probe`): the live-follow
-                // driver for a validator with no cert-inlet (plane-native). A no-op
-                // whenever the tip advanced since the last tick or no probe is wired.
-                // A productive probe (hinted a new frontier) arms the fast-cadence
-                // burst so an actively-following demoted node trails by ~one RTT.
+                // Frontier probe: the live-follow driver for a validator with no
+                // cert-inlet. A productive probe (hinted a new frontier) arms the
+                // fast-cadence burst so an actively-following demoted node trails by
+                // about one RTT.
                 _ = (&mut self.frontier_probe_timer).fuse() => {
                     if self.probe_frontier().await {
                         self.probe_fast_left = FRONTIER_PROBE_FAST_BURST;
@@ -1793,43 +1479,32 @@ where
             }
         }
 
-        // Cancel the read-only re-jump waiter on shutdown (mirror of the
-        // subsystem aborts in `outer.rs`) so a spawned `sync_to` wait does not
-        // outlive the executor task. All `break`s converge here (a SafetyHalt
-        // never breaks — `park_halted` parks forever instead; `on_fatal` only
-        // logs, and the router then returns `Shutdown`).
+        // Cancel the read-only re-jump waiter on shutdown so a spawned `sync_to`
+        // wait does not outlive the executor task. All `break`s converge here; a
+        // SafetyHalt never breaks, since `park_halted` parks forever.
         if let Some(handle) = self.jump_handle.take() {
             handle.abort();
         }
     }
 
-    /// The ONE disposition router (family 5). Every fallible executor boundary
-    /// returns a [`Fault`]; this is the only place a [`FaultClass`] becomes an
-    /// action, and therefore the only place `SafetyHalt::engage` is called.
+    /// The disposition router. Every fallible executor boundary returns a
+    /// [`Fault`]; this is the only place a [`FaultClass`] becomes an action, and
+    /// therefore the only place `SafetyHalt::engage` is called. Engaging only
+    /// here means a fork-safety verdict cannot be latched without also being
+    /// routed.
     ///
-    /// That relocation IS the fix, not a tidy-up. The arming sites used to
-    /// engage the latch themselves and then return an untyped `eyre::Report`,
-    /// trusting every frame above them to propagate it — so a `ForkSafety`
-    /// verdict raised on the speculative path engaged the latch and was then
-    /// reduced to `warn!("speculative execution skipped")`, leaving a node that
-    /// had latched "I refuse this chain" still driving reth forward. Engaging
-    /// only here means a fork-safety verdict cannot be latched without also
-    /// being routed.
-    ///
-    /// Dispositions, straight off [`FaultClass`]:
-    /// - `ForkSafety` → engage + [`Self::park_halted`] (DIVERGES);
-    /// - `Corruption` → loud actor death, latch untouched → `Shutdown` →
-    ///   the run loop `break`s and the supervisor aborts-all;
+    /// Dispositions, off [`FaultClass`]:
+    /// - `ForkSafety` → engage + [`Self::park_halted`] (diverges);
+    /// - `Corruption` → loud actor death, latch untouched → `Shutdown` → the run
+    ///   loop `break`s and the supervisor aborts-all;
     /// - the transient classes + `Defer` → degrade-visible / counted, and the
-    ///   loop CONTINUES (speculation stays best-effort).
+    ///   loop continues (speculation stays best-effort).
     ///
-    /// The is-engaged check runs BEFORE the class match so a fault arriving after
+    /// The is-engaged check runs before the class match so a fault arriving after
     /// the latch is already set parks whatever its class: the latch means "stop
-    /// writing to the EL", and the executor is the writer. There are exactly two
-    /// production engage sites — this router, and the datadir marker restored at
-    /// startup (`sync_metrics::SafetyHalt::restore_marker`). The marker case is
-    /// why this check is not sufficient on its own: no fault need ever reach the
-    /// router, so the run loop carries its own pre-class gate.
+    /// writing to the EL", and the executor is the writer. The other production
+    /// engage site is the datadir marker restored at startup, which no fault
+    /// reaches — hence the run loop's own pre-class gate.
     async fn dispatch_fault(&mut self, stage: &str, fault: Fault) -> Disposition {
         let (class, cause) = fault.into_parts();
         metrics::counter!(
@@ -1884,9 +1559,9 @@ where
         }
     }
 
-    /// Log a genuine crash. Reached ONLY from the router's `Corruption` arm,
-    /// which has already ruled out an engaged latch — the caller `break`s the
-    /// loop and the OuterEngine supervisor answers with abort-all.
+    /// Log a genuine crash. Reached only from the router's `Corruption` arm,
+    /// with the latch disengaged; the caller `break`s the loop and the
+    /// supervisor aborts-all.
     async fn on_fatal(&mut self, stage: &str, error: eyre::Report) {
         error_span!("shutdown").in_scope(|| {
             error!(
@@ -1897,22 +1572,16 @@ where
         });
     }
 
-    /// Terminal Phase-3 `SafetyHalt` park: stop deriving/driving reth, RETAIN
-    /// every marshal `Exact` ack un-resolved, and never return (only a real
-    /// external shutdown aborts the task).
+    /// Terminal `SafetyHalt` park: stop deriving/driving reth, retain every
+    /// marshal `Exact` ack unresolved, and never return (only an external
+    /// shutdown aborts the task).
     ///
-    /// Why retention (the ack-invariant in the module docs): acknowledging would
-    /// durably advance the marshal's `last_processed_height` past the diverged
-    /// height (a restart would then skip it forever — silently "resolving" the
-    /// divergence), while DROPPING cancels the `Exact` and the marshal treats a
-    /// Canceled ack as fatal (`error!("application did not acknowledge block");
-    /// return` in commonware marshal/core/actor.rs) — killing the component that
-    /// serves blocks + certs to peers, i.e. a zombie node. Holding the acks does
-    /// NOT freeze the marshal: its main loop is a `select_loop!` with the ack
-    /// waiters in an independent arm, so an unresolved ack merely occupies one of
-    /// the 16 dispatch-window slots while the mailbox + resolver arms keep
-    /// serving. The marshal may keep dispatching blocks up to that window after
-    /// the halt engages; every late-arriving ack is retained here too.
+    /// Acknowledging would durably advance the marshal's `last_processed_height`
+    /// past the diverged height, so a restart would skip it forever; dropping
+    /// cancels the `Exact`, which the marshal treats as fatal. Holding the acks
+    /// does not freeze the marshal: its ack waiters live in an independent arm,
+    /// so an unresolved ack merely occupies a dispatch-window slot while the
+    /// mailbox and resolver keep serving.
     async fn park_halted(&mut self, stage: &str, error: eyre::Report) {
         error_span!("safety_halt").in_scope(|| {
             error!(
@@ -1931,9 +1600,7 @@ where
         if let Some(d) = self.deferred.take() {
             retained.push(d.ack);
         }
-        // The seed-held block (same treatment as `deferred.ack`): never acked
-        // (would durably skip an underived height), never dropped (a Canceled
-        // ack kills the marshal).
+        // The seed-held block gets the same treatment as `deferred.ack`.
         if let Some(held) = self.awaiting_seed.take() {
             retained.push(held.ack);
         }
@@ -1954,23 +1621,20 @@ where
                 }
                 Some(_) => {}
                 // Every sender dropped (external teardown in flight): keep the
-                // retained acks alive and pend until the task is aborted — the
-                // marshal may still be draining.
+                // retained acks alive and pend until the task is aborted.
                 None => futures::future::pending::<()>().await,
             }
         }
     }
 
-    /// The finalized-delivery entry: a block arriving from EITHER source (the
-    /// `Update::Block` drain or the startup backfill walk) is stashed in the
-    /// seed-hold slot and immediately resolved. The stash happens BEFORE the
-    /// derive so a fatal derive under an engaged SafetyHalt reaches
-    /// `park_halted` with this ack retainable rather than dropped in this frame
-    /// (a dropped `Exact` is Canceled, which the marshal treats as fatal).
+    /// Finalized-delivery entry: a block from either the `Update::Block` drain
+    /// or the startup backfill walk is stashed in the seed-hold slot and
+    /// immediately resolved. The stash precedes the derive so a fatal derive
+    /// under an engaged SafetyHalt reaches `park_halted` with this ack retained
+    /// rather than dropped.
     ///
-    /// Both feeders are gated on the slot being empty (`awaiting_seed.is_none()`
-    /// in the drain guard and in the startup-drain feed), so the `Some(..)`
-    /// assignment below can never overwrite a live ack.
+    /// Both feeders gate on the slot being empty, so the assignment below cannot
+    /// overwrite a live ack.
     async fn on_finalized_block(
         &mut self,
         cause: Span,
@@ -1994,30 +1658,23 @@ where
 
     /// Resolve the held block's σ and derive it, or keep holding.
     ///
-    /// σ comes from [`Self::seed_at_own_round`] — the block's OWN agreed round,
-    /// predicate first — and nothing else. Three dispositions:
+    /// σ comes from [`Self::seed_at_own_round`], the block's own agreed round,
+    /// and nothing else:
     ///
     /// - `Present`: derive now, hold consumed.
-    /// - `Inactive`: the agreed derivation at a beacon-inactive epoch IS `None`,
-    ///   so derive now with `None`. This is not a miss and must never hold: a
-    ///   pre-bootstrap link has no σ to wait for.
-    /// - `Missing`: beacon-active with no σ yet — RESTORE the hold. The only
-    ///   exit is the seed-record notify; there is no timer, and the
-    ///   `order.digest()` fallback is not an option (it would derive a different
-    ///   `prev_randao` than the network — a silent fork).
+    /// - `Inactive`: derive now with `None`; a beacon-inactive epoch has no σ
+    ///   and a pre-bootstrap link must never hold for one.
+    /// - `Missing`: restore the hold. The only exit is the seed-record notify;
+    ///   the `order.digest()` fallback would derive a different `prev_randao`
+    ///   than the network.
     ///
-    /// Suppressed while a predecessor is PARKED (`deferred`) or a re-jump is in
-    /// flight (`jump_done`): those own the strict-order / single-EL-writer
-    /// invariant, so the block stays in the slot (mirrors `spec_execute`'s
-    /// guard). Both feeders are gated on the same two, so the suppression cannot
-    /// strand a block behind a delivery it will never see.
+    /// Suppressed while a predecessor is parked or a re-jump is in flight, which
+    /// own the strict-order / single-EL-writer invariant.
     ///
     /// `trigger` distinguishes the on-delivery attempt from the event-driven
-    /// re-attempt fired by [`Self::run`]'s seed-notify arm when σ was just
-    /// recorded (the record-vs-delivery race self-heal). A `Notified` HIT is
-    /// counted `outcome="recovered"` (the race fired and was closed without a
-    /// further finalized delivery); a `Notified` MISS is a silent no-op, so the
-    /// miss counter is NOT inflated on every notify while held.
+    /// re-attempt after σ was recorded. A `Notified` hit is counted
+    /// `outcome="recovered"`; a `Notified` miss is a silent no-op, so the miss
+    /// counter is not inflated on every notify while held.
     async fn try_eager_finalized_derive(&mut self, trigger: EagerTrigger) -> Result<(), Fault> {
         if self.deferred.is_some() || self.jump_done.is_some() {
             return Ok(());
@@ -2036,7 +1693,7 @@ where
             OwnRoundSeed::Present(seed) => Some(seed),
             OwnRoundSeed::Inactive => None,
             OwnRoundSeed::Missing => {
-                // `since`/`reported` ride back UNCHANGED: this is the same hold
+                // `since`/`reported` ride back unchanged: this is the same hold
                 // re-entering the slot, not a new one.
                 self.awaiting_seed = Some(HeldForSeed {
                     cause,
@@ -2068,12 +1725,11 @@ where
         Ok(())
     }
 
-    /// PARK a parked-outcome in the deferred slot (a `Done` outcome is a no-op).
-    /// `fresh` is `true` for a block first derived off the pipeline — which sets
-    /// the observability gauge and, for guard #2, hints the missing `h + K` body
-    /// and `warn!`s once — and `false` for a re-poke re-stash (the block is
-    /// already parked; do not re-hint/re-warn). There is NO deadline: parking is
-    /// the terminal behaviour, re-poked event-driven, never a shutdown (§8.11).
+    /// Park a parked outcome in the deferred slot; `Done` is a no-op. `fresh` is
+    /// true for a block first derived off the pipeline, which sets the
+    /// observability gauge and hints the missing `h + K` body, and false for a
+    /// re-poke re-stash, which must not re-hint or re-warn. Parking is terminal,
+    /// re-poked event-driven, with no deadline.
     async fn defer_if_needed(&mut self, outcome: DeriveOutcome, fresh: bool) {
         match outcome {
             DeriveOutcome::Done => {}
@@ -2098,10 +1754,8 @@ where
                 if fresh {
                     self.deferred_height.set(d.order.height as i64);
                 }
-                // No `h + K` hint: the archive is not missing anything — the EL
-                // simply has not canonicalized what we already imported. The
-                // `warn!` was emitted at the park site, which holds the parent
-                // height this is waiting on.
+                // No `h + K` hint: the archive holds the body; the EL has just
+                // not canonicalized what we already imported.
                 self.deferred = Some(*d);
             }
             DeriveOutcome::NeedPrefixSeed(d) => {
@@ -2109,22 +1763,20 @@ where
                     self.deferred_height.set(d.order.height as i64);
                 }
                 // No `h + K` hint either: the body is in the archive, its σ is
-                // not, and σ is not askable by round any more (the by-round pull
-                // retired with `TAG_SEED_RETIRED`). It arrives on its own from the
-                // cert inlet, and the re-poke re-runs the walk's own lookup.
+                // not, and σ is no longer askable by round. It arrives on its own
+                // from the cert inlet, and the re-poke re-runs the walk's own
+                // lookup.
                 self.deferred = Some(*d);
             }
         }
     }
 
-    /// Re-attempt the parked derive on a marshal delivery event or the FCU
-    /// heartbeat — a plain "is `h + K`'s body here yet" retry (σ is retained in
-    /// [`Deferred::seed`]; ZERO lookups). Event-driven, NEVER a
-    /// shutdown: a still-missing body re-stays parked. Gated on
-    /// `jump_done.is_none()` so a parked block is not re-derived mid-jump (a
-    /// landed re-jump disposes it via `reseed_forward`). A genuine derive `Err`
-    /// (FCU/execution fault) IS fatal — propagated to the caller (the only
-    /// surviving shutdown, matching the normal derive arms).
+    /// Re-attempt the parked derive on a marshal delivery or the FCU heartbeat:
+    /// a plain "is `h + K`'s body here yet" retry with σ retained in
+    /// [`Deferred::seed`]. A still-missing body re-stays parked. Gated on
+    /// `jump_done.is_none()` so a parked block is not re-derived mid-jump; a
+    /// landed re-jump disposes it via `reseed_forward`. A genuine derive `Err` is
+    /// fatal and propagated to the caller.
     async fn repoke_deferred(&mut self) -> Result<(), Fault> {
         if self.jump_done.is_some() {
             return Ok(());
@@ -2149,35 +1801,23 @@ where
         self.fcu_heartbeat_timer = Box::pin(self.context.sleep(self.fcu_heartbeat_interval));
     }
 
-    /// One frontier-probe tick (see [`ReJump::probe`]). Returns `true` iff this
-    /// probe was PRODUCTIVE (hinted a new frontier — the fast-cadence trigger).
+    /// One frontier-probe tick (see [`ReJump::probe`]). Returns `true` iff the
+    /// probe hinted a new frontier, the fast-cadence trigger.
     ///
     /// Outside a fast burst, a tip that advanced since the previous tick means the
-    /// marshal is learning finalizations from an independent live source
-    /// (in-committee consensus or an inlet) — snapshot and return without network
-    /// traffic. DURING a burst that advance is the probe's own delivery, so the
-    /// probe keeps firing.
+    /// marshal is learning finalizations from an independent live source, so the
+    /// probe snapshots and returns without network traffic; during a burst that
+    /// advance is the probe's own delivery, so the probe keeps firing.
     ///
-    /// A probe does TWO things (§5.2 "Триггер и лестница"), and the frozen tip is
-    /// what earns both: the LADDER STEP `Finalized{last(T+1)}` addressed at
-    /// `committee[T+1]`, where `T` is the epoch this node last handed to `track`;
-    /// and the untargeted `Latest`, whose answered height — when it stands above
-    /// the marshal tip — becomes one `hint_finalization(frontier)`.
+    /// A probe does two independent things: the ladder step
+    /// `Finalized{last(T+1)}` addressed at `committee[T+1]`, where `T` is the
+    /// epoch this node last handed to `track`; and the untargeted `Latest`, whose
+    /// answered height above the marshal tip becomes one `hint_finalization`.
     ///
-    /// They are INDEPENDENT now, which is the §5.2 shape and not the one this
-    /// file had: the step used to wait on the `Latest` arm to witness that the
-    /// network had produced `last(T+1)` (`servable`), and that predicate went with
-    /// the unauthenticated trigger input it propped up (review A2-01/A2-04 — they
-    /// held each other up and had to go together). The step is now put on every
-    /// frozen tick where this node can NAME it and the marshal would not discard
-    /// it, and nothing on this path reads a height it did not authenticate.
-    ///
-    /// Neither answer comes back through here — both go through
-    /// [`crate::plane_upstream::FrontierHandler::deliver`] and the marshal's own
-    /// `verify_delivered`, so a served step shows up as the tip MOVING on the next
-    /// tick. What does come back is whether anyone served it, and an unserved step
-    /// is counted rather than reacted to: there is no state machine here, the
-    /// ladder IS the repetition of this tick.
+    /// Neither answer returns through here — both go through the upstream handler
+    /// and the marshal's own `verify_delivered`, so a served step shows up as the
+    /// tip moving on the next tick. An unserved step is counted rather than
+    /// reacted to: the ladder is the repetition of this tick.
     async fn probe_frontier(&mut self) -> bool {
         let Some(probe) = self.re_jump.as_ref().and_then(|rj| rj.probe.clone()) else {
             return false;
@@ -2185,73 +1825,36 @@ where
         let advanced = self.last_tip_height > self.probe_prev_tip;
         self.probe_prev_tip = self.last_tip_height;
         if advanced && self.probe_fast_left == 0 {
-            // The tip MOVED, so whatever step was standing was served — by the
-            // step's own answer or by an independent live source, and this metric
-            // cannot tell the two apart anyway. Clearing the bit here is what
-            // stops `dpos_frontier_step_unserved_total` from counting a SUCCESS:
-            // tick N puts a step (pending), tick N+1 sees the tip grow and returns
-            // here, tick N+2 finds the tip frozen again and would charge the
-            // earlier, already-answered step to whoever did not serve this one.
+            // The tip moved, so whatever step was standing was served — by its
+            // own answer or by an independent live source; the metric cannot tell
+            // the two apart. Clearing the bit here keeps
+            // `dpos_frontier_step_unserved_total` from charging an already-answered
+            // step on the next frozen tick.
             self.probe_step_pending = false;
             return false;
         }
-        // `T` at THIS tick, never a remembered one: a landing moves it, and the
-        // step that follows a landing is the next rung of the ladder.
+        // `T` at this tick, never a remembered one: a landing moves it, and the
+        // next rung follows the landing.
         let tracked = self
             .re_jump
             .as_ref()
             .and_then(|rj| rj.tracked_epoch.clone())
             .and_then(|f| f());
         let outcome = probe(tracked).await;
-        // THE LADDER STEP. Put on the MARSHAL's resolver, not on this probe's:
-        // `HintFinalized{height, targets}` is a targeted by-height fetch whose
-        // answer is decoded, BLS-verified and stored by the marshal itself
-        // (`marshal/core/actor.rs:632-646`, then the `verify_delivered` path), so
-        // the step lands in the one place that moves the tip and there is no
-        // second writer. The `targets` travel with it: on a plane validator the
-        // marshal's own resolver addresses them, and on a WS-upstream validator
-        // `outer.rs`'s dispatcher routes a TARGETED `Finalized` to the plane for
-        // exactly that reason (the single-upstream resolver drops target lists).
+        // The step goes on the marshal's resolver, not this probe's:
+        // `HintFinalized` is a targeted by-height fetch decoded, BLS-verified
+        // and stored by the marshal itself, so the step lands in the one place
+        // that moves the tip. Repeated hints for the same height dedup in the
+        // resolver, so repeating the step every tick is the ladder, not a poll.
         //
-        // Repeated hints for the same height dedup in the resolver, so repeating
-        // the step every tick is the ladder and not a poll: there is no automaton,
-        // only this tick happening again.
+        // The step is gated on `self.marshal_floor`, not the tip: the marshal
+        // drops a hint at or below its floor, while a step between the floor and
+        // the tip lands in the hole a jumped node carries and is exactly the one
+        // it must fetch.
         //
-        // ONE CONDITION, and it is the marshal's own. A step at or below the
-        // marshal FLOOR is a no-op there (`HintFinalized` skipped when
-        // `height <= last_processed_height`, `marshal/core/actor.rs:633-635`), so
-        // putting it is a fetch nobody acts on. `self.marshal_floor` is this
-        // executor's mirror of exactly that value — seeded from the same
-        // `initial_marshal_floor` `outer.rs` sends in its buffered `SetFloor` and
-        // moved by every `reseed_forward`.
-        //
-        // The FLOOR and not the tip, and the difference is a whole defect class
-        // (review A2-10): a node that jumped holds nothing between its floor and
-        // its tip, and a step landing in that HOLE is precisely the one the marshal
-        // would accept and act on. Gating on the tip suppressed exactly those.
-        //
-        // THE SECOND CONDITION IS GONE (review A2-01). `servable` asked the
-        // `Latest` answer of this same tick to witness that the network had
-        // PRODUCED `last(T+1)`, because nothing local tells "a node genuinely
-        // behind" from "a node at the live tip whose marshal froze for a second"
-        // apart. That witness was the last unauthenticated input on this path, and
-        // it was only tolerable while the jump trigger read the same height; with
-        // the trigger on the marshal tip alone it has no reason to exist. What it
-        // cost to keep: a step inside a jumper's own hole was suppressed whenever
-        // its `Latest` source was silent. What it costs to drop: on a node already
-        // at the live tip the step names a height nobody has yet, and an
-        // unanswered targeted fetch is exactly §5.4's "догон вместо прыжка" — the
-        // `unserved` counter below.
-        //
-        // THE PRICE, in requests and not in ticks (review B1-07): this arm runs
-        // every frozen tick (1 s), but the WIRE cost is set by the resolver, not by
-        // this cadence. A repeated hint for a key already pending is a no-op
-        // (`resolver/src/p2p/engine.rs:229-252`, `is_new`), and an unanswerable key
-        // is re-sent once per `timeout` + `fetch_retry_timeout` — 5 s + 500 ms, so
-        // ≈ 0.18 requests/s per node, one key, deduplicated. It also does not
-        // monopolise the fetcher: `pending` is a `PrioritySet` ordered by next-try
-        // time (`fetcher.rs:119`, `utils/src/priority_set.rs:145-149`), so a fresh
-        // by-height repair key sorts AHEAD of this key's retry.
+        // The wire cost is set by the resolver, not this cadence: a repeated hint
+        // for a pending key is a no-op, and an unanswerable key is retried at the
+        // resolver's own backoff without monopolising the fetcher.
         match outcome.step {
             Some((height, _)) if height <= Height::new(self.marshal_floor) => {
                 metrics::counter!(FRONTIER_STEP_SKIPPED, "reason" => "at_or_below_the_floor")
@@ -2259,8 +1862,8 @@ where
                 self.probe_step_pending = false;
             }
             Some((height, targets)) => {
-                // Tick taken, tip frozen (checked above), a step was standing from
-                // the previous tick and nothing moved: nobody served it.
+                // Tip frozen and a step was still standing from the previous
+                // tick: nobody served it.
                 if self.probe_step_pending {
                     metrics::counter!(FRONTIER_STEP_UNSERVED).increment(1);
                     debug!(
@@ -2294,9 +1897,8 @@ where
         false
     }
 
-    /// Fire the upstream-rotation escape (Rule L) if one is wired. Clones the Arc out
-    /// of `self.re_jump` so the immutable borrow does not span the `.await` (the
-    /// caller writes `self.rejump_fault_streak` after this returns).
+    /// Fire the upstream-rotation escape if one is wired. Clones the `Arc` out of
+    /// `self.re_jump` so the immutable borrow does not span the `.await`.
     async fn rotate_upstream(&mut self) {
         let rotate = self.re_jump.as_ref().and_then(|rj| rj.rotate.clone());
         if let Some(rotate) = rotate {
@@ -2304,22 +1906,17 @@ where
         }
     }
 
-    /// Send the finalize forkchoice update, retrying a transient TRANSPORT error
-    /// FOREVER (#14 self-heal — the engine STAYS UP; `dpos_sync_degraded{reason=
-    /// engine_retry}=1` + `engine_transient_retry_total++` while retrying, cleared
-    /// on the first transport success). Returns reth's `ForkchoiceUpdated` intact.
+    /// Send the finalize forkchoice update, retrying a transient transport error
+    /// indefinitely: the engine stays up, the retry is degrade-visible while it
+    /// runs and cleared on the first transport success. Returns reth's
+    /// `ForkchoiceUpdated` intact.
     ///
-    /// **Fork-safety split (D1):** a semantic `Ok(PayloadStatusEnum::Invalid)` is
-    /// NOT an engine error — it arrives as `Ok(..)` (never folded into `Err`) and
-    /// is returned here UNTOUCHED for the caller's verdict split. This helper
-    /// never converts a verdict.
+    /// A semantic `Ok(PayloadStatusEnum::Invalid)` is not an engine error and is
+    /// returned untouched for the caller's verdict split.
     ///
-    /// Only the TRANSIENT half of the `Err` is looped. An [`EngineError`] whose
-    /// class is not `TransientExternal` — reth PROCESSED the update and rejected
-    /// the forkchoice state we named, i.e. it cannot resolve our own
-    /// finalized/safe hash — is propagated as its own class instead. Retrying
-    /// that re-sends the same unresolvable hashes forever: the loop had no exit
-    /// because the importer flattened every `Err` into one transport class.
+    /// Only the transient half of `Err` is looped. Any other class means reth
+    /// processed the update and rejected the forkchoice state we named, so
+    /// retrying would re-send the same unresolvable hashes forever.
     async fn fcu_retrying_transport(
         &mut self,
         forkchoice: ForkchoiceState,
@@ -2357,19 +1954,16 @@ where
         }
     }
 
-    /// Fire-and-forget heartbeat FCU: the next tick IS the retry, so a transport
-    /// failure is counted + degraded and swallowed here. A non-transport class
-    /// (reth rejected the forkchoice STATE) is NOT swallowed — the heartbeat
-    /// would otherwise re-send the same unresolvable anchor every tick forever.
+    /// Fire-and-forget heartbeat FCU: the next tick is the retry, so a transport
+    /// failure is counted, degraded and swallowed. A non-transport class means
+    /// reth rejected the forkchoice state and is propagated rather than re-sent
+    /// every tick.
     #[instrument(skip_all)]
     async fn send_forkchoice_update_heartbeat(&mut self) -> Result<(), Fault> {
         if self.jump_done.is_some() {
-            // A re-jump's `sync_to` is the EL driver during backfill; an interleaved
-            // heartbeat FCU returns reth `SYNCING`
-            // (engine/tree/src/tree/mod.rs:1173-1177: `if !backfill_sync_state.is_idle()
-            // { return ...syncing() }`), producing a spurious reth-side `Stalled` that —
-            // now that `Stalled` rotates — would churn rotation. The re-jump is the
-            // single EL writer while in flight.
+            // A re-jump's `sync_to` drives the EL during backfill; an interleaved
+            // heartbeat FCU returns reth `SYNCING`, producing a spurious `Stalled`
+            // that would churn upstream rotation.
             debug!("FCU heartbeat suppressed; re-jump in flight (sync_to drives the EL)");
             return Ok(());
         }
@@ -2391,11 +1985,9 @@ where
             .fork_choice_updated(self.last_canonicalized.forkchoice)
             .pace_el_call(self.fcu_pace)
             .await;
-        // GAP-2 CLOSURE (family 5): a heartbeat FCU transport failure is
-        // `FaultClass::TransientExternal(EngineRetry)` — fire-and-forget (the
-        // next heartbeat tick is the retry, no loop), but now COUNTED +
-        // degrade-visible like the finalize FCU, instead of a bare `warn!`
-        // invisible to the taxonomy. A successful tick clears the reason.
+        // A heartbeat FCU transport failure is fire-and-forget (the next tick is
+        // the retry) but counted and degrade-visible like the finalize FCU; a
+        // successful tick clears the reason.
         match resp {
             Ok(_) => self.sync_metrics.recover(SyncReason::EngineRetry),
             Err(error) => match error.fault_class() {
@@ -2419,41 +2011,34 @@ where
         let cause = message.cause;
         match message.command {
             Command::Finalize(finalized) => match *finalized {
-                // No FCU here: the tip digest is an ORDERING digest reth
-                // cannot resolve, and under F-type the EL never needs devp2p
-                // for the DPoS segment — catch-up is marshal backfill of
-                // OrderBlocks + local derivation, so every derived block's
-                // parent is locally present by construction. (A devp2p
-                // fast-sync that skips derivation toward an attested `result`
-                // hash is a deferred optimization, not a liveness need.)
+                // No FCU here: the tip digest is an ordering digest reth cannot
+                // resolve, and the EL never needs devp2p for the DPoS segment —
+                // catch-up is marshal backfill of OrderBlocks plus local
+                // derivation, so every derived block's parent is locally present
+                // by construction.
                 //
-                // The marshal emits `Update::Tip` every time it stores a
-                // finalization above its tip — it FIRES during a wedge (the inlet
-                // keeps storing frontier certs even while contiguous dispatch is
-                // stalled), so it is the event the steady-state self-healing
-                // re-jump reacts to (no timer / poll).
+                // The marshal emits `Update::Tip` whenever it stores a
+                // finalization above its tip, and keeps doing so during a wedge,
+                // so it is the event the steady-state re-jump reacts to.
                 Update::Tip(_round, height, _ordering_digest) => {
                     // Remember the frontier so the heartbeat can re-poke the
-                    // re-jump even if the upstream frontier later plateaus.
+                    // re-jump after the upstream frontier plateaus.
                     self.last_tip_height = height;
                     debug!(%height, "ordering tip observed; EL catch-up is backfill+derive");
                     self.maybe_re_jump(height).await?;
-                    // The live finalization heartbeat: a parked block's h+K body
-                    // may have landed silently — re-poke it (no-op if a jump the
-                    // line above just spawned is now in flight, or nothing is
-                    // parked).
+                    // A parked block's `h + K` body may have landed silently;
+                    // re-poke it.
                     self.repoke_deferred().await?;
                 }
                 Update::Block(block, ack) => {
-                    // STALE-DISPATCH GUARD: an OLD-range block that escaped into
-                    // this mailbox after `reseed_forward` raised the floor but
-                    // before the marshal processed `SetFloor` (see `marshal_floor`).
-                    // The marshal already pruned it; deriving it against the jumped
-                    // `db_tip` is the deep-overlay walk the jump avoids, and parking
-                    // it awaits a pruned `h + K` (permanent deferred). Ack it Ok — the
-                    // sanctioned acknowledge-without-derive (NEVER drop an `Exact`: a
-                    // dropped ack is Canceled, fatal to the marshal) — count it, and
-                    // re-poke the deferred block exactly as the normal arm does.
+                    // An old-range block can escape into this mailbox after
+                    // `reseed_forward` raises the floor but before the marshal
+                    // processes `SetFloor`. The marshal already pruned it, so
+                    // deriving it against the jumped `db_tip` is the deep-overlay
+                    // walk the jump avoids, and parking it awaits a pruned `h + K`.
+                    // Acknowledge without deriving (dropping the `Exact` would be
+                    // Canceled, fatal to the marshal), count it, and re-poke the
+                    // deferred block.
                     if block.height <= self.marshal_floor {
                         metrics::counter!("dpos_executor_stale_dispatch_dropped_total")
                             .increment(1);
@@ -2465,105 +2050,70 @@ where
                         .push_back(ready((cause, block, ack)));
                     self.pending_finalizations_gauge
                         .set(self.pending_finalizations.len() as i64);
-                    // A delivery event may coincide with a parked block's h+K
-                    // body landing — re-poke it (no-op when nothing is parked).
+                    // A delivery may coincide with a parked block's `h + K` body
+                    // landing; re-poke it.
                     self.repoke_deferred().await?;
                 }
             },
             Command::SpecNotarized(n) => {
                 let Notarized { digest, seed } = *n;
-                // Speculation stays best-effort — but the CLASS decides that, not
-                // this call site. `spec_execute` classifies its own failures
-                // `Defer`/`TransientExternal`, which the router logs and
-                // continues on; a `ForkSafety` it cannot classify away reaches
-                // the router too, instead of being reduced to a `warn!`.
+                // Speculation stays best-effort, but the class decides that, not
+                // this call site: `spec_execute` classifies its own failures
+                // `Defer`/`TransientExternal`, which the router logs and continues
+                // on, and a `ForkSafety` reaches the router too.
                 self.spec_execute(cause.clone(), digest, seed).await?;
                 // A live spec advance may unblock a parked out-of-order
-                // notarization (e.g. h+1 parked, then h arrives and advances
-                // spec_head) — drain it now.
+                // notarization; drain it now.
                 self.try_drain_parked(&cause).await?;
-                // NOTE: the eager-derive re-attempt for a HELD tip whose seed
-                // landed late (the record-vs-delivery race) is NO LONGER poked
-                // from here. It is now the executor's seed-notify `select!` arm
-                // (driven by the beacon's `broadcast::Sender<BeaconEvent>` and its
-                // per-record `SeedRecorded` variant — `beacon/seed_index.rs`, not
-                // a `Notify`), which fires directly on the seed record — correct
-                // regardless of this mailbox's ordering, with no
-                // lost-notification window: the arm subscribes before its first
-                // seed read (`beacon/surface.rs:236-243`).
             }
         }
         Ok(())
     }
 
-    /// Steady-state self-healing re-jump (see [`ReJump`]). The marshal TIP (the
-    /// `Update::Tip` height, §5.2's one frontier) has run more than
-    /// [`ReJump::threshold`] finalized blocks ahead of the highest derived
-    /// ordering height (`ordering_finalized`) — the upstream serving window is
-    /// that wide, so beyond it the marshal's backfill resolver finds nothing and
-    /// the floor freezes forever.
+    /// Steady-state self-healing re-jump (see [`ReJump`]): the marshal tip has
+    /// run more than [`ReJump::threshold`] finalized blocks ahead of
+    /// `ordering_finalized`, so it sits outside the upstream serving window and
+    /// the marshal's backfill resolver finds nothing — the floor freezes.
     ///
-    /// This does NOT block the `select!` loop on the (multi-minute) backfill: it
-    /// SPAWNS the re-jump as a READ-ONLY waiter (the same spawned-fetch idiom the
-    /// inlet uses) and the executor reacts to its terminal
-    /// [`crate::cold_start_jump::JumpOutcome`] on the `jump_done` `oneshot`
-    /// select-arm. The completion arm then runs `reseed_forward` (the WRITE,
-    /// shared with `init`'s seed) — so the executor stays the sole writer of
-    /// executor state + `set_floor` (§9.6).
+    /// The multi-minute backfill never blocks the `select!` loop: the jump runs
+    /// as a spawned read-only waiter whose outcome the executor handles on the
+    /// `jump_done` select arm, which runs `reseed_forward` (the write half,
+    /// shared with the init seed).
     ///
-    /// Gates: a missing `re_jump`, an already-in-flight jump (`jump_done` is
-    /// `Some` — never spawn a second), a gap ≤ [`ReJump::threshold`], a marshal
-    /// archive with no pair at the tip, or a mid-flight startup drain all
-    /// early-return without spawning. A parked (`deferred`)
-    /// block does NOT gate this off: once the gap runs past the threshold the
-    /// situation is no longer "wait for this block's cert" but a deep catch-up
-    /// (the durably-stuck-fetch case, §4.3) — the re-jump backfills the
-    /// committee-BLS-authenticated `[.. landing]` (the parked height is a finalized
-    /// ancestor of the landing), and `reseed_forward` disposes the parked block by
-    /// `ack.acknowledge()` (Ok, never Canceled). In Case (A) the gap stays small,
-    /// the gap test early-returns, and the park proceeds untouched.
+    /// A missing `re_jump`, an already-in-flight jump, a gap at or below
+    /// [`ReJump::threshold`], a marshal archive with no pair at the tip, or a
+    /// mid-flight startup drain all early-return. A parked block does not gate
+    /// it: past the threshold the park is a deep catch-up, the re-jump backfills
+    /// the BLS-authenticated `[.. landing]` (the parked height is a finalized
+    /// ancestor of the landing), and `reseed_forward` acknowledges the parked
+    /// block instead of dropping it.
     async fn maybe_re_jump(&mut self, height: Height) -> Result<(), Fault> {
         let Some(re_jump) = self.re_jump.clone() else {
             return Ok(());
         };
-        // A jump is already in flight — don't spawn a second.
         if self.jump_done.is_some() {
             return Ok(());
         }
-        // §5.2: ONE frontier, and it is the marshal tip. `height` is the
-        // `Update::Tip` the marshal emits from `store_finalization`, i.e. the
-        // highest finalization this node VERIFIED and stored — there is no second
-        // signal, and no unauthenticated one. The `max(tip, upstream_frontier)`
-        // this line used to take existed because the tip freezes under the
-        // "committee[E] not committed" defer deadlock; it no longer can freeze
-        // silently, because the frozen-tip probe puts the ladder step
-        // `Finalized{last(T+1)}` on every frozen tick and a served step moves the
-        // tip through `verify_delivered` (`probe_frontier`).
+        // `height` is the marshal tip: the `Update::Tip` emitted from
+        // `store_finalization`, i.e. the highest finalization this node verified
+        // and stored. It is the only frontier and the only authenticated one.
         if height.get().saturating_sub(self.ordering_finalized)
             <= re_jump.threshold
-            // Symmetric closure to the startup-drain's jump-gate (bugs 6/7): a jump
-            // and the startup backfill drain must not both drive reth's EL — never
-            // start a jump while the drain is mid-flight.
+            // The startup backfill drain and a jump must not both drive reth's EL.
             || self.pending_backfill.is_some()
             || !self.finalized_heights_to_backfill.is_empty()
         {
             return Ok(());
         }
-        // THE TARGET, read from this node's OWN marshal archive at the tip it is
-        // triggering on. `Update::Tip` fires from `store_finalization` only after
-        // the pair is written (CW `marshal/core/actor.rs:1404-1463`), so the two
-        // reads below hit an entry that already passed `verify_delivered` — the
-        // jump no longer asks anyone what to aim at.
+        // The target is read from this node's own marshal archive at the tip that
+        // triggered this. `Update::Tip` fires from `store_finalization` only after
+        // the pair is written, so a hit here already passed `verify_delivered`.
         //
-        // A miss is not a fault, and the case it covers is NOT "the floor moved"
-        // (review B1-08): a floor raise deletes nothing, because both finalized
-        // archives are `immutable::Archive`, whose `prune` is a no-op (CW
-        // `marshal/store.rs:223-226`, `:261-264`) — the same fact §5.2 leans on for
-        // retention. The reachable miss is the SEEDED tip: `last_tip_height` starts
-        // at `cfg.last_consensus_finalized_height` (`:1260`), and on a datadir whose
-        // marshal archive is empty — a fresh one after the pre-engine cold-start
-        // jump — the very first heartbeat re-poke names a height nothing was ever
-        // stored at. Skip and let the next `Update::Tip` / heartbeat re-arm.
+        // A miss is not a fault. A floor raise deletes nothing (both finalized
+        // archives are immutable), so the reachable miss is the seeded tip:
+        // `last_tip_height` starts at `cfg.last_consensus_finalized_height`, and
+        // on an empty archive (a fresh datadir) the first heartbeat re-poke names
+        // a height nothing was stored at. Skip; the next tip or heartbeat re-arms.
         let Some((finalization, block)) = self.marshal.pair_at(height).await else {
             debug!(
                 tip = %height,
@@ -2581,10 +2131,8 @@ where
             ordering_finalized = self.ordering_finalized,
             "marshal tip ran past the serving window; spawning steady-state re-jump waiter"
         );
-        // Spawn the whole jump (sync_to wait + landing check + L1) as a READ-ONLY
-        // waiter and react to its completion on the `jump_done` arm. `re_jump` is
-        // already owned (cloned out of `self.re_jump` above) and unused after this
-        // move — no second clone needed.
+        // `re_jump` was cloned out of `self.re_jump` above and is unused after
+        // this move, so no second clone is needed.
         let from = self.ordering_finalized;
         let (tx, rx) = oneshot::channel();
         let handle = self
@@ -2598,23 +2146,17 @@ where
         Ok(())
     }
 
-    /// Re-seed the executor + marshal at a re-jump landing — the steady-state
-    /// MIRROR of `init`'s seed (the two MUST agree on field shape; pinned by
-    /// `tests::reseed_forward_agrees_with_init`). Runs ONLY in the `jump_done`
-    /// completion arm (in the executor task), so it is the sole writer of
-    /// executor state + `set_floor`.
-    /// Fetch + store the epoch-boundary block(s) a floor raise to `floor` would bury
-    /// and that this node does not already hold.
+    /// Fetch and store the epoch-boundary block(s) a floor raise to `floor` would
+    /// bury and that this node does not already hold.
     ///
-    /// `b` = the largest epoch-terminal height at or below `floor`, which is what
-    /// `Inline::genesis(E)` and therefore the engine-spawn gate needs; `b + 1` is the
-    /// epoch's first block, which the promote VALUE-gate reads for the
-    /// network-attested key. Both-or-neither when both are buried: seeding `b` alone
-    /// would let the member promote at exactly the moment the value gate degrades to
-    /// a no-op.
+    /// `b` is the largest epoch-terminal height at or below `floor` (needed by
+    /// `Inline::genesis(E)`, hence the engine-spawn gate); `b + 1` is the epoch's
+    /// first block, read by the promote value-gate for the network-attested key.
+    /// Both or neither when both are buried: seeding `b` alone would let the
+    /// member promote exactly when the value gate degrades to a no-op.
     ///
-    /// Every failure path is a no-op that leaves today's behaviour (verify-only for
-    /// the landing epoch) — loudly, via the seam's own warn + counter.
+    /// Every failure path is a no-op that leaves the node verify-only for the
+    /// landing epoch, reported via the seam's warn + counter.
     async fn seed_boundary_below_floor(&mut self, floor: u64, at_hash: B256) {
         let Some(fetch) = self.boundary_fetch.clone() else {
             return;
@@ -2625,7 +2167,7 @@ where
         let mut missing = Vec::new();
         for h in [b.get(), b.get() + 1] {
             if h > floor {
-                continue; // above the floor — ordinary repair fetches it
+                continue; // not buried by this raise
             }
             if self
                 .marshal
@@ -2672,6 +2214,10 @@ where
         }
     }
 
+    /// Re-seed the executor and marshal at a re-jump landing, the steady-state
+    /// mirror of the init seed (the two must agree on field shape). Runs only in
+    /// the `jump_done` completion arm, so it is the sole writer of executor state
+    /// and `set_floor`.
     async fn reseed_forward(
         &mut self,
         landing_h: u64,
@@ -2684,40 +2230,27 @@ where
         );
         let landing = Height::new(landing_h);
         self.anchor_finalized = (landing, landing_hash);
-        // The landing IS the ordering-final tip (`safe`); `floor = landing − K`
-        // is the result-final floor (`finalized`). `update_finalized(landing,…)`
-        // raises the in-memory `finalized_height`/`head` to the landing (mirrors
-        // `init`'s seed at the landing — pinned by `reseed_forward_agrees_with_init`);
-        // it no longer writes `safe`. `update_safe(landing,…)` raises `safe` to
-        // the landing. The FCU below re-pins the engine-API `finalized` to the
-        // floor (the landing's own result attestation still lags by K) while
-        // `safe` rides the landing — the in-memory `finalized_height` over-claim
-        // is benign because `result_final` is recomputed from `ordering_finalized`,
-        // not the model's `finalized_height` (B1 option a).
+        // The landing is the ordering-final tip (`safe`); `floor = landing − K` is
+        // the result-final point (`finalized`). `update_finalized` raises the
+        // in-memory `finalized_height`/`head` to the landing and `update_safe`
+        // raises `safe` to it, while the FCU below re-pins the engine's
+        // `finalized` to the floor. The resulting in-memory `finalized_height`
+        // over-claim is benign: `result_final` is recomputed from
+        // `ordering_finalized`, not from the model's `finalized_height`.
         self.last_canonicalized = self
             .last_canonicalized
             .update_finalized(landing, landing_hash)
             .update_safe(landing, landing_hash);
-        // PARENT-VISIBILITY FCU (mirror of cold-start `init`'s floor-seed FCU in
-        // `dpos.rs`): `update_finalized`/`update_safe` advanced the executor's
-        // INTERNAL model, but reth has so far made the backfilled landing segment
-        // visible only by NUMBER (the devp2p backfill index). The by-HASH header
-        // index that the deriver's `derive_sync` reads for the parent
-        // (`header(parent_hash)`) lags until an FCU lands. `head = landing`
-        // canonicalizes the whole `[old_canonical+1 ..= landing]` segment by hash
-        // (reth inserts every segment element synchronously), so the resumed
-        // contiguous dispatch's first derive (`floor + 1`) resolves its parent
-        // (= `floor`); `safe = landing` rides the ordering-final tip (the landing
-        // IS BFT-final) while `finalized = floor` honours the two-tier contract
-        // (the landing's own result attestation still lags by K). `floor ≤
-        // landing` and both lie on the segment `head = landing` just made
-        // canonical ⇒ `finalized ⊆ safe ⊆ head`. WITHOUT this FCU, `floor + 1`'s
-        // derive hits `ParentHeaderMissing` and the floor freezes — the
-        // steady-state analogue of the cold-start parent-visibility race.
-        // `cold_start_jump::sync_to` already awaited the landing body, and
-        // `floor` is backfilled, so the by-NUMBER `executed_hash(floor)` resolves
-        // here (the typed ParentHeaderMissing derive-retry is the belt for the
-        // transient miss).
+        // `update_finalized`/`update_safe` advanced the executor's internal model,
+        // but reth has so far made the backfilled landing segment visible only by
+        // number: the by-hash header index the deriver reads for the parent lags
+        // until an FCU lands. `head = landing` canonicalizes the whole segment by
+        // hash, so the resumed dispatch's first derive (`floor + 1`) resolves its
+        // parent (`floor`) instead of hitting `ParentHeaderMissing`; without it the
+        // floor freezes — the steady-state analogue of the cold-start
+        // parent-visibility race. `safe = landing` rides the ordering-final tip
+        // while `finalized = floor` keeps the two-tier contract (the landing's own
+        // result attestation still lags by K).
         if let Some(floor_hash) = self.executed.spec_executed_hash(floor) {
             let resp = self
                 .beacon_engine
@@ -2741,57 +2274,41 @@ where
                  ParentHeaderMissing derive-retry belt"
             );
         }
-        // OFF-BY-K FIX: raise the executed cursor to the LANDING, not the floor.
-        // The landing IS executed post-backfill; the K below-landing blocks are
-        // governed by the two-tier result-lag, not by pinning the cursor at the
-        // floor. This matches what `init` does (it seeds the executed tip, not
-        // the floor).
+        // The cursor goes to the landing, not the floor: the landing is executed
+        // post-backfill, and the K blocks below it are governed by the two-tier
+        // result-lag. The init seed does the same.
         self.ordering_finalized = self.ordering_finalized.max(landing_h);
-        // Finalized-execution cursor: the jump is BLS-authenticated and the EL
-        // synced through the landing, so every height ≤ landing is final —
-        // canonical ancestors of a finalized block cannot have siblings.
-        // Advancing to the LANDING (not just recording it) is required: the first
-        // post-jump proposals at landing+1..landing+K sample
-        // `finalized_executed_hash` at landing+1−K..landing — heights BELOW the
-        // landing that only the cursor's provider resolve covers (a deep-history
-        // provider miss there returns None ⇒ propose-skip, never a wrong hash).
-        // Mirrors the `init` seed (monotone).
+        // The first post-jump proposals sample `finalized_executed_hash` at
+        // `landing + 1 − K ..= landing`, heights below the landing that only the
+        // cursor's provider resolve covers, so the cursor is advanced to the
+        // landing rather than merely recorded; a provider miss there returns
+        // `None` and the proposal is skipped, never given a wrong hash.
         self.executed.advance_finalized(landing_h);
-        // The anchor just moved by a whole jump; the committee module re-reads
-        // its own height and republishes its readable ceiling.
         (self.anchor_advanced)();
-        // STALE-SPEC FIX: the speculative tip / map are stale across a deep jump
-        // (their heights are far below the landing). Raise `spec_head` to the
-        // landing and drop spec entries at/below it so the next notarization
-        // re-speculates forward from the landing.
+        // The speculative tip and map are stale across a deep jump (their heights
+        // sit far below the landing): raise `spec_head` to the landing and drop
+        // spec entries at or below it so the next notarization re-speculates
+        // forward from there.
         self.spec_head = self.spec_head.max(landing_h);
         self.spec_executed = self.spec_executed.split_off(&(landing_h + 1));
-        // Parked speculative notarizations below the landing are stale across a
-        // deep jump (same rationale as `spec_executed` above) — drop them.
+        // Parked notarizations below the landing are stale for the same reason.
         self.parked_spec = self.parked_spec.split_off(&(landing_h + 1));
-        // STARTUP-BACKFILL FAST-FORWARD: the
-        // `[last_execution+1 ..= last_consensus]` backfill iterator seeded at
-        // `init` is drained by-height off the loop head, but is gated off during
-        // the in-flight jump (`jump_done.is_none()` at the drain site) and is
-        // NEVER advanced by the reseed above. Un-forwarded, the post-jump drain
-        // resumes at its PRE-jump height and re-derives the ENTIRE jumped
-        // `[.. landing]` range against `db_tip = landing` — a ~thousands-block
-        // overlay walk per derive → mdbx timeouts → the spare never converges. The
-        // range is redundant here: the SAME BLS-attestation + EL-sync trust that
-        // let the reseed advance `ordering_finalized`/`advance_finalized`/`spec_head`
-        // through the landing already covers every height ≤ landing (canonical
-        // ancestors of a finalized block have no siblings). Fast-forward the
-        // iterator so its next yielded height is `landing_h + 1`, preserving the
-        // original upper bound. `RangeInclusive::start()` is the next-to-yield
-        // lower bound; `is_empty()` (exhausted or start>end) and a next above the
-        // landing both no-op.
+        // The startup backfill iterator seeded at `init` is drained by height off
+        // the loop head and is gated off, not advanced, during an in-flight jump.
+        // Left alone, the post-jump drain restarts at its pre-jump height and
+        // re-derives the whole jumped range against `db_tip = landing`, one
+        // thousands-block overlay walk per derive, until mdbx times out and the
+        // spare never converges. The jumped range is redundant here — the same
+        // BLS attestation and EL sync that let this reseed advance the cursors
+        // covers every height at or below the landing — so fast-forward the
+        // iterator to `landing_h + 1`, keeping the original upper bound.
         if !self.finalized_heights_to_backfill.is_empty() {
             let next = *self.finalized_heights_to_backfill.start();
             let end = *self.finalized_heights_to_backfill.end();
             if next <= landing_h {
                 let skipped = landing_h.min(end) - next + 1;
-                // `(landing_h + 1) ..= end` is a correct EMPTY range when the whole
-                // remaining span was ≤ landing (landing_h + 1 > end).
+                // Correctly empty when the whole remaining span was at or below
+                // the landing.
                 self.finalized_heights_to_backfill = (landing_h + 1)..=end;
                 metrics::counter!("dpos_executor_backfill_fastforward_total").increment(skipped);
                 info!(
@@ -2803,45 +2320,30 @@ where
             }
         }
         self.has_advanced_since_init = true;
-        // Dispose a block PARKED across this jump (§4.3: the gap-gated re-jump is
-        // now permitted while `deferred.is_some()`, so a durably-stuck-fetch node
-        // recovers). The re-jump devp2p-backfilled + BLS-authenticated `[.. landing]`,
-        // and the parked height is a finalized ancestor of the landing, so its
-        // derived block is now canonical in reth — ACK it Ok. This MUST be
-        // `acknowledge()` (Ok, never Canceled) and NOT a drop: a drop cancels the
-        // `Exact` → the marshal treats a Canceled ack as FATAL → the recover-stall
-        // cascade. It is the ONE sanctioned acknowledge-without-derive (the
-        // module-doc ack invariant): the floor MOVES past the parked height, so
-        // the height is pruned, not skipped. Done BEFORE `set_floor` so
-        // `SetFloor`'s `pending_acks.clear()` has nothing left to cancel.
+        // The parked height is a finalized ancestor of the landing and its block
+        // is canonical in reth after the jump backfill, so acknowledge it: a drop
+        // would cancel the `Exact`, which the marshal treats as fatal. Done before
+        // `set_floor` so `SetFloor`'s `pending_acks.clear()` has nothing to
+        // cancel.
         if let Some(d) = self.deferred.take() {
             self.deferred_height.set(0);
             d.ack.acknowledge();
         }
-        // Same disposition for the seed-held block: the landing is
-        // far above it, so the held height is pruned by the floor move —
-        // `acknowledge()` (Ok), never a drop (a dropped `Exact` is a Canceled
-        // ack, fatal to the marshal). The one new object the jump path knows
-        // about.
+        // Same for the seed-held block: the landing is far above it, so the floor
+        // move prunes the held height.
         if let Some(held) = self.awaiting_seed.take() {
             held.ack.acknowledge();
         }
-        // STALE FINALIZATION BACKLOG PRUNE:
-        // `Update::Block` deliveries queue UNCONDITIONALLY while the drain arm
-        // is gated off during a park + in-flight jump — up to MAX_PENDING_ACKS
-        // stale below-landing entries. Un-pruned, the stale backlog drains
-        // post-jump, re-populates `awaiting_seed` with a jumped-over height whose
-        // parent the jump pruned, so the gap-walk's marshal fetch returns None →
-        // the missing-artifact fatal misclassifies a jump-MANUFACTURED skip-gap
-        // as archive corruption. The fatal itself stays valid for the genuine
-        // hole-below-the-floor class (#8); this removes its false trigger at
-        // the source. Entries ≤ landing are canonical post-backfill — the SAME
-        // sanctioned acknowledge-without-derive as the deferred/held disposals
-        // above (`acknowledge()` Ok, never a drop: a dropped `Exact` is a
-        // Canceled ack, fatal to the marshal). Entries above the landing (none
-        // expected — dispatch was stalled below it) are kept in order. Done
-        // BEFORE `set_floor` for the same reason as the disposals above. The
-        // queue holds only `Ready` futures, so this drain never blocks.
+        // `Update::Block` deliveries queue unconditionally while the drain arm is
+        // gated off during a park plus in-flight jump, up to `MAX_PENDING_ACKS`
+        // stale below-landing entries. Draining them post-jump would repopulate
+        // `awaiting_seed` with a jumped-over height whose parent the jump pruned,
+        // so the gap-walk would find nothing and report a manufactured skip-gap as
+        // archive corruption. Entries at or below the landing are canonical
+        // post-backfill and are acknowledged without derive; entries above it
+        // (none expected, dispatch was stalled below) stay in order. Done before
+        // `set_floor` for the same reason as the disposals above. The queue holds
+        // only `Ready` futures, so this drain never blocks.
         let mut kept = FuturesOrdered::new();
         let mut pruned = 0u64;
         while let Some((cause, block, ack)) = self.pending_finalizations.next().await {
@@ -2864,51 +2366,39 @@ where
                  (acked Ok — canonical post-backfill)"
             );
         }
-        // Advance the RUNNING marshal floor (raises-only; prunes below; resumes
-        // contiguous dispatch from `floor + 1`). `set_floor` is fire-and-forget, so
-        // OLD-range blocks freed by the disposals above can still escape into the
-        // executor mailbox before the marshal processes `SetFloor` — record the
-        // floor so the `Update::Block` arm acks-without-derive those stragglers
-        // instead of parking/re-fetching them.
-        // Seed the epoch-boundary block(s) this floor raise is about to bury, BEFORE
-        // raising it — the twin of the cold-start seeding in `outer.rs`, needed here
-        // too because a steady-state re-jump teleports the floor on a RUNNING node
-        // that never restarts. Condition-keyed ("a terminal at/below the floor is
-        // missing locally"), not event-keyed, so a node that already holds it does no
-        // work and a node that jumped before this shipped still heals.
+        // `set_floor` is fire-and-forget, so old-range blocks freed by the
+        // disposals above can still reach the executor mailbox before the marshal
+        // processes it. Recording the floor first lets the `Update::Block` arm
+        // acknowledge those stragglers without derive instead of parking them.
+        // Seed the boundary blocks this raise is about to bury before raising the
+        // floor: a re-jump teleports the floor on a running node that never
+        // restarts, so the cold-start seeding cannot run. Keyed on the condition
+        // (a terminal at or below the floor is missing locally), not an event, so
+        // a node that already holds it does no work.
         self.seed_boundary_below_floor(floor, landing_hash).await;
         self.marshal_floor = floor;
         self.marshal.set_floor(Height::new(floor)).await;
-        // Enter the LANDING epoch. Nothing else will: the only other entry edge is a
-        // delivered boundary block, and the floor raise above just disqualified this
-        // epoch's predecessor terminal from ever being dispatched.
+        // Enter the landing epoch: the floor raise just disqualified this epoch's
+        // predecessor terminal, so no delivered boundary block can enter it.
         //
-        // KEYED ON THE LANDING, NOT THE FLOOR — and they are different heights. The seed
-        // above asks `terminal_at_or_below(floor)` because it repairs the boundary the floor
-        // raise is about to bury. The entry asks `terminal_at_or_below(landing_h)` because it
-        // names the epoch this node is now IN. The two coincide only when the landing sits in
-        // the epoch starting just above the floor; when the landing is within K of an epoch
-        // start they differ by a whole epoch, and using the floor here silently enters the
-        // wrong one.
+        // Keyed on the landing, not the floor — they differ by a whole epoch when
+        // the landing sits within K of an epoch start, and the floor would enter
+        // the wrong one. The seeding above asks `terminal_at_or_below(floor)`
+        // because it repairs the boundary the raise buries; this asks
+        // `terminal_at_or_below(landing_h)` because it names the epoch the node is
+        // now in.
         //
-        // Condition-keyed, not event-keyed: fired on every landing, including the one where
-        // seeding was a no-op because the pair was already local. Idempotent — the state
-        // machine's gate is `last_tracked_epoch < next`, so a duplicate is `Intra` and costs
-        // one spawned task that breaks on the first `pending_boundary() == None`.
+        // The read floor is published first: the named boundary can sit a whole
+        // epoch below the landing, and the state machine resolves its committee
+        // reads at `boundary − K`, a height the jump pruned. The raise clamps that
+        // read to the landing's result-final point, which the jump backfilled. It
+        // uses `floor`, not the landing: the landing is ordering-final (`safe`)
+        // while `floor = landing − K` is the result-final point the FCU pins as
+        // `finalized`. The raise is monotone on the state-machine side.
         //
-        // Publish the new read floor FIRST. The entry below names a boundary that can sit a
-        // whole epoch below the landing (`terminal_at_or_below` returns the PREVIOUS epoch's
-        // terminal unless the landing is itself one), and the state machine resolves its
-        // committee reads at `boundary − K` — a height this node no longer has after a jump
-        // that teleported the floor past it. On a pruned EL every staticcall there fails as
-        // an opaque backend error, which the boundary hook retries forever without ever
-        // entering. Raising the floor to `floor` clamps that read to the landing's
-        // result-final point instead, which the jump just backfilled.
-        //
-        // `floor`, NOT the landing: the landing is ordering-final (`safe`) while
-        // `floor = landing − K` is the result-final point the FCU above pins as `finalized`.
-        // The raise is monotone on the state-machine side, so a later/duplicate landing
-        // cannot walk it backwards.
+        // Fired on every landing, including ones where seeding was a no-op; the
+        // state machine's `last_tracked_epoch < next` gate makes a duplicate
+        // `Intra`.
         (self.boundary_read_floor)(floor).await;
         if let Some(terminal) = self.epocher.terminal_at_or_below(Height::new(landing_h)) {
             let enter = self.boundary_enter.clone();
@@ -2920,19 +2410,17 @@ where
             );
             enter(terminal.get());
         }
-        // `spec_head` advanced (to the landing) — drain any parked notarization
-        // just above it, keeping "drain after every spec_head advance" uniform.
-        // Safe here: the `jump_done` arm cleared the in-flight jump BEFORE this
-        // call and `deferred` was disposed above, so `spec_execute`'s
-        // deferred/jump gate is open. The leading prune already ran (the
-        // `split_off` above); entries above the landing may be live.
+        // `spec_head` advanced to the landing, so drain parked notarizations just
+        // above it. Safe: the `jump_done` arm cleared the in-flight jump and the
+        // deferred block was disposed above, so `spec_execute`'s gate is open, and
+        // the leading prune already dropped entries at or below the landing.
         self.try_drain_parked(&Span::current()).await
     }
 
-    /// Speculatively derive + import a NOTARIZED block, advancing the EL head
-    /// ahead of finalization. Strictly forward-only (`spec_head + 1`); a gap or
-    /// an already-covered height is left to `try_derive` (finalized path), which keeps
-    /// this path race-free with finalized delivery (both run in this one loop).
+    /// Speculatively derive and import a notarized block, advancing the EL head
+    /// ahead of finalization. Forward-only (`spec_head + 1`): a gap or an
+    /// already-covered height is left to the finalized path, which keeps this
+    /// race-free with finalized delivery in the same loop.
     #[instrument(skip_all, parent = &cause, fields(%digest), err(Debug, level = Level::DEBUG))]
     async fn spec_execute(
         &mut self,
@@ -2940,32 +2428,28 @@ where
         digest: crate::digest::Digest,
         seed: Option<crate::beacon::Seed>,
     ) -> Result<(), Fault> {
-        // A finalized block is deferred awaiting its h+K attested body
-        // (guard #2 — a strict-order pause).
-        // Speculating past it would advance head/spec_head OVER the deferred
-        // height, leaking the strict-order invariant (self-healing, but the
-        // finalized path is the sole authority — let it derive first). The
-        // mailbox arm is intentionally NOT gated (shutdown + Command::Finalize
-        // enqueue must keep flowing); the guard lives here.
+        // A deferred finalized block has not been derived yet, so speculating past
+        // it would advance head/spec_head over the deferred height and break
+        // strict order; the finalized path is the sole authority and must derive
+        // first. The mailbox arm stays ungated so shutdown and `Command::Finalize`
+        // keep flowing — the guard lives here.
         //
-        // The jump guard is symmetric (bug 7): a speculative FCU carries a low
-        // finalized hash that retargets reth's backfill away from the jump tip, so
-        // the jump is the SINGLE EL writer while in flight — suppress spec here too
-        // (matching the heartbeat + finalize-arm suppression).
+        // A speculative FCU carries a low finalized hash that would retarget
+        // reth's backfill away from an in-flight jump's tip, so the jump stays the
+        // only EL writer while it runs.
         if self.deferred.is_some() || self.jump_done.is_some() {
             return Ok(());
         }
         let Some(order) = self.marshal.fetch_block_by_digest(digest).await else {
-            // Body not in the local buffer yet — finalized path will derive it.
+            // The finalized path derives it once the body arrives.
             return Ok(());
         };
         let height = order.height;
-        // Only speculate the immediate next block. A higher height (gap) is
-        // PARKED so `try_drain_parked` re-drives it once `spec_head` catches up
-        // (the death-spiral fix: pre-fix a gap notarization was dropped, so a
-        // transient fall-behind permanently lost speculation). A height at/below
-        // the tip (re-notarization, already executed) is dropped as before — the
-        // finalized path owns it. Overwrite-by-height keeps the latest sibling.
+        // A gap (a higher height) is parked so `try_drain_parked` re-drives it
+        // once `spec_head` catches up; dropping it would lose speculation
+        // permanently after a transient fall-behind. A height at or below the tip
+        // is a re-notarization the finalized path owns, and overwriting by height
+        // keeps the latest sibling.
         if height != self.spec_head + 1 {
             if height > self.spec_head + 1 {
                 self.parked_spec.insert(height, ParkedSpec { digest, seed });
@@ -2978,25 +2462,19 @@ where
                 eyre::eyre!("speculative height 0"),
             )
         })?;
-        // Parent must be locally present; a transient miss (reth visibility
-        // lag) PARKS the notarization (height == spec_head + 1) so the next
-        // `spec_head` advance retries it — pre-fix this dropped the notarization
-        // and the finalized path was the only retry.
+        // A transient parent miss (reth visibility lag) parks the notarization so
+        // the next `spec_head` advance retries it instead of losing it.
         let Some(parent_hash) = self.executed.spec_executed_hash(parent_height) else {
             self.parked_spec.insert(height, ParkedSpec { digest, seed });
             return Ok(());
         };
 
-        // §4.1 (P2): re-canonicalise the speculative round to the block's OWN
-        // `proposal_view` — the same pure-agreed-data round the finalized derive
-        // resolves at (rule PIN). A first-seen notarization at a SPIN round
-        // (mid-spin rejoin; body not buffered at V0) must not seal the block
-        // with `seed(V0+k)` — that guarantees a re-derive + head reorg at the
-        // boundary. On a round mismatch take the canonical round's bytes from
-        // `SeedIndex` (a threshold seed is unique per round, so the store is a
-        // byte source for an already-pinned round); on a miss SKIP speculating —
-        // never speculate with a known-wrong seed (the finalized path resolves
-        // this height's own round regardless).
+        // Seal the block with the round it was proposed at, not the seed's spin
+        // round: speculating with `seed(V0+k)` would guarantee a re-derive and
+        // head reorg at the boundary. A mismatch takes the canonical round's
+        // bytes from the seed store (a threshold seed is unique per round); a miss
+        // skips speculation, since a wrong seed must never be used and the
+        // finalized path resolves the height's own round regardless.
         let seed = match seed {
             None => None,
             Some(s) => {
@@ -3025,20 +2503,17 @@ where
             }
         };
 
-        // The round of the (re-canonicalised) seed this speculation is derived
-        // with (`None` = no-beacon). Captured BEFORE `seed` is moved into the
-        // deriver; reconciled against the WITNESS round in `try_derive`.
+        // The round this speculation derives with (`None` = no beacon), captured
+        // before `seed` moves into the deriver; `try_derive` reconciles it against
+        // the witness round.
         let seed_round = seed.as_ref().map(|s| s.target_round);
-        // EXEC-SATURATION observability: per-block derive+import wall time on the
-        // TIP paths only (this speculative path + try_derive's finalized re-derive).
-        // The catch-up paths (gap-walk, re-apply retry) run back-to-back by design
-        // and would read as false saturation of the 1 blk/s interval.
+        // Derive+import wall time for the tip paths only; the catch-up paths run
+        // back-to-back by design and would read as false saturation.
         let el_apply_started = std::time::Instant::now();
-        // Speculation is BEST-EFFORT and stays so: a derive failure here is
-        // `Defer`, never `Corruption`, because the finalized path derives this
-        // height from its own round regardless. Classified explicitly —
-        // `Fault`'s blanket `From<eyre::Report>` is `Corruption`, so leaning on
-        // `?` here would turn a transient derive failure into actor death.
+        // A derive failure here is a `Defer`, never `Corruption`, because the
+        // finalized path derives this height regardless — and `Fault`'s blanket
+        // `From<eyre::Report>` is `Corruption`, so `?` would turn a transient
+        // failure into actor death.
         let derived = self
             .deriver
             .derive_and_execute(order, parent_hash, seed)
@@ -3050,10 +2525,8 @@ where
                 )
             })?;
         let derived_hash = derived.evm_hash();
-        // DERIVE-SEED TELEMETRY (fork-root byte-confirm): label the speculative
-        // (notarization-path) derive for `height` with the seed round it used, so
-        // the derive.rs chokepoint line for this height can be attributed to the
-        // spec path (vs a later finalized re-derive of the same height).
+        // Labels this height's derive with the seed round it used, so a later
+        // finalized re-derive of the same height can be told apart from this one.
         tracing::info!(
             target: "dpos::derive_seed",
             height,
@@ -3067,13 +2540,13 @@ where
             .record(el_apply_started.elapsed().as_secs_f64());
         self.record_el_lag();
 
-        // Advance the head only; the result-final cursor stays put (the block
-        // is not finalized) and there is no marshal ack.
+        // Head only: the block is not finalized, so the result-final cursor stays
+        // put and there is no marshal ack.
         let new = self
             .last_canonicalized
             .update_head(Height::new(height), derived_hash);
         // The engine boundary's own class decides: a transport blip degrades and
-        // is retried by the next notarization, while a rejected forkchoice STATE
+        // is retried by the next notarization, while a rejected forkchoice state
         // is the permanent local condition `fcu_retrying_transport` also refuses
         // to loop on.
         let fcu = self
@@ -3087,31 +2560,24 @@ where
                     eyre::eyre!("speculative FCU failed: {error}"),
                 )
             })?;
-        // SPECULATIVE-vs-FINALIZED VERDICT SPLIT. The finalized FCU treats this
-        // same `Ok(Invalid)` as #15 `SafetyHalt(ElInvalid)`; here it is a plain
-        // skip, and the asymmetry is deliberate.
+        // A finalized FCU treats this `Ok(Invalid)` as a safety halt; here it is a
+        // plain skip, and the asymmetry is deliberate. Reth's `Invalid` means the
+        // head descends from a header it downloaded over devp2p and rejected —
+        // evidence about the network, not this node's disk — and this head is
+        // notarized but unfinalized, so consensus may still nullify the view and
+        // finalize a sibling. Halting would make a branch the protocol may discard
+        // permanent.
         //
-        // An `Ok(Invalid)` on an FCU is reth's `check_invalid_ancestor`: the head
-        // we named descends from a header sitting in reth's `invalid_headers`
-        // cache, which reth populated from blocks IT downloaded over devp2p and
-        // rejected. That is evidence about the network, not about this node's
-        // disk — but this head is NOT canonical. It is notarized-but-unfinalized,
-        // and consensus may still nullify the view and finalize a sibling, in
-        // which case nothing this verdict indicted was ever committed. Halting
-        // here would convert a branch the protocol is allowed to discard into a
-        // permanent, operator-cleared halt.
+        // Nothing is lost by waiting: every finalized derive issues an FCU with a
+        // head at or above the finalized tip, so an invalid ancestor at or below
+        // it re-renders the same verdict on the finalized path within one block,
+        // where it engages the latch with committed evidence; only an ancestor
+        // strictly inside the speculative segment escapes, and those are exactly
+        // the blocks consensus has not committed.
         //
-        // Nothing is lost by waiting: every finalized derive issues an FCU whose
-        // head is at or above the finalized tip, so an invalid ancestor at or
-        // below that tip re-renders the SAME verdict on the finalized path within
-        // one block — where it engages the latch with committed evidence. The
-        // only verdict this arm swallows is one whose invalid ancestor lies
-        // strictly inside the speculative segment, i.e. exactly the blocks
-        // consensus has not committed.
-        //
-        // The IMPORT verdict is judged differently one frame up
-        // (`submit_finalized_payload` halts on `Invalid` from either path)
-        // because it is a statement about OUR derivation matching reth's
+        // The import verdict is judged differently one frame up
+        // (`submit_finalized_payload` halts on `Invalid` from either path) because
+        // it is a statement about this node's derivation matching reth's
         // re-execution — deterministic, and independent of which branch commits.
         if !(fcu.is_valid() || fcu.is_syncing()) {
             return Err(Fault::defer(
@@ -3138,29 +2604,22 @@ where
         Ok(())
     }
 
-    /// Re-drive PARKED speculative notarizations that became runnable now that
-    /// `spec_head` advanced. Called after every `spec_head` advance — the live
-    /// spec tail (out-of-order notarization arrival) and the finalized reconcile
-    /// (the death-spiral recovery: finalization catches the tip up, then a
-    /// notarized-but-unfinalized descendant resumes speculation).
+    /// Re-drive parked speculative notarizations that became runnable after a
+    /// `spec_head` advance, which happens on out-of-order arrival and on the
+    /// finalized reconcile.
     ///
-    /// The leading `split_off` is ALSO the finalization PRUNE: it drops every
-    /// parked height ≤ `spec_head` (already executed speculatively or finalized ⇒
-    /// stale). Because `spec_head ≥ ordering_finalized` always, this is a correct
-    /// superset of "prune ≤ finalized" and is the map's only bound (≈K) — no
-    /// arbitrary cap. On a rollback (`correctly_speculated == false` resets
-    /// `spec_head` to the finalized height) it keeps entries strictly above the
-    /// new tip so they re-evaluate against the finalized fork.
+    /// The leading `split_off` is also the prune: it drops parked heights at or
+    /// below `spec_head` (already speculated or finalized). Since
+    /// `spec_head >= ordering_finalized` always, that is a superset of "prune at
+    /// or below finalized" and the map's only bound (about K). A rollback resets
+    /// `spec_head` to the finalized height and keeps entries above the new tip so
+    /// they re-evaluate against the finalized fork.
     ///
-    /// A `spec_execute` failure KEEPS the entry for the next advance and ends
-    /// the drain, then hands the [`Fault`] to the run loop's router — which
-    /// continues on the classes `spec_execute` actually produces (`Defer` /
-    /// `TransientExternal`), so speculation stays best-effort, and parks on a
-    /// `ForkSafety` one, which the old `warn!`-and-continue silently discarded.
-    /// NOT recursive: `spec_execute` does not call back into this drain; the loop
-    /// lives here.
+    /// A `spec_execute` failure keeps the entry for the next advance and ends the
+    /// drain, handing the [`Fault`] to the run loop's router: it continues on the
+    /// classes `spec_execute` produces (`Defer`/`TransientExternal`) and parks on
+    /// a `ForkSafety` one. Not recursive — `spec_execute` never calls back here.
     async fn try_drain_parked(&mut self, cause: &Span) -> Result<(), Fault> {
-        // Prune stale entries (≤ spec_head): finalized OR already speculated.
         self.parked_spec = self.parked_spec.split_off(&(self.spec_head + 1));
         let mut resumed = 0u32;
         while let Some(parked) = self.parked_spec.get(&(self.spec_head + 1)).cloned() {
@@ -3170,8 +2629,8 @@ where
                 .spec_execute(cause.clone(), parked.digest, parked.seed)
                 .await
             {
-                // The entry stays parked for the next advance whatever the class;
-                // the router decides whether the executor also stops.
+                // The entry stays parked for the next advance; the router decides
+                // whether the executor also stops.
                 debug!(
                     height = next,
                     "parked speculative drain failed; entry retained for the next advance"
@@ -3179,16 +2638,15 @@ where
                 return Err(fault);
             }
             if self.spec_head > before {
-                // `spec_execute` advanced past `next` ⇒ speculation resumed from
-                // park (not a live event). Drop the entry and count the resume.
+                // `spec_execute` advanced past `next`, so speculation resumed from
+                // the park.
                 self.parked_spec.remove(&next);
                 metrics::counter!("dpos_executor_spec_resume_total").increment(1);
                 resumed += 1;
             } else {
-                // A transient gate held (body not buffered yet, parent not
-                // executed, deferred/jump in flight) — keep the entry and stop;
-                // a later advance retries. `spec_execute` never re-parks `next`
-                // here (its height == spec_head + 1, not a gap).
+                // A transient gate held (body not buffered, parent not executed,
+                // deferred or jump in flight), so keep the entry and stop; a later
+                // advance retries it.
                 break;
             }
         }
@@ -3203,12 +2661,10 @@ where
         Ok(())
     }
 
-    /// EXEC-SATURATION observability: the deferred executor's lag = consensus
-    /// ORDER tip height (`last_tip_height`, fed by `Update::Tip`) minus the
-    /// executed EL tip it has applied. Sustained lag ≥ K is the mechanism behind
-    /// the verify-time result-gate stall (soak: 5× view overruns under heavy
-    /// blocks) — surfaced as a gauge so INFO+WARN soak bundles need no DEBUG.
-    /// Called at each TIP-path apply site, where both values are already in hand.
+    /// Consensus-order tip (`last_tip_height`, fed by `Update::Tip`) minus the
+    /// executed EL tip: sustained lag of K or more is the mechanism behind the
+    /// verify-time result-gate stall, so it is surfaced as a gauge. Called at
+    /// each tip-path apply site, where both values are already in hand.
     fn record_el_lag(&self) {
         let lag = self
             .last_tip_height
@@ -3217,26 +2673,22 @@ where
         metrics::gauge!("dpos_executor_el_lag_blocks").set(lag as f64);
     }
 
-    /// DETECTOR, never a deadline: report a block that has sat in the seed hold
-    /// longer than [`SEED_HOLD_STALL_THRESHOLD`] and change NOTHING about it.
+    /// Detector, never a deadline: reports a block held in the seed hold longer
+    /// than [`SEED_HOLD_STALL_THRESHOLD`] and changes nothing about it.
     ///
-    /// The hold is bounded only if every `impl Beacon` a production node class can
-    /// be given actually supplies σ — a claim about the two implementations behind
-    /// the boundary that this crate asserts and that the executor cannot verify
-    /// from the inside. The follower's own seed recording was once an
-    /// empty no-op that satisfied its signature, compiled, and was invisible to
-    /// every name-based search; this counter is what makes the NEXT such
-    /// counter-example surface in the smoke harness instead of in a review
-    /// months later.
+    /// The hold is bounded only if every `impl Beacon` a production node can be
+    /// given actually supplies σ — a claim this crate asserts but cannot verify
+    /// from inside the executor, so the counter is what makes a violating
+    /// implementation surface in the smoke harness.
     ///
     /// Sibling of the `dpos_executor_stray_seed_at_inactive_round_total` counter
-    /// below — both are detectors for beliefs this design asserts, both are
-    /// expected to read 0, and neither changes a derive.
+    /// below: both detect beliefs this design asserts, both are expected to read
+    /// 0, and neither changes a derive.
     ///
-    /// No timer is added: this rides the EXISTING FCU heartbeat tick, reads the
+    /// No timer is added: this rides the existing FCU heartbeat tick, reads the
     /// clock and returns. A timeout could neither derive (the `order.digest()`
-    /// fallback forks) nor skip (a permanent hole), so it would convert a silent
-    /// stall into a loud one without restoring liveness.
+    /// fallback forks) nor skip (a permanent hole), so it would only make a
+    /// silent stall loud without restoring liveness.
     fn detect_stalled_seed_hold(&mut self) {
         let now = self.context.current();
         let Some(held) = self.awaiting_seed.as_mut() else {
@@ -3245,7 +2697,7 @@ where
         if held.reported {
             return;
         }
-        // A backwards clock is not evidence of a stall — say nothing.
+        // A backwards clock is not evidence of a stall.
         let Ok(age) = now.duration_since(held.since) else {
             return;
         };
@@ -3265,29 +2717,10 @@ where
         );
     }
 
-    /// σ for `height`'s OWN agreed round — the ONLY seed source of the finalized
-    /// derive.
-    ///
-    /// The round is `Round(epocher.containing(h).epoch(), h.proposal_view)`, a
-    /// pure function of AGREED data (rule SA: `proposal_view` rides in the
-    /// committee-signed digest, and the epoch comes from the same block→epoch
-    /// map every node holds). A threshold σ is UNIQUE per round, so every honest
-    /// node resolves the identical value and a wrong round can only MISS.
-    ///
-    /// PREDICATE FIRST, store second. `mandatory_at(epoch(h))` — the
-    /// network-agreed "is the beacon active here", independent of anything local
-    /// — decides BEFORE the store is read. Store-first ordering would let a σ
-    /// filed at a round the agreed map calls beacon-INACTIVE be USED, which is
-    /// how the journal (replayed without re-verification by design) or a crafted
-    /// record could steer one node's `prev_randao` away from the network's.
-    /// Inverting the order closes that: a stray σ at an inactive round is
-    /// IGNORED and counted, never obeyed and never fatal — ignoring derives
-    /// exactly what the rest of the network derives, so it is fork-safe and
-    /// self-healing, where halting would turn one bad record into an outage.
-    ///
-    /// A height whose epoch the map cannot name (below the epocher origin) is
-    /// INACTIVE, never unwrapped: the beacon cannot have been mandatory in an
-    /// epoch that does not exist.
+    /// σ for `height`'s own agreed round — the only seed source of the finalized
+    /// derive. A threshold σ is unique per round, so a wrong round can only miss.
+    /// A height whose epoch the map cannot name is `Inactive`: the beacon cannot
+    /// have been mandatory in an epoch that does not exist.
     fn seed_at_own_round(&self, height: u64, proposal_view: u64) -> OwnRoundSeed {
         use commonware_consensus::types::{Epocher as _, Round, View};
         let Some(info) = self.epocher.containing(Height::new(height)) else {
@@ -3295,7 +2728,7 @@ where
         };
         let round = Round::new(info.epoch(), View::new(proposal_view));
         if !self.randomness.mandatory_at(round.epoch().get()) {
-            // Looked up ONLY to count it: the value is never handed on.
+            // Looked up only to count it; the value is never handed on.
             if self.randomness.seed(round).is_some() {
                 metrics::counter!("dpos_executor_stray_seed_at_inactive_round_total").increment(1);
                 warn!(
@@ -3313,23 +2746,22 @@ where
         }
     }
 
-    /// Derive + import + FCU + ack a finalized block from `seed` — σ of the
-    /// block's OWN round, already resolved by [`Self::seed_at_own_round`]
-    /// (`None` = a beacon-inactive, seed-independent link). Guard #2 (the
-    /// `h + K` look-ahead convergence check) runs whenever the node is ≥ K behind; if the attested body at
-    /// `h + K` is not backfilled yet this returns `NeedAttestation` — WITHOUT
-    /// mutating any finalized state or acking — so the caller PARKS it and
-    /// re-pokes event-driven (the delivery stream + the FCU heartbeat).
+    /// Derive, import, FCU and ack a finalized block from `seed` — σ of the
+    /// block's own round, resolved by [`Self::seed_at_own_round`] (`None` = a
+    /// beacon-inactive, seed-independent link). Guard #2 (the `h + K` look-ahead
+    /// convergence check) runs when the node is K or more behind; if the attested
+    /// body at `h + K` is not backfilled yet, this returns `NeedAttestation`
+    /// without mutating finalized state or acking, so the caller parks it and
+    /// re-pokes on the delivery stream or FCU heartbeat.
     ///
-    /// FAULT-CLASS INVARIANT: while this function holds the block's `Exact` in
-    /// [`Self::inflight_ack`], the only [`FaultClass`]es it may return are the
-    /// two the router does NOT continue on — `ForkSafety` (parks, and
-    /// `park_halted` retains the ack) and `Corruption` (the run loop breaks). A
-    /// class the router continues on would leave that ack orphaned in the slot,
-    /// and the NEXT derive's `inflight_ack = Some(..)` would drop it — a dropped
-    /// `Exact` is Canceled, which the marshal treats as fatal. The transient
-    /// classes appear only AFTER `take_inflight_ack().acknowledge()`, where the
-    /// slot is empty (the tail `try_drain_parked`).
+    /// While this function holds the block's `Exact` in [`Self::inflight_ack`],
+    /// the only [`FaultClass`]es it may return are the two the router does not
+    /// continue on: `ForkSafety` (parks, and `park_halted` retains the ack) and
+    /// `Corruption` (the run loop breaks). A class the router continues on would
+    /// orphan that ack in the slot, and the next derive's `inflight_ack =
+    /// Some(..)` would drop it — a dropped `Exact` is Canceled, fatal to the
+    /// marshal. The transient classes appear only after
+    /// `take_inflight_ack().acknowledge()`, where the slot is empty.
     #[instrument(skip_all, parent = &cause, fields(height = order.height), err(Debug))]
     async fn try_derive(
         &mut self,
@@ -3338,37 +2770,32 @@ where
         ack: Exact,
         seed: Option<crate::beacon::Seed>,
     ) -> Result<DeriveOutcome, Fault> {
-        // Parked in the slot so an `Err` exit (including every SafetyHalt path,
-        // several of which surface through `?`) leaves the ack ALIVE for
-        // `park_halted` instead of dropping it in this frame (a drop cancels →
-        // the marshal dies). Taken back at each non-`Err` exit.
+        // Parked in the slot so an `Err` exit, including the safety-halt paths
+        // that surface through `?`, leaves the ack alive for `park_halted`; it is
+        // taken back at each non-`Err` exit.
         self.inflight_ack = Some(ack);
         let height = order.height;
-        // Captured before `order` is consumed by `derive_and_execute` below; the
-        // attested result commits `executed_hash(height − K)`, cross-checked after
+        // Captured before `order` is consumed by the derive below; the attested
+        // result commits `executed_hash(height − K)` and is cross-checked after
         // the derive lands.
         let attested_result = order.result;
         let parent_height = height
             .checked_sub(1)
             .ok_or_else(|| eyre::eyre!("ordering height 0 cannot be finalized"))?;
 
-        // Its ROUND completes the speculation-reuse invariant just below, and
-        // its VALUE is reused verbatim by the re-derive branch and the re-apply
-        // loop.
+        // The round feeds the speculation-reuse check below; the value is reused
+        // by the re-derive branch and the re-apply loop.
         let finalization_seed = seed;
         let finalization_round = finalization_seed.as_ref().map(|s| s.target_round);
 
-        // Reconcile against speculation: keep the speculatively-executed block
-        // ONLY when it is the SAME ordering block AND was speculated with the
-        // SAME seed round the finalized derive resolved — then reth is already
-        // canonical here,
-        // so skip the re-derive and, crucially, do NOT roll the head back (the
-        // speculative lead at `height+1..` must survive). After §4.1 both rounds
-        // are `Round::new(Ep, block.proposal_view)`, so a digest match with a
-        // DIFFERENT round is an ANOMALY (two paths disagreeing about the
-        // canonical round) — counted, then re-derived from the store's σ (the
-        // agreed value), the SAME path a first execution or a sibling-nullified
-        // digest mismatch takes. `None == None` (no-beacon) keeps the fast path.
+        // Keep the speculatively-executed block only when it is the same ordering
+        // block and was speculated with the same seed round the finalized derive
+        // resolved; then reth is already canonical, so skip the re-derive and do
+        // not roll the head back (the speculative lead above `height` must
+        // survive). A digest match with a different round is an anomaly: it is
+        // counted and re-derived from the store's σ, the same path a first
+        // execution or a sibling-nullified digest takes. `None == None`
+        // (no beacon) keeps the fast path.
         let (spec_round, spec_parent) = {
             let entry = self
                 .spec_executed
@@ -3388,48 +2815,36 @@ where
                 );
             }
         }
-        // PARENT-LINKAGE (the deep-speculation reorg guard): the speculated block
-        // may be REUSED as final only if it descends from the block that IS
-        // canonical at `parent_height` NOW. After a head rollback at `height − 1`,
-        // the parent was re-derived to a DIFFERENT hash; a speculated block still
-        // recorded at `height` was executed against the now-orphaned parent (wrong
-        // pre-state) and would splice a forked block onto the finalized chain if
-        // reused — the same fork-safety family as the spec-seed-blind divergence.
-        // Absence of the parent (`None`) is not a match, so a missing parent takes
-        // the re-derive path (which walks `derive_finalized_with_gap_fill`).
+        // The speculated block may be reused as final only if it descends from the
+        // block canonical at `parent_height` now: after a head rollback the parent
+        // was re-derived to a different hash, so a block recorded at `height` was
+        // executed against the now-orphaned parent and would splice a fork onto
+        // the finalized chain if reused. An absent parent is not a match and takes
+        // the re-derive path.
         let correctly_speculated = spec_round == Some(finalization_round)
             && spec_parent == self.executed.spec_executed_hash(parent_height)
             && self.executed.spec_executed_hash(height).is_some();
 
-        // Retained for the post-FCU apply-retry loop below — the re-derive branch
-        // consumes `finalization_seed` (one 48-B signature clone per block).
+        // Retained for the post-FCU apply-retry loop, since the re-derive branch
+        // consumes `finalization_seed`.
         let finalization_seed_retry = finalization_seed.clone();
-        // Guard #2 (below) runs when the node is ≥ K behind. The derive branch
-        // CONSUMES `order`, but guard #2's absent-body arm must hand `order`
-        // back to PARK it — clone it up front (rare path, one clone). Zero cost
-        // in steady state: the derive of `h` runs when `h+1` is the tip, so
-        // `last_tip_height >= h + K` is false and no clone/fetch occurs.
+        // The derive branch consumes `order`, but guard #2's absent-body arm must
+        // hand it back to park, so clone it up front. In steady state the derive
+        // of `h` runs when `h + 1` is the tip, the gate is false, and no clone
+        // happens.
         let behind_by_k = self.last_tip_height.get() >= height + crate::order_block::K;
         let order_for_park = behind_by_k.then(|| order.clone());
         let derived_hash = if correctly_speculated {
-            // Already derived via spec_execute with a seed of the SAME round the
-            // finalized derive resolved — reth is canonical here, no re-derive.
             self.executed
                 .spec_executed_hash(height)
                 .expect("checked is_some above")
         } else {
-            // ONE range, ONE Ok/Err: the missing prefix (the marshal can hold
-            // finalized artifacts the EL hasn't derived yet — restart with an
-            // unflushed reth tail, repair landing ahead of dispatch) and the
-            // delivered height derive through the same call, so there is no
-            // second site that must separately remember to catch an invisible
-            // parent. Two structurally identical sites with only one of them
-            // protected is how this defect class survived.
+            // The missing prefix and the delivered height derive through the same
+            // call, so no second site has to remember to catch an invisible
+            // parent.
             let gap = self.executed.spec_executed_hash(parent_height).is_none();
-            // Cloned ONLY when a gap exists (the rare path) — the park needs an
-            // owned `order` + `seed`, and the derive consumes both. `Seed` is
-            // Clone-not-Copy, which is why the retry path above already clones it
-            // for the same reason.
+            // Cloned only when a gap exists: the park needs an owned `order` and
+            // `seed`, and the derive consumes both.
             let parked = gap.then(|| (order.clone(), finalization_seed.clone()));
             match self
                 .derive_finalized_with_gap_fill(order, finalization_seed)
@@ -3437,13 +2852,10 @@ where
             {
                 Ok(hash) => hash,
                 Err(error) if is_parent_not_visible(error.cause()) => {
-                    // No-gap path: `block_hash(h)` resolving does NOT imply the
-                    // header read will (reth canonicalizes eagerly on the
-                    // engine-tree thread, so a block is by-number resolvable
-                    // milliseconds before provider reads see its header — see
-                    // `ParentHeaderMissing`). That transient has no park payload
-                    // and stays the recoverable `Err` it has always been; turning
-                    // it into a panic here would be a regression.
+                    // A no-gap derive: `block_hash(h)` resolving does not imply the
+                    // header read will, because reth canonicalizes on the
+                    // engine-tree thread before provider reads see the header. With
+                    // no park payload, this transient stays the recoverable `Err`.
                     let Some((order, seed)) = parked else {
                         return Err(error);
                     };
@@ -3463,13 +2875,11 @@ where
                     })));
                 }
                 Err(error) if is_prefix_seed_missing(error.cause()) => {
-                    // A prefix element on a beacon-active round has no σ yet. The
-                    // walk cannot hold (it owns neither `cause` nor the ack), so it
-                    // reports the typed leaf and the park happens HERE. `parked` is
-                    // `Some` in every reachable case — a prefix exists only when the
-                    // walk's backward probe fails at `target - 1`, which IS the
-                    // `gap` predicate that guarded the clone — but the fall-through
-                    // stays rather than an `expect`, matching the arm above.
+                    // The gap walk cannot park (it owns neither `cause` nor the
+                    // ack), so it reports the typed leaf and the park happens here.
+                    // `parked` is `Some` whenever a prefix exists, since that is
+                    // the same `gap` predicate that guarded the clone, but the
+                    // fall-through stays instead of an `expect`.
                     let Some((order, seed)) = parked else {
                         return Err(error);
                     };
@@ -3492,17 +2902,12 @@ where
         };
         self.record_el_lag();
 
-        // DERIVE-SEED TELEMETRY (fork-root byte-confirm): the finalized derive's
-        // provenance for `height`. `fin_proposal_round` is the WITNESS round
-        // (`Round(Ep, proposal_view)`, pinned by rule PIN at the child's vote).
-        // `path` records whether the speculative block was REUSED (and the round
-        // it was speculated with, `spec_seed_round`) or RE-derived. Compared
-        // cross-node at a diverged height this is the (a)-vs-(b) discriminator:
-        // (a) SAME `fin_proposal_round` on both sides but a different resulting
-        // hash / prev_randao (derive.rs line) ⇒ seed decoupled from the agreed
-        // round; (b) DIFFERENT `fin_proposal_round` ⇒ the diverged node resolved
-        // a genuinely different round for this height.
-        // Read `spec_executed` BEFORE the split_off below prunes it.
+        // Records this height's finalization provenance: the witness round
+        // `fin_proposal_round`, and whether the speculative block was reused with
+        // `spec_seed_round` or re-derived. At a diverged height that discriminates
+        // a seed decoupled from the agreed round (same rounds, different hash)
+        // from a genuinely different round. Read before the `split_off` below
+        // prunes `spec_executed`.
         tracing::info!(
             target: "dpos::derive_seed",
             height,
@@ -3513,19 +2918,14 @@ where
             "derive-seed: finalized derive path",
         );
 
-        // GUARD #2 (re-gated to `last_tip_height >= h + K` — fires only when the
-        // node is BEHIND): the immediate `h + K` look-ahead convergence check.
-        // Because `last_tip_height >= h + K`, the committee-attested
-        // `order.result` at `h + K` — which commits `executed_hash(h)` — is
-        // ALREADY finalized, so a wrong derive WOULD be caught here, before the
-        // ack (and the `split_off` prune below) — but only when `spec_executed_hash(h)`
-        // is `Some`. On the catch-up path it is `None` until `h`'s own FCU
-        // (reth canonicalises on FCU, not on insert), `result_matches` is `None`,
-        // and this guard stays silent; the verdict then comes from the `h − K`
-        // backward cross-check further down at `h + K` (R-006 scenario 1, pinned
-        // by `testbed::tests::guard_two_on_the_catch_up_path_reads_a_pre_fcu_height`).
-        // The steady state is covered by that backward check too; this costs NOTHING here (the
-        // derive of `h` runs when `h+1` is the tip, so the gate is false).
+        // Guard #2: the `h + K` look-ahead convergence check, run only when the
+        // node is behind (`last_tip_height >= h + K`), where the attested result
+        // at `h + K` is already finalized and a wrong derive is caught before the
+        // ack. On the catch-up path `spec_executed_hash(h)` is `None` until `h`'s
+        // own FCU (reth canonicalizes on FCU, not on insert), so `result_matches`
+        // is `None` and this guard stays silent; the `h − K` backward check below
+        // then carries the verdict. In steady state the derive of `h` runs when
+        // `h + 1` is the tip, so the gate is false.
         if behind_by_k {
             let hk = height + crate::order_block::K;
             match self.marshal.fetch_block_by_height(Height::new(hk)).await {
@@ -3536,9 +2936,8 @@ where
                         self.dpos_activation_block,
                         |h| self.executed.spec_executed_hash(h),
                     ) {
-                        // The network-attested root at `h + K` disagrees with the
-                        // hash we derived → we would serve a fork. Halt
-                        // (verify-only, stay observable) BEFORE acking.
+                        // The attested root at `h + K` disagrees with the derived
+                        // hash, so serving would fork: halt before acking.
                         return Err(Fault::fork_safety(
                             SyncReason::ResultDivergence,
                             eyre::eyre!(
@@ -3549,12 +2948,11 @@ where
                         ));
                     }
                 }
-                // The `h + K` body is not backfilled yet (tip >= h+K, but the block
-                // hasn't landed). PARK — a fall-through would reach the unconditional
-                // `ack.acknowledge()` and finalize `h` with NO convergence check.
-                // Returning here (BEFORE the `split_off` prune) keeps
-                // `spec_executed[height]` intact, and the park CARRIES σ, so the
-                // re-poke re-derives with zero lookups.
+                // The `h + K` body has not landed yet, so park: falling through
+                // would reach the unconditional `ack.acknowledge()` and finalize
+                // `h` with no convergence check. Returning here also keeps
+                // `spec_executed[height]` intact, and the park carries σ so the
+                // re-poke re-derives without lookups.
                 None => {
                     return Ok(DeriveOutcome::NeedAttestation(Box::new(Deferred {
                         cause,
@@ -3566,28 +2964,24 @@ where
             }
         }
 
-        // The finalized fork is now canonical at `height`. Any speculation
-        // above it that built on a now-orphaned sibling is invalid; reset the
-        // speculative tip so the next notarization re-speculates forward. A
-        // correct speculation keeps its lead.
+        // The finalized fork is canonical at `height`: a correct speculation keeps
+        // its lead, while speculation above it built on an orphaned sibling and is
+        // reset so the next notarization re-speculates forward.
         if correctly_speculated {
             self.spec_head = self.spec_head.max(height);
-            // Keep the surviving lead above `height`; drop the finalized prefix
-            // (≤ height) — `split_off` returns the > height suffix.
+            // Keep the surviving lead; `split_off` drops the finalized prefix at or
+            // below `height`.
             self.spec_executed = self.spec_executed.split_off(&(height + 1));
         } else {
-            // ROLLBACK: the finalized fork replaced the speculated sibling at
-            // `height` and the head FCU (below) rolls the EL head back to it, so
-            // the ENTIRE speculative suffix above `height` was executed against a
-            // now-orphaned parent — INVALIDATE it (drop, do not retain the way a
-            // correct speculation does). Parked notarizations above `height` are
-            // KEPT: the post-FCU `try_drain_parked` legitimately re-executes them
-            // against the new canonical parent (the re-heal path).
+            // Rollback: the head FCU below rolls the EL head to the finalized fork
+            // at `height`, so the whole speculative suffix above it was executed
+            // against an orphaned parent and is dropped. Parked notarizations above
+            // `height` are kept: `try_drain_parked` re-executes them against the new
+            // canonical parent.
             self.spec_head = height;
             let dropped_suffix = self.spec_executed.split_off(&(height + 1)).len();
-            // `split_off` left the ≤ height entries in place (finalized/stale after
-            // the rollback) — clear them too, matching the `correctly_speculated`
-            // arm which drops everything ≤ height.
+            // `split_off` left the entries at or below `height` in place; clear
+            // them too, matching the `correctly_speculated` arm.
             self.spec_executed.clear();
             if dropped_suffix > 0 {
                 metrics::counter!("dpos_executor_spec_suffix_invalidated_total").increment(1);
@@ -3601,26 +2995,21 @@ where
 
         self.ordering_finalized = self.ordering_finalized.max(height);
 
-        // Trustless result cross-check (the SAME property `FluentApp::verify`
-        // enforces on the BFT path): the attested result commits the locally-derived
-        // hash at `height − K`. A present-and-mismatched hash means this node would
-        // serve a fork — fail loud (the loop arm shuts down on `Err`). Absence
-        // (`None`, not yet resolved) and a match fall through. The pre-activation
-        // window is keyed on the CHAIN activation block (not the cold-start
-        // trust anchor `anchor_finalized.0`): a deep-catch-up follower anchors at
-        // the live frontier yet derives the K-below-anchor blocks, which are
-        // post-activation and carry real (non-zero) results.
+        // The attested result commits the locally-derived hash at `height − K`; a
+        // present mismatch means this node would serve a fork and fails loud, while
+        // `None` and a match fall through. The pre-activation window is keyed on
+        // the chain activation block, not the cold-start anchor: a deep-catch-up
+        // follower anchors at the live frontier yet derives the K blocks below it,
+        // which are post-activation and carry real results.
         if let Some(false) = crate::order_block::result_matches(
             attested_result,
             height,
             self.dpos_activation_block,
             |h| self.executed.spec_executed_hash(h),
         ) {
-            // #2/#3 SafetyHalt (Phase 3): the committee-attested result at
-            // `height − K` disagrees with what THIS node executed. Extending here
-            // would serve a fork. Latch the halt (demote to verify-only, stop
-            // driving reth, keep marshal/RPC alive via the supervisor park) rather
-            // than `process::exit`; recovery is the L1 SP1 validity proof.
+            // The attested result at `height − K` disagrees with what this node
+            // executed, so extending would serve a fork. Latch the halt instead of
+            // exiting; recovery is the L1 validity proof.
             return Err(Fault::fork_safety(
                 SyncReason::ResultDivergence,
                 eyre::eyre!(
@@ -3631,11 +3020,10 @@ where
             ));
         }
 
-        // A finalized block was recorded ⇒ the marshal now holds another finalized
-        // block. Wake any per-epoch engine spawn parked on the `Inline::genesis(E)`
-        // precondition (the E-1 boundary block landing). `notify_one` stores a permit
-        // so a finalized block recorded between reconciles is not lost; the reconciler
-        // gates on a pending parked spawn.
+        // A finalized block was recorded, so wake any per-epoch engine spawn parked
+        // on the `Inline::genesis(E)` precondition (the E−1 boundary block landing).
+        // `notify_one` stores a permit, so a recording between reconciles is not
+        // lost.
         self.spawn_unblocked.notify_one();
         let result_final = crate::order_block::result_final_height(
             self.ordering_finalized,
@@ -3644,9 +3032,9 @@ where
 
         let mut new = self.last_canonicalized;
         if result_final > new.finalized_height.get() {
-            // The result-final block was derived+FCU'd K iterations ago, so
-            // its canonical hash is resolvable; a transient miss keeps the
-            // previous finalized cursor (monotonicity over progress).
+            // The result-final block was derived and FCU'd K iterations ago, so its
+            // canonical hash should resolve; a transient miss keeps the previous
+            // finalized cursor (monotonicity over progress).
             match self.executed.spec_executed_hash(result_final) {
                 Some(hash) => new = new.update_finalized(Height::new(result_final), hash),
                 None => warn!(
@@ -3655,39 +3043,32 @@ where
                 ),
             }
         }
-        // Ordering-final tier → engine-API `safe`: the just-finalized tip.
-        // `derived_hash` == executed_hash(height) (whether re-derived or
-        // correctly-speculated) and `height == ordering_finalized` here, so
-        // `safe` lands ~0 blocks behind head while `finalized` lags by K.
+        // `safe` is the just-finalized tip: `derived_hash == executed_hash(height)`
+        // and `height == ordering_finalized`, so `safe` lands about 0 blocks behind
+        // head while `finalized` lags by K.
         //
-        // `safe` is ALWAYS reth-canonical-findable at this FCU: `safe ≤ head` on
-        // the same derived chain (D2), and this same FCU names `head ≥ height`;
-        // reth commits the whole head→fork segment (incl. `safe`) into the
-        // canonical in-memory state (`on_canonical_chain_update`) BEFORE it
-        // validates `safe` (`ensure_consistent_forkchoice_state`), so
-        // `find_canonical_header(safe)` is `Some` → no `-38002`. If head
-        // canonicalization itself fails (a missing block), reth returns SYNCING
-        // via `handle_missing_block` and never reaches the safe check.
+        // `safe` is always canonical-findable at this FCU: `safe <= head` on the
+        // same derived chain and this FCU names `head >= height`, so reth commits
+        // the head-to-fork segment including `safe` before it validates `safe` and
+        // `find_canonical_header(safe)` succeeds. If head canonicalization itself
+        // fails, reth returns SYNCING and never reaches the safe check.
         new = new.update_safe(Height::new(height), derived_hash);
         // Move the head onto the finalized block only when speculation did not
-        // already place the correct block here (else we would roll back the
-        // speculative lead). A re-derive/rollback DOES move the head (reorg) —
-        // and `update_safe`'s `>=` guard above already re-pinned `safe` to the
-        // same `derived_hash`, so `safe == head` at the reorg point (never an
-        // orphaned sibling).
+        // already place the correct block there, or the speculative lead would be
+        // rolled back. A re-derive does move the head, and `update_safe` already
+        // pinned `safe` to the same hash, so `safe == head` at the reorg point.
         if !correctly_speculated {
             new = new.update_head(Height::new(height), derived_hash);
         }
 
-        // #14 SELF-HEAL: a transient TRANSPORT error retries forever (engine stays
-        // up + `reason=engine_retry` gauge). A semantic `Ok(Invalid)` verdict is
-        // returned untouched (never folded into the transport `Err` — D1) and is
-        // the #15 SafetyHalt below: reth rejected our locally-derived block, so
-        // extending would serve a chain reth itself disowns.
+        // A transient transport error retries forever (the engine stays up). A
+        // semantic `Ok(Invalid)` is returned untouched rather than folded into the
+        // transport error, and becomes the safety halt below: reth rejected the
+        // locally-derived block, so extending would serve a chain reth disowns.
         let fcu = self.fcu_retrying_transport(new.forkchoice).await?;
         if !(fcu.is_valid() || fcu.is_syncing()) {
-            // #15 SafetyHalt (Phase 3): halt (verify-only, stop driving reth,
-            // stay observable) instead of exiting — recovery is the L1 proof.
+            // Halt (verify-only, stay observable) instead of exiting; recovery is
+            // the L1 proof.
             return Err(Fault::fork_safety(
                 SyncReason::ElInvalid,
                 eyre::eyre!(
@@ -3697,30 +3078,21 @@ where
             ));
         }
 
-        // POSTCONDITION (fork-safety): the finalized block is reth-CANONICAL at
-        // `height` before this delivery acks. A tolerated SYNCING FCU means "not
-        // applied yet", NOT success — the soak3 fork @ 9924: the re-derived
-        // finalized sibling was silently dropped by the EL (`InsertExecutedBlock`
-        // height gate), the reorg FCU answered SYNCING, and every later parent
-        // lookup at `height` returned the stale speculative sibling — a permanent
-        // fork. Until the EL actually serves `derived_hash` at `height`, re-apply
-        // (re-derive + import + FCU) forever — Decision A: degraded-visible
-        // (`dpos_sync_degraded{reason=finalize_apply}`), never proceed, never exit.
-        // ...but ONLY where re-applying can converge, i.e. ABOVE the finalized
-        // tier. The loop's only lever is re-sending `new.forkchoice`, whose head
-        // `update_head` refuses to move to a block at or below `finalized_height`,
-        // and reth will not reorg below its own finalized block either. At
-        // `height <= finalized_height` the loop is therefore a silent 200 ms spin
-        // with `finalize_apply` degraded forever. Healing it WOULD need an FCU that
-        // reorgs reth away from the BLS-authenticated chain — a silent fork traded
-        // for a visible stall, so this is a verdict, not a retry.
+        // Postcondition: the finalized block is canonical in reth at `height`
+        // before this delivery acks. A tolerated SYNCING FCU means "not applied
+        // yet", not success, so until the EL serves `derived_hash` at `height`,
+        // re-apply (derive + import + FCU) while staying degraded-visible. This
+        // holds only above the finalized tier: the loop's only lever is re-sending
+        // `new.forkchoice`, `update_head` refuses to move to a block at or below
+        // `finalized_height`, and reth will not reorg below its own finalized
+        // block. At or below that height the loop can only spin, so it is a
+        // verdict, not a retry.
         //
-        // The two arms are deliberately ASYMMETRIC. A CONFLICTING hash is settled:
-        // reth will not reorg below its own finalized block, so re-reading only
-        // delays the fork-safety verdict. NOTHING at the height is the transient
-        // `reseed_forward` already answers with a belt — a height the devp2p
-        // backfill just landed is by-NUMBER invisible for a moment — so it gets a
-        // bounded re-read first, and only an EL that never serves it is corruption.
+        // The two arms are asymmetric. A conflicting hash is settled: re-reading
+        // only delays the fork-safety verdict, since reth will not reorg below its
+        // own finalized block. A hash the EL does not have yet may be the devp2p
+        // backfill's by-number invisibility, so it gets a bounded re-read first and
+        // only an EL that never serves it is corruption.
         let mut el_holds = self.executed.spec_executed_hash(height);
         if el_holds.is_none() && height <= new.finalized_height.get() {
             warn!(
@@ -3737,9 +3109,8 @@ where
             }
         }
         if el_holds != Some(derived_hash) && height <= new.finalized_height.get() {
-            // Bound once: re-reading for the message could report `EL holds X` with X equal
-            // to the derived hash, i.e. a permanent, marker-persisted verdict whose own text
-            // contradicts it.
+            // Read once: re-reading for the message could report an `EL holds X`
+            // equal to the derived hash, a verdict whose own text contradicts it.
             return Err(match el_holds {
                 Some(other) => Fault::fork_safety(
                     SyncReason::ResultDivergence,
@@ -3760,10 +3131,9 @@ where
             });
         }
         let mut parent_retries: u32 = 0;
-        // Same budget, different transient: a prefix element's σ can land at any
-        // moment from the cert inlet (the store is shared), so a re-walk is worth
-        // trying here — unlike at the fresh-derive site, this loop already holds
-        // the ack and has no park route.
+        // A prefix element's σ can land at any moment from the cert inlet, so a
+        // re-walk is worth trying here; unlike the fresh-derive site, this loop
+        // already holds the ack and has no park route.
         let mut seed_retries: u32 = 0;
         while self.executed.spec_executed_hash(height) != Some(derived_hash) {
             self.sync_metrics.degrade(SyncReason::FinalizeApply);
@@ -3783,23 +3153,18 @@ where
             else {
                 continue;
             };
-            // The SAME protected walk the first attempt used, not a hand-rolled
-            // copy of it: the old body derived straight against
-            // `spec_executed_hash(parent_height)` and `continue`d when that was
-            // absent, so a re-apply after a rollback that orphaned the parent
-            // silently span instead of gap-filling it. The walk submits the
-            // delivered element itself; its FCU stays here (the walk deliberately
-            // leaves the delivered element's forkchoice to the caller).
+            // The same protected gap-walk the first attempt used, not a hand-rolled
+            // copy: it submits the delivered element itself and leaves that
+            // element's forkchoice to the caller, so its FCU stays here.
             let reapplied = match self
                 .derive_finalized_with_gap_fill(order, finalization_seed_retry.clone())
                 .await
             {
                 Ok(hash) => hash,
-                // The only classes this walk can return while `inflight_ack` holds
-                // the block's `Exact` are ForkSafety and Corruption (transport is
-                // absorbed inline), so the CAUSE is the whole filter — a
-                // `FaultClass::Transient*` disjunct here would be dead code that
-                // reads as a retry guarantee.
+                // While `inflight_ack` holds the block's `Exact`, this walk can
+                // only return ForkSafety or Corruption (transport is absorbed
+                // inline), so filtering on the cause is enough; a
+                // `FaultClass::Transient*` disjunct would be dead code.
                 Err(error)
                     if is_parent_not_visible(error.cause())
                         && parent_retries < REAPPLY_PARENT_VISIBILITY_RETRIES =>
@@ -3860,25 +3225,19 @@ where
         }
         self.sync_metrics.recover(SyncReason::FinalizeApply);
 
-        // Advance the FINALIZED-execution cursor for the result gate. Past the
-        // canonical postcondition above, `derived_hash` is reth-canonical at
-        // `height` and beyond reorg (both arms reach here — the re-derive /
-        // rollback arm with the freshly-finalized sibling, the correctly-
-        // speculated arm with the spec hash the finalization CONFIRMED), so the
-        // cursor need only NAME the height: `finalized_executed_hash(height)`
-        // then resolves `derived_hash` straight from reth's canonical chain (reth
-        // is the tier-F store — no separate hash map). Propose + verify read this
-        // via `finalized_executed_hash(h−K)` so a still-speculative sibling can
-        // never be committed as an OrderBlock `result` (closes the seed-blind
-        // result-commit fork at its SOURCE; the h−K
-        // backward cross-check above stays the safety net). The cursor lives in
-        // the shared executed store, not the per-epoch engine, so it survives
-        // engine restarts within the process.
+        // Advance the finalized-execution cursor for the result gate. Past the
+        // canonical postcondition, `derived_hash` is canonical in reth at `height`
+        // in both arms, so the cursor only names the height and
+        // `finalized_executed_hash(height)` resolves it from reth's canonical chain
+        // (reth is the tier-F store, with no separate hash map). Propose and verify
+        // read it via `finalized_executed_hash(h − K)`, so a still-speculative
+        // sibling can never be committed as an `OrderBlock` result; the `h − K`
+        // backward check above stays the safety net. The cursor lives in the shared
+        // executed store, so it survives engine restarts within the process.
         self.executed.advance_finalized(height);
-        // Every finalized derive moves the committee module's anchor by one
-        // block. This is the steady-state wake-up: a consumer parked on
-        // `NotReadable` for an epoch whose commit height has just been passed
-        // learns it here and nowhere else.
+        // Every finalized derive moves the committee module's anchor by one block;
+        // a consumer parked on `NotReadable` for an epoch just passed learns it
+        // here and nowhere else.
         (self.anchor_advanced)();
 
         if new != self.last_canonicalized {
@@ -3889,62 +3248,44 @@ where
 
         self.take_inflight_ack().acknowledge();
 
-        // The finalized reconcile advanced `spec_head` (above, at the
-        // `correctly_speculated` branch) and the head/safe/finalized FCU has now
-        // landed. Resume speculation from any parked notarized-unfinalized
-        // descendant (the death-spiral recovery) AND prune parked heights the
-        // finalization made stale. Placed AFTER the finalize FCU — not at the
-        // `spec_head` advance itself — so a speculative FCU cannot roll the just-
-        // finalized head back. The ack above already landed, so a fault here is
-        // about the SPECULATIVE tail only — the router continues on the transient
-        // classes it can produce and parks on a fork-safety one.
+        // The finalized reconcile advanced `spec_head` above and the head/safe/
+        // finalized FCU has now landed, so resume parked notarized descendants and
+        // prune the heights finalization made stale. This runs after the finalize
+        // FCU, not at the `spec_head` advance, so a speculative FCU cannot roll the
+        // just-finalized head back. The ack above already landed, so a fault here
+        // concerns only the speculative tail.
         self.try_drain_parked(&cause).await?;
         Ok(DeriveOutcome::Done)
     }
 
-    /// Take the ack parked at [`Self::try_derive`]'s entry (see `inflight_ack`).
     fn take_inflight_ack(&mut self) -> Exact {
         self.inflight_ack
             .take()
             .expect("inflight ack set at try_derive entry")
     }
 
-    /// Derive `[first_missing ..= delivered.height]` — the missing prefix AND the
-    /// delivered block — as ONE fallible range, returning the derived hash at the
-    /// delivered height. When nothing is missing the range is a single element and
-    /// this is the ordinary finalized derive; `first_missing` is found by probing
-    /// backward to the highest executed ancestor.
+    /// Derives `[first_missing ..= delivered.height]` as one fallible range and
+    /// returns the derived hash at the delivered height.
     ///
-    /// One range with ONE `Ok`/`Err` exit is the point: the delivered height is
-    /// structurally identical to a prefix element (it derives against a parent the
-    /// walk just imported), so a caller catching an invisible parent must not have
-    /// to remember a second site. Each element is acquired at the TOP of its own
-    /// iteration — `delivered.take()` at the target, a marshal fetch below it —
-    /// and σ comes from the same place the main path reads it: the store, at that
-    /// element's own round, PREDICATE FIRST ([`Self::seed_at_own_round`]). The
-    /// target's σ is the caller's `delivered_seed` and is NOT re-looked-up: the
-    /// caller may have PARKED with it, a park has no deadline, and a re-lookup
-    /// could miss where the parked value derives. No certs, no lookahead, no
-    /// hints.
+    /// One range with one `Ok`/`Err` exit: the delivered height is structurally
+    /// identical to a prefix element, so a caller catching an invisible parent
+    /// need not remember a second site. The target's σ is the caller's
+    /// `delivered_seed` and is never re-looked-up — the caller may have parked
+    /// with it, and a re-lookup could miss where the parked value derives.
     ///
-    /// A prefix miss on a beacon-ACTIVE round reports the typed
-    /// [`PrefixSeedMissing`](crate::application::PrefixSeedMissing) leaf. This
-    /// call holds neither `cause` nor `ack`, so it cannot hold the block itself —
-    /// but its CALLER owns the park, matches on the leaf and returns
-    /// [`DeriveOutcome::NeedPrefixSeed`], so a σ-less prefix element waits instead
-    /// of killing the actor. The `Fault` class stays `Corruption` because that is
-    /// what the fault-class invariant permits while `inflight_ack` is held; the
-    /// class is never reached, the cause is.
-    ///
-    /// A missing BLOCK stays fatal (the pre-existing "hole below the floor cannot
-    /// self-heal" class); a re-walk on a retry is idempotent — already-derived
+    /// A prefix σ miss on a beacon-active round surfaces the typed
+    /// [`PrefixSeedMissing`](crate::application::PrefixSeedMissing) leaf: this
+    /// call holds neither `cause` nor `ack`, so its caller owns the park and
+    /// returns [`DeriveOutcome::NeedPrefixSeed`] instead of killing the actor.
+    /// The class stays `Corruption` per the fault-class invariant while
+    /// `inflight_ack` is held; the class is never reached, the cause is. A
+    /// missing block stays fatal, and a re-walk is idempotent because derived
     /// prefix heights advance `first_missing`.
     ///
-    /// The landing re-check, the canonicalization FCU, the gap telemetry and the
-    /// result cross-check apply to the PREFIX elements only. The delivered element
-    /// is the caller's: `try_derive` re-checks its landing in the postcondition
-    /// loop, sends its FCU and runs its own cross-check, so repeating them here
-    /// would double every steady-state block's EL round-trips.
+    /// The landing re-check, canonicalization FCU, gap telemetry and result
+    /// cross-check apply to prefix elements only: `try_derive` re-checks the
+    /// delivered element in its postcondition loop, so repeating them here would
+    /// double every steady-state block's EL round-trips.
     async fn derive_finalized_with_gap_fill(
         &mut self,
         delivered: OrderBlock,
@@ -3963,10 +3304,9 @@ where
             }
             first_missing -= 1;
         };
-        // Held until the walk reaches its top: moving rather than cloning keeps
-        // the delivered block's tx list off the steady-state hot path, and the
-        // target is NEVER re-fetched from the marshal (the steady-state walk —
-        // `first_missing == target` — must stay zero-marshal).
+        // Moved, not cloned, so the delivered block's tx list stays off the
+        // steady-state hot path and the target is never re-fetched from the
+        // marshal (`first_missing == target` must stay zero-marshal).
         let mut delivered = Some(delivered);
         if first_missing != target {
             info!(
@@ -3994,11 +3334,6 @@ where
                     OwnRoundSeed::Present(seed) => Some(seed),
                     OwnRoundSeed::Inactive => None,
                     OwnRoundSeed::Missing => {
-                        // The CLASS stays `Corruption` while `inflight_ack` holds the
-                        // block's `Exact` (the fault-class invariant at `try_derive`);
-                        // the caller matches on the CAUSE and parks before the router
-                        // ever sees the class, exactly as it does for
-                        // `ParentHeaderMissing`.
                         return Err(Fault::corruption(
                             eyre::eyre!(crate::application::PrefixSeedMissing {
                                 height: h,
@@ -4013,18 +3348,11 @@ where
                 };
                 (order, seed)
             };
-            // Captured before `order` is consumed: each gap block carries its OWN
-            // committee-attested `result` commitment, which must be cross-checked
-            // exactly like the top-level delivered block — otherwise a wrong
-            // `result` on a gap-range block (the byzantine-vrf defense) would be
-            // imported unchecked.
+            // Captured before `order` is consumed: a gap block carries its own
+            // committee-attested `result`, cross-checked below like the delivered
+            // block — without it a wrong result would be imported unchecked.
             let attested_result = order.result;
-            // Derive-seed telemetry: the walked element's own seed round, captured
-            // before `seed` moves into the deriver.
             let gap_seed_round = seed.as_ref().map(|s| s.target_round);
-            // EXEC-SATURATION observability (see spec_execute for scope rationale);
-            // recorded for the DELIVERED element only, the scope it had before that
-            // derive moved inside this walk.
             let el_apply_started = std::time::Instant::now();
             let derived = self
                 .deriver
@@ -4036,21 +3364,15 @@ where
                 })?;
             parent_hash = derived.evm_hash();
             if h == target {
-                // The DELIVERED element deliberately DISCARDS the transport flag
-                // the prefix arm below checks: `try_derive` re-checks this block's
-                // landing in its postcondition loop, so an `Ok(false)` here is
-                // retried by the caller instead of killing the actor. The two
-                // call sites are NOT symmetry-debt — see
-                // `submit_finalized_payload`'s contract.
+                // The delivered element discards the transport flag the prefix
+                // arm checks: `try_derive` re-checks this block's landing in its
+                // postcondition loop, so `Ok(false)` is retried by the caller
+                // rather than killing the actor.
                 self.submit_finalized_payload(derived).await?;
                 metrics::histogram!("dpos_derive_el_apply_duration_seconds", "path" => "finalized")
                     .record(el_apply_started.elapsed().as_secs_f64());
                 break;
             }
-            // DERIVE-SEED TELEMETRY (fork-root byte-confirm): label the finalized
-            // GAP-WALK derive so a height derived via prefix catch-up (vs top-level
-            // `try_derive`) is attributable; `fin_proposal_round == gap_seed_round`
-            // (the walked block's OWN round).
             tracing::info!(
                 target: "dpos::derive_seed",
                 height = h,
@@ -4059,38 +3381,28 @@ where
                 evm_hash = %parent_hash,
                 "derive-seed: gap-walk derive path",
             );
-            // The walk ADVANCES `parent_hash` onto this block with no later
-            // landing re-check, so a transport-degraded (non-landed) import must
-            // end the walk HERE with the honest cause — otherwise the next
-            // iteration's derive dies under "gap derivation failed at height
-            // {h+1}" masking the transport failure. No retry loop: the walk is
-            // idempotent and re-enters (already-derived prefix heights advance
-            // `first_missing`).
+            // The walk advances `parent_hash` with no later landing re-check, so
+            // a non-landed import must end the walk here with the honest cause;
+            // otherwise the next iteration's derive failure masks it. No retry
+            // loop: re-entry is idempotent, since derived prefix heights advance
+            // `first_missing`.
             if !self.submit_finalized_payload(derived).await? {
-                // `Corruption` (actor death), NOT a transient class, even though
-                // the CAUSE was a transport blip. `try_derive` is holding this
-                // block's `Exact` in `inflight_ack` right now: a class the router
-                // continues on would leave that ack orphaned, and the next
-                // derive's `inflight_ack = Some(..)` would DROP it — a dropped
-                // `Exact` is Canceled, which the marshal treats as fatal. The
-                // walk's disposition while an ack is in flight can only be
-                // "park forever" (fork-safety) or "die loudly".
+                // `Corruption` though the cause was a transport blip: a class the
+                // router continues on would orphan the `Exact` held in
+                // `inflight_ack`, so the walk's only dispositions while an ack is
+                // in flight are "park forever" or "die loudly".
                 return Err(Fault::corruption(eyre::eyre!(
                     "gap-walk import at height {h} hit an engine-API transport failure \
                      (block not landed); aborting the walk — a re-entry re-walks the \
                      idempotent prefix"
                 )));
             }
-            // The walk hands `parent_hash` to the NEXT derive, which reads the
-            // parent BY HASH — and an `InsertExecuted` import is only in reth's
-            // tree-private state until an FCU canonicalizes it. Same literal-state
-            // shape as `reseed_forward`: head = safe = the block just landed (BFT
-            // ordering-final), finalized left on the result tier so the two-tier
-            // contract holds. Built literally rather than through `update_head`,
-            // which silently no-ops when `height <= finalized_height` — reachable
-            // right after a re-jump, exactly when this walk runs. The response is
-            // NOT inspected: VALID and "parent is visible" diverge in both
-            // directions, so the next derive is the honest judge.
+            // The next derive reads the parent by hash, and an import is only in
+            // reth's tree-private state until an FCU canonicalizes it. Built
+            // literally rather than through `update_head`, which no-ops when
+            // `height <= finalized_height` — reachable right after a re-jump,
+            // when this walk runs. The response is not inspected: Valid and
+            // "parent is visible" diverge, so the next derive is the judge.
             if let Err(error) = self
                 .beacon_engine
                 .fork_choice_updated(ForkchoiceState {
@@ -4101,10 +3413,9 @@ where
                 .pace_el_call(self.fcu_pace)
                 .await
             {
-                // A transport failure is absorbed as before (the next derive is
-                // the honest judge). A rejected forkchoice STATE is not: the
-                // finalized hash this walk names is unresolvable in reth, which
-                // every subsequent walk re-sends unchanged.
+                // A transport failure is absorbed — the next derive is the judge.
+                // A rejected forkchoice state is not: the finalized hash it names
+                // is unresolvable in reth, and every later walk re-sends it.
                 match error.fault_class() {
                     FaultClass::TransientExternal(_) => warn!(
                         height = h,
@@ -4123,22 +3434,16 @@ where
                     }
                 }
             }
-            // SAME trustless result cross-check as `try_derive` (keyed on the
-            // CHAIN activation block, NOT the cold-start anchor): the attested
-            // result commits the locally-derived hash at `h − K`. A
-            // present-and-mismatched hash means this node would serve a fork —
-            // fail loud. Pre-activation gap blocks (`result == ZERO`) still pass
-            // (`result_matches` returns `Some(true)`). Absence (`None`, the K-back
-            // height not yet derived) falls through; once `h` is ≥ K above the
-            // walk's first derived height the ancestor is locally resolved.
+            // Trustless result cross-check keyed on the chain activation block,
+            // not the cold-start anchor: a present-and-mismatched hash means this
+            // node would serve a fork. Pre-activation blocks pass; an absent
+            // ancestor falls through until it is locally resolved.
             if let Some(false) = crate::order_block::result_matches(
                 attested_result,
                 h,
                 self.dpos_activation_block,
                 |q| self.executed.spec_executed_hash(q),
             ) {
-                // #2/#3 SafetyHalt (Phase 3) — same fork-safety latch as the
-                // top-level cross-check, on a gap-range block.
                 return Err(Fault::fork_safety(
                     SyncReason::ResultDivergence,
                     eyre::eyre!(
@@ -4152,30 +3457,24 @@ where
         Ok(parent_hash)
     }
 
-    /// Import the derived block into the EL. VALID is the expected steady
-    /// state (single-execution insert acks synthetically; the new_payload
-    /// fallback re-executes a block whose parent was derived one iteration
-    /// ago); SYNCING is tolerated for the cold-start/rejoin window. Only a
-    /// genuinely INVALID status is fatal — under the fallback it means local
+    /// Imports the derived block into the EL. Valid is the expected steady state
+    /// and Syncing is tolerated for the cold-start/rejoin window; only an invalid
+    /// status is fatal, since under the new_payload fallback it means local
     /// derivation diverged from reth's re-execution.
     ///
-    /// Returns `Ok(true)` when the EL ACCEPTED the import (Valid/Syncing) and
-    /// `Ok(false)` when a TRANSPORT failure was degraded — the block did NOT
-    /// land. Callers whose reconvergence re-checks landing (the finalized
-    /// postcondition loop; speculation reconciled at finalization) may ignore
-    /// the flag; a caller that would ADVANCE on the derived hash without a
-    /// landing re-check (the gap-walk) MUST check it, or the death one
-    /// iteration later masks the transport cause.
+    /// Returns `Ok(false)` when a transport failure was degraded — the block did
+    /// not land. A caller that re-checks landing may ignore the flag; a caller
+    /// that advances on the derived hash without one (the gap-walk) must check
+    /// it, or a death one iteration later masks the transport cause.
     async fn submit_finalized_payload(&mut self, derived: D::Derived) -> Result<bool, Fault> {
-        // Single chokepoint for all three derive paths (spec / finalized / gap):
-        // record this block's beacon outcome before the value is moved into the EL.
+        // Single chokepoint for all three derive paths; recorded before `derived`
+        // moves into the EL.
         match derived.beacon_active() {
             Some(true) => self.metrics.seed_active.inc(),
             Some(false) => self.metrics.digest_fallback.inc(),
             None => 0,
         };
-        // TRANSPORT-vs-VERDICT split (family 5, type-level via `BeaconEngineLike`):
-        // the verdict rides in `Ok`, transport in `Err(EngineError)`.
+        // The verdict rides in `Ok`, transport in `Err(EngineError)`.
         let status = match self
             .beacon_engine
             .import_derived(derived)
@@ -4186,18 +3485,10 @@ where
                 self.sync_metrics.recover(SyncReason::EngineRetry);
                 status
             }
-            // GAP-1 CLOSURE: an import TRANSPORT error is now `FaultClass::
-            // TransientExternal(EngineRetry)` — the SAME class as its FCU sibling
-            // — instead of the former `?`→actor-death asymmetry. Degrade-visible
-            // + counted, engine stays UP (Decision A: never actor-death on a
-            // correlated engine-transport cause). The block is not landed, so the
-            // caller's reconvergence retries: the finalized path's canonical
-            // POSTCONDITION re-apply loop re-derives + re-imports until it lands;
-            // the speculative path re-derives at finalization; the gap-walk
-            // re-reads the parent. In-process `RethImporter` transport is a closed
-            // engine channel (a re-send cannot reopen it, and `D::Derived` is
-            // non-`Clone`), so the disposition — not an in-place infinite retry —
-            // is what unifies the two engine entry points.
+            // An import transport error is degraded and counted, not fatal: the
+            // block did not land, so the caller's reconvergence retries. The
+            // in-process engine channel cannot be reopened by a re-send, so the
+            // disposition is not an in-place retry.
             Err(error) if matches!(error.fault_class(), FaultClass::TransientExternal(_)) => {
                 self.sync_metrics.degrade(SyncReason::EngineRetry);
                 self.sync_metrics.engine_transient_retry.inc();
@@ -4216,12 +3507,9 @@ where
             }
         };
         if !(status.is_valid() || status.is_syncing()) {
-            // #15 SafetyHalt (Phase 3): under the new_payload fallback an `Invalid`
-            // import means local derivation diverged from reth's re-execution —
-            // halt (verify-only, stay observable) rather than exit. The latch is
-            // engaged by the ROUTER, not here: this function used to engage it and
-            // then rely on every caller propagating the `Err`, and the speculative
-            // callers did not — leaving a latched node still driving reth.
+            // The latch is engaged by the router, not here: speculative callers do
+            // not propagate this `Err`, so a node latched here would keep driving
+            // reth.
             return Err(Fault::fork_safety(
                 SyncReason::ElInvalid,
                 eyre::eyre!(
@@ -4253,25 +3541,16 @@ mod tests {
 
     thread_local! {
         /// The σ store the default [`Fixture`] serves from and the block helpers
-        /// record into. Thread-local rather than a `static` because the helpers
-        /// are free functions with no fixture in hand: one `#[test]` runs per
-        /// thread, so a round one test recorded can never answer another's
-        /// lookup.
+        /// record into. Thread-local because the helpers are free functions with
+        /// no fixture in hand: one `#[test]` runs per thread, so a round recorded
+        /// by one test can never answer another's lookup.
         static FIXTURE_SEEDS: crate::beacon::testing::SeedStore =
             crate::beacon::testing::SeedStore::new();
     }
 
-    /// The fixture's beacon: the SHIPPED [`crate::beacon::Beacon`] over a real
-    /// seed index, so a test written against it exercises the production `seed`
-    /// and `subscribe` rather than a stub that happens to agree with them today.
-    ///
-    /// Built HERE, in the file that owns the fixture, because the beacon-internal
-    /// constructor it used to call (`beacon::testing::for_seeds`) was deleted with
-    /// row 5.2: one test provider assembled inside the beacon on behalf of another
-    /// module's fixture is a rung the boundary does not owe anyone. Everything it
-    /// names is keyless — no artifact, no share — which is exactly the state these
-    /// tests want: the two seed operations answer from the index and from nothing
-    /// else.
+    /// The fixture's beacon: the shipped [`crate::beacon::Beacon`] over a real
+    /// seed index, so a test exercises the production `seed` and `subscribe`
+    /// rather than a stub that happens to agree today.
     fn beacon_over(seeds: crate::beacon::testing::SeedStore) -> Arc<dyn crate::beacon::Beacon> {
         crate::beacon::testing::LiveBeacon::build(crate::beacon::testing::LiveBeaconConfig {
             seeds,
@@ -4285,14 +3564,13 @@ mod tests {
         })
     }
 
-    /// Record the canonical σ for a block proposed at `view` of epoch 0 — the
-    /// epoch the fixture's default single huge epocher puts every test height in.
+    /// Records the canonical σ for a block proposed at `view` of the first
+    /// beacon-active epoch.
     ///
-    /// σ is a pure function of the round, so every writer of one round writes the
-    /// same bytes; the store therefore doubles as the memo that keeps the
-    /// threshold recovery to once per round per thread. A test that overrides the
-    /// epocher builds its own store (`Fixture::with_seed_store`) — this one
-    /// cannot name its epochs.
+    /// σ is a pure function of the round, so the store doubles as the memo that
+    /// keeps threshold recovery to once per round per thread. A test that
+    /// overrides the epocher builds its own store: this one cannot name its
+    /// epochs.
     fn record_fixture_seed(view: u64) {
         let round = active_round(view);
         FIXTURE_SEEDS.with(|seeds| {
@@ -4316,13 +3594,12 @@ mod tests {
         }
     }
 
-    /// A REAL 2f+1 finalization certificate over `block`'s digest, under a
+    /// A real 2f+1 finalization certificate over `block`'s digest, under a
     /// throwaway four-member committee built once per process.
     ///
     /// It exists so [`FakeMarshal`] can answer `BlockFetcher::pair_at` with a
-    /// `Finalization` VALUE — the jump target's type demands one. Nothing in this
-    /// module verifies it: the re-jump callback is scripted, and the production
-    /// gates that would check it run over the production archive on the stand.
+    /// `Finalization` value, which the jump target's type demands; nothing here
+    /// verifies it.
     fn canned_finalization(block: &OrderBlock) -> Finalization<BlsScheme, Digest> {
         use commonware_codec::DecodeExt as _;
         use commonware_consensus::{
@@ -4387,23 +3664,22 @@ mod tests {
         Finalization::from_finalizes(&c.verifier, finalizes.iter(), &Sequential).expect("quorum")
     }
 
-    /// The next linked block after `parent` — a plain link now that nothing
-    /// rides on the child. A test that needs σ for a specific round files it
-    /// with [`record_fixture_seed`] instead; the child no longer carries one.
+    /// The next linked block after `parent`. It carries no σ; a test that needs
+    /// one for a specific round files it with [`record_fixture_seed`].
     fn child_of(parent: &OrderBlock) -> OrderBlock {
         sample_order(parent.digest(), parent.height + 1, B256::ZERO)
     }
 
-    /// The first beacon-ACTIVE epoch, and the one every σ-recording helper in
-    /// this module keys on.
+    /// The first beacon-active epoch, the one every σ-recording helper here keys
+    /// on.
     fn active_epoch() -> commonware_consensus::types::Epoch {
         commonware_consensus::types::Epoch::new(
             crate::beacon::testing::DETERMINISTIC_BOOTSTRAP_EPOCH,
         )
     }
 
-    /// `Round(DETERMINISTIC_BOOTSTRAP_EPOCH, view)` — the round a height whose
-    /// epocher is [`beacon_active_epocher`] resolves its σ at.
+    /// The round a height whose epocher is [`beacon_active_epocher`] resolves its
+    /// σ at.
     fn active_round(view: u64) -> commonware_consensus::types::Round {
         commonware_consensus::types::Round::new(
             active_epoch(),
@@ -4411,24 +3687,20 @@ mod tests {
         )
     }
 
-    /// An epocher that puts heights 96..=143 — the band every fixture in this
-    /// module anchors in — inside `DETERMINISTIC_BOOTSTRAP_EPOCH`, so
-    /// `mandatory_at` answers TRUE and σ is actually consulted.
+    /// An epocher that puts heights 96..=143 — the band every fixture here
+    /// anchors in — inside `DETERMINISTIC_BOOTSTRAP_EPOCH`, so `mandatory_at`
+    /// answers true and σ is actually consulted.
     ///
-    /// The DEFAULT fixture epocher puts every height in epoch 0, which is
-    /// beacon-INACTIVE: there the agreed derivation is `None` and a σ in the
-    /// store is ignored. A test whose subject is σ — a value reaching the
-    /// deriver, or a block HELD waiting for one — must use this, and must then
-    /// supply σ for EVERY height it expects to derive.
+    /// A test whose subject is σ must use this and then supply σ for every height
+    /// it expects to derive; the default fixture epocher is beacon-inactive and
+    /// ignores the store.
     fn beacon_active_epocher() -> crate::epocher::OriginEpocher {
         crate::epocher::OriginEpocher::new(0, std::num::NonZeroU64::new(48).expect("nonzero"))
     }
 
-    /// Build a self-consistent OrderBlock chain `(anchor+1 ..= anchor+count)`
-    /// whose `result` field commits the hash the [`FakeDeriver`] WILL derive at
-    /// `height − K` (ZERO in the pre-activation window) — so the executor's
-    /// trustless result cross-check passes. Mirrors `FakeDeriver`'s derive shape
-    /// (`sealed_at(parent_evm_hash, height, digest)`) exactly.
+    /// Builds a self-consistent `OrderBlock` chain `(anchor+1 ..= anchor+count)`
+    /// whose `result` commits the hash [`FakeDeriver`] will derive at `height − K`
+    /// (zero pre-activation), so the executor's result cross-check passes.
     fn result_consistent_chain(anchor: u64, anchor_hash: B256, count: u64) -> Vec<OrderBlock> {
         let mut orders: Vec<OrderBlock> = Vec::new();
         let mut derived: BTreeMap<u64, B256> = BTreeMap::new();
@@ -4450,9 +3722,9 @@ mod tests {
         orders
     }
 
-    /// `discriminator` (the ordering digest) is folded into `extra_data` so two
-    /// sibling orders at the same (parent, height) seal to DISTINCT block hashes
-    /// — required to observe a speculative rollback (sibling reorg).
+    /// Folds `discriminator` (the ordering digest) into `extra_data` so sibling
+    /// orders at the same (parent, height) seal to distinct block hashes —
+    /// required to observe a speculative rollback.
     fn sealed_at(parent: B256, number: u64, discriminator: B256) -> RethExecBlock {
         let header = AlloyHeader {
             parent_hash: parent,
@@ -4469,12 +3741,10 @@ mod tests {
         )))
     }
 
-    /// Fold a notarization/finalization seed into the ordering digest exactly as
-    /// production folds `prev_randao = H(threshold-sig)` into the derived header's
-    /// mix_hash: two DIFFERENT seeds for the SAME ordering block (identical digest)
-    /// seal to DISTINCT executed hashes, mirroring the real chain. A `None`
-    /// (no-beacon) seed leaves the digest untouched, so every existing seedless
-    /// test seals byte-identically to before this fold existed.
+    /// Folds a notarization/finalization seed into the ordering digest the way
+    /// production folds `prev_randao = H(threshold-sig)` into mix_hash: two seeds
+    /// for the same ordering block seal to distinct executed hashes. A `None`
+    /// seed leaves the digest untouched.
     fn seed_folded_discriminator(digest: Digest, seed: &Option<crate::beacon::Seed>) -> B256 {
         match seed {
             Some(s) => alloy_primitives::keccak256(
@@ -4488,20 +3758,18 @@ mod tests {
         }
     }
 
-    /// Models reth's by-HASH header-index lag — the parent-visibility race. A
-    /// backfilled block is visible by NUMBER (`executed_hash`) immediately, but
-    /// the by-HASH read the deriver's `derive_sync` performs on the parent
-    /// (`header(parent_hash)`) only resolves once an FCU has canonicalized the
-    /// segment. Heights ≤ `frontier` are by-hash-visible; `frontier` defaults to
-    /// `u64::MAX` (lag disabled), so existing tests are unaffected and a test
-    /// lowers it to exercise the race. Shared (cloned) between `FakeChain` (read),
+    /// Models reth's by-hash header-index lag: a backfilled block is visible by
+    /// number immediately, but the by-hash parent read the deriver performs only
+    /// resolves once an FCU has canonicalized the segment. Heights ≤ `frontier`
+    /// are by-hash-visible; `frontier` defaults to `u64::MAX` (lag disabled), so a
+    /// test lowers it to exercise the race. Shared between `FakeChain` (read),
     /// `FakeDeriver` (gate) and `FakeBeacon` (an FCU advances it).
     #[derive(Clone)]
     struct ByHashVisibility {
         hash_height: Arc<Mutex<BTreeMap<B256, u64>>>,
         frontier: Arc<Mutex<u64>>,
-        /// Hashes reth resolves NO header for, whatever the frontier — the one
-        /// knob that keeps a re-apply re-walk failing with `ParentHeaderMissing`
+        /// Hashes reth resolves no header for, whatever the frontier — the knob
+        /// that keeps a re-apply re-walk failing with `ParentHeaderMissing`
         /// instead of converging, so the retry bound is reachable in a test.
         never_visible: Arc<Mutex<std::collections::BTreeSet<B256>>>,
     }
@@ -4520,12 +3788,11 @@ mod tests {
         fn register(&self, height: u64, hash: B256) {
             self.hash_height.lock().unwrap().insert(hash, height);
         }
-        /// Arm [`Self::never_visible`] for `hash`.
         fn hide(&self, hash: B256) {
             self.never_visible.lock().unwrap().insert(hash);
         }
-        /// `true` iff reth would resolve `header(hash)`. An untracked hash is
-        /// treated as visible (only the explicitly-modelled segment participates).
+        /// `true` iff reth would resolve `header(hash)`. An untracked hash counts
+        /// as visible — only the explicitly modelled segment participates.
         fn visible(&self, hash: B256) -> bool {
             if self.never_visible.lock().unwrap().contains(&hash) {
                 return false;
@@ -4539,8 +3806,8 @@ mod tests {
                 None => true,
             }
         }
-        /// Model an FCU(head): reth canonicalizes `[.., head]` by hash. Raises the
-        /// frontier to the head's tracked height (no-op for an untracked head).
+        /// Models an FCU(head), which canonicalizes `[.., head]` by hash: raises
+        /// the frontier to the head's tracked height (no-op for an untracked one).
         fn canonicalize_up_to(&self, head: B256) {
             if let Some(&h) = self.hash_height.lock().unwrap().get(&head) {
                 let mut f = self.frontier.lock().unwrap();
@@ -4553,32 +3820,29 @@ mod tests {
     }
 
     /// Shared height→hash canonical map: the deriver inserts on derive
-    /// (modelling new_payload+FCU canonicalization), the ExecutedChain
-    /// reads — mirrors the provider-backed production impl. `vis` carries the
-    /// by-HASH visibility lag model (default-disabled).
+    /// (modelling new_payload + FCU canonicalization) and `ExecutedChain` reads,
+    /// mirroring the provider-backed production impl. `vis` carries the by-hash
+    /// visibility lag model.
     #[derive(Clone, Default)]
     struct FakeChain {
         canonical: Arc<Mutex<BTreeMap<u64, B256>>>,
-        /// The FINALIZED-execution cursor the executor advances past the
-        /// canonical postcondition — mirrors the provider-backed production
-        /// store (tier-F = canonical chain below the cursor).
+        /// The finalized-execution cursor the executor advances past the canonical
+        /// postcondition; mirrors the provider-backed production store (tier-F =
+        /// canonical chain below the cursor).
         finalized: crate::application::FinalizedCursor,
         vis: ByHashVisibility,
-        /// Pre-fix reth `InsertExecutedBlock` contract violation model: while > 0,
-        /// an import at a height that ALREADY has a DIFFERENT canonical hash (a
-        /// same-height sibling reorg) is silently dropped — the canonical map keeps
-        /// the old hash — and the counter decrements. The soak3-fork EL behavior.
+        /// Models reth silently dropping an `InsertExecutedBlock` at a height that
+        /// already has a different canonical hash (a same-height sibling reorg):
+        /// the canonical map keeps the old hash and the counter decrements.
         sibling_drops: Arc<Mutex<u32>>,
-        /// Landing model switch (family-5 gap-1 fidelity): when set, the DERIVER
-        /// no longer lands blocks into the canonical map — landing happens only
-        /// on a SUCCESSFUL `import_derived` (see `FakeBeacon::land_chain`),
-        /// mirroring the real EL where a transport-failed `InsertExecutedBlock`
-        /// leaves nothing behind. Default off (land-at-derive, the historical
-        /// model most tests rely on). Armed via `Fixture::gate_landing_on_import`.
+        /// When set, the deriver stops landing blocks into the canonical map;
+        /// landing happens only on a successful `import_derived` (see
+        /// `FakeBeacon::land_chain`), mirroring the real EL where a failed
+        /// `InsertExecutedBlock` leaves nothing behind. Default off.
         land_on_import: Arc<std::sync::atomic::AtomicBool>,
-        /// Heights the EL serves NOTHING for, one decrement per by-NUMBER read —
-        /// the post-devp2p-backfill window where a block is landed but not yet
-        /// index-visible. `u32::MAX` models an EL that never serves it.
+        /// Heights the EL serves nothing for, one decrement per by-number read —
+        /// the window where a block is landed but not yet index-visible.
+        /// `u32::MAX` models an EL that never serves it.
         missing_reads: Arc<Mutex<BTreeMap<u64, u32>>>,
     }
 
@@ -4602,7 +3866,6 @@ mod tests {
             self.canonical.lock().unwrap().get(&height).copied()
         }
         fn finalized_executed_hash(&self, height: u64) -> Option<B256> {
-            // Canonical chain below the cursor — mirrors `ProviderExecutedChain`.
             self.finalized
                 .resolve(height, |h| self.spec_executed_hash(h))
         }
@@ -4616,13 +3879,13 @@ mod tests {
     #[derive(Clone)]
     struct FakeDeriver {
         chain: FakeChain,
-        /// Records the (height, seed) passed to each `derive_and_execute` so a
-        /// test can assert the cert-recovered seed actually reaches the deriver.
-        /// Mutex<Vec> so it survives the deriver clone (Arc-shared).
+        /// Records the (height, seed) passed to each `derive_and_execute`, so a
+        /// test can assert the cert-recovered seed reaches the deriver. `Vec`
+        /// behind the shared `Arc` so it survives a clone.
         seeds_seen: SeedsSeen,
-        /// Heights whose NEXT `derive_and_execute` fails with a plain (untyped)
-        /// `eyre` error, then succeeds — the transient derive failure the
-        /// speculative path must survive without taking the node down.
+        /// Heights whose next `derive_and_execute` fails once with a plain `eyre`
+        /// error — the transient derive failure the speculative path must survive
+        /// without taking the node down.
         derive_fail_once: Arc<Mutex<std::collections::BTreeSet<u64>>>,
     }
 
@@ -4645,9 +3908,8 @@ mod tests {
             parent_evm_hash: B256,
             seed: Option<crate::beacon::Seed>,
         ) -> eyre::Result<RethExecBlock> {
-            // Fold the seed into the sealed hash (prev_randao→mix_hash model)
-            // BEFORE `seed` is moved into `seeds_seen`, so notarize-round vs
-            // finalize-round divergence is observable in-test.
+            // Fold before `seed` moves into `seeds_seen`, so notarize-round vs
+            // finalize-round divergence stays observable.
             let discriminator = seed_folded_discriminator(order.digest(), &seed);
             self.seeds_seen.lock().unwrap().push((order.height, seed));
             if self.derive_fail_once.lock().unwrap().remove(&order.height) {
@@ -4656,21 +3918,21 @@ mod tests {
                     order.height
                 ));
             }
-            // Model derive_sync's by-HASH parent read: a parent not yet canonical
-            // by hash is `ParentHeaderMissing`. Default frontier = MAX ⇒ always
-            // visible (no-op for tests that don't exercise the lag).
+            // Models the deriver's by-hash parent read: a parent not yet canonical
+            // by hash is `ParentHeaderMissing`. The default frontier makes every
+            // hash visible.
             if !self.chain.vis.visible(parent_evm_hash) {
-                // The TYPED error the real deriver returns (`node/src/derive.rs`),
-                // not a look-alike string: `is_parent_not_visible` keys on the type
-                // through the walk's `wrap_err` chain, so an untyped model would
-                // make the park untestable.
+                // The real deriver returns this typed error, and
+                // `is_parent_not_visible` keys on the type through the walk's
+                // `wrap_err` chain: an untyped model would make the park
+                // untestable.
                 return Err(crate::application::ParentHeaderMissing(parent_evm_hash).into());
             }
             let sealed = sealed_at(parent_evm_hash, order.height, discriminator);
-            // Pre-fix reth model (`sibling_drops` armed): a SAME-HEIGHT SIBLING
-            // import is silently dropped — the derive succeeds but the canonical
-            // map keeps the old hash (the soak3-fork EL contract violation the
-            // try_derive postcondition must survive).
+            // With `sibling_drops` armed, a same-height sibling import is silently
+            // dropped: the derive succeeds but the canonical map keeps the old
+            // hash — the contract violation the try_derive postcondition must
+            // survive.
             {
                 let mut drops = self.chain.sibling_drops.lock().unwrap();
                 let dropped = *drops > 0
@@ -4686,8 +3948,8 @@ mod tests {
                     return Ok(sealed);
                 }
             }
-            // Gated-landing model (gap-1 fidelity): the derive alone lands
-            // nothing — a successful import does (FakeBeacon::land).
+            // With landing gated on import, the derive alone lands nothing; a
+            // successful import does.
             if self
                 .chain
                 .land_on_import
@@ -4695,16 +3957,15 @@ mod tests {
             {
                 return Ok(sealed);
             }
-            // Last writer wins, modelling a reth reorg: a finalized sibling
-            // derived after a speculative one replaces the canonical hash.
+            // Last writer wins, modelling a reth reorg: a sibling derived after
+            // another replaces the canonical hash.
             self.chain
                 .canonical
                 .lock()
                 .unwrap()
                 .insert(order.height, sealed.hash());
-            // Registered (by-number present) but NOT canonicalized: only an FCU
-            // makes a block by-hash visible. Modelling them as one event is what
-            // hid the gap-walk parent-visibility defect from every test.
+            // Registered (by-number present) but not canonicalized: only an FCU
+            // makes a block by-hash visible.
             self.chain.vis.register(order.height, sealed.hash());
             Ok(sealed)
         }
@@ -4714,37 +3975,35 @@ mod tests {
     struct FakeBeacon {
         fcu_calls: Arc<Mutex<Vec<ForkchoiceState>>>,
         new_payload_calls: Arc<Mutex<Vec<RethExecBlock>>>,
-        /// Override for the `fork_choice_updated` status; `None` ⇒ Valid. Set to
-        /// drive SYNCING / INVALID through the FCU gate.
+        /// Overrides the `fork_choice_updated` status; `None` is Valid. Set to
+        /// drive Syncing or Invalid through the FCU gate.
         fcu_status: Arc<Mutex<Option<PayloadStatusEnum>>>,
-        /// #14: leading FCU calls that return a transport `Result::Err` (an RPC/channel
-        /// blip) before succeeding — decremented per call. Models the retryable
-        /// transport half of the split (distinct from a semantic `Ok(Invalid)`).
+        /// Leading FCU calls that return a transport `Err` (an RPC/channel blip)
+        /// before succeeding, decremented per call — the retryable transport half
+        /// of the split, distinct from a semantic `Ok(Invalid)`.
         fcu_transport_errs: Arc<Mutex<u32>>,
-        /// Item 5: `fork_choice_updated` returns
-        /// `Err(EngineError::anchor_inconsistent)` — reth PROCESSED the update and
+        /// When set, `fork_choice_updated` returns
+        /// `Err(EngineError::anchor_inconsistent)`: reth processed the update and
         /// rejected the state ("unknown finalized/safe hash"). Sticky, not a
-        /// countdown: the condition is structurally permanent, which is exactly
-        /// why classifying it as transport made the retry loop unbounded.
+        /// countdown — the condition is structurally permanent, so classifying it
+        /// as transport would retry without bound.
         fcu_anchor_inconsistent: Arc<Mutex<bool>>,
         /// How many times the arm above fired. The assertion that matters is that
-        /// this stays BOUNDED: the pre-fix classification retried the same
-        /// unresolvable hashes without limit.
+        /// it stays bounded.
         fcu_anchor_rejections: Arc<Mutex<u32>>,
-        /// Override for the `import_derived` status; `None` ⇒ Valid.
+        /// Overrides the `import_derived` status; `None` is Valid.
         import_status: Arc<Mutex<Option<PayloadStatusEnum>>>,
-        /// Gap-1 (family 5): leading `import_derived` calls that return a
-        /// transport `Err(EngineError)` (a closed engine channel) before
-        /// succeeding — decremented per call. Models the import transport half of
-        /// the split; the executor must degrade + defer, NOT actor-death.
+        /// Leading `import_derived` calls that return a transport `Err` (a closed
+        /// engine channel) before succeeding, decremented per call — the executor
+        /// must degrade and defer, not die.
         import_transport_errs: Arc<Mutex<u32>>,
-        /// `Some(chain)` when landing is GATED on a successful import (see
+        /// `Some(chain)` when landing is gated on a successful import (see
         /// `FakeChain::land_on_import`): a `Valid` import inserts the block into
-        /// the canonical map + visibility. `None` = the default land-at-derive
-        /// model. Armed via `Fixture::gate_landing_on_import`.
+        /// the canonical map and visibility. `None` is the default land-at-derive
+        /// model.
         land_chain: Arc<Mutex<Option<FakeChain>>>,
-        /// By-hash visibility shared with `FakeChain`/`FakeDeriver`: an FCU
-        /// canonicalizes `[.., head]` by hash (the visibility model). Default-disabled.
+        /// Shared with `FakeChain`/`FakeDeriver`: an FCU canonicalizes `[.., head]`
+        /// by hash.
         vis: ByHashVisibility,
     }
 
@@ -4765,8 +4024,8 @@ mod tests {
                 let mut errs = self.fcu_transport_errs.lock().unwrap();
                 if *errs > 0 {
                     *errs -= 1;
-                    // A transport blip: reth was never reached, so nothing is
-                    // recorded/canonicalized — the caller must retry.
+                    // A transport blip: reth was never reached, so nothing was
+                    // recorded — the caller must retry.
                     return Err(crate::fault::EngineError::transport(
                         "simulated engine-API transport blip",
                     ));
@@ -4779,10 +4038,10 @@ mod tests {
                 .unwrap()
                 .clone()
                 .unwrap_or(PayloadStatusEnum::Valid);
-            // Only a VALID forkchoice canonicalizes. SYNCING means a backfill
-            // holds the engine and reth did NOT make the segment canonical — the
-            // cause the parent-visibility park exists for, so a model that raised
-            // the frontier here could not express it at all.
+            // Only a Valid forkchoice canonicalizes: Syncing means a backfill
+            // holds the engine and the segment did not go canonical — the cause
+            // the parent-visibility park exists for, which a model raising the
+            // frontier here could not express.
             if status == PayloadStatusEnum::Valid {
                 self.vis.canonicalize_up_to(state.head_block_hash);
             }
@@ -4797,8 +4056,8 @@ mod tests {
                 let mut errs = self.import_transport_errs.lock().unwrap();
                 if *errs > 0 {
                     *errs -= 1;
-                    // A closed engine channel: nothing imported — the executor
-                    // degrades + defers to reconvergence (never actor-death).
+                    // A closed engine channel: nothing was imported, so the
+                    // executor degrades and defers to reconvergence.
                     return Err(crate::fault::EngineError::transport(
                         "simulated engine tree channel closed",
                     ));
@@ -4810,14 +4069,13 @@ mod tests {
                 .unwrap()
                 .clone()
                 .unwrap_or(PayloadStatusEnum::Valid);
-            // Gated-landing model: a SUCCESSFUL (Valid) import is what lands the
-            // block — mirrors the real EL where the transport-failed insert above
-            // left nothing behind.
+            // With landing gated, only a Valid import lands the block; the
+            // transport-failed insert above left nothing behind.
             if let Some(chain) = self.land_chain.lock().unwrap().as_ref() {
                 if status == PayloadStatusEnum::Valid {
                     let (height, hash) = (data.number(), data.hash());
                     chain.canonical.lock().unwrap().insert(height, hash);
-                    // Registered only: an import lands the block in reth's
+                    // Registered only: the import puts the block in reth's
                     // tree-private state; the FCU is what canonicalizes it.
                     chain.vis.register(height, hash);
                 }
@@ -4838,44 +4096,36 @@ mod tests {
         hints: Arc<Mutex<Vec<u64>>>,
         /// Heights passed to `set_floor`, in call order (the re-jump recorder).
         floors: Arc<Mutex<Vec<u64>>>,
-        /// Heights passed to `store_verified_finalization`, in call order. Recorded
-        /// in the SAME `Vec` ordering domain as `floors` is compared against, so a
-        /// test can assert boundary seeding happened strictly BEFORE the floor rose —
-        /// which is the whole correctness argument for the injection.
+        /// Heights passed to `store_verified_finalization`, in call order.
         stored: Arc<Mutex<Vec<u64>>>,
         /// Interleaved `("store"|"floor", height)` trace, so ordering between the two
         /// is assertable without reasoning about two separate vectors.
         store_floor_order: Arc<Mutex<Vec<(&'static str, u64)>>>,
         /// Biased-select escape model (the `marshal_floor` stale-dispatch guard):
-        /// a mailbox sender + a canned OLD-range inventory, armed via
+        /// a mailbox sender plus a canned old-range inventory, armed via
         /// [`Self::arm_stale_escape`]. On `set_floor(f)` every inventory block at
-        /// height ≤ f is dispatched into the executor mailbox — modelling the acks
-        /// that `reseed_forward`'s disposals free, whose slots the marshal's biased
-        /// select fills with the next OLD blocks BEFORE it processes `SetFloor`.
-        /// The escaped `Exact` waiters are retained so the guard's `acknowledge()`
-        /// never hits a dropped receiver. Inert (empty/`None`) on every other test.
+        /// height ≤ f is dispatched into the executor mailbox, modelling the acks
+        /// freed by `reseed_forward`'s disposals whose slots the marshal's biased
+        /// select fills with the next old blocks before it processes `SetFloor`.
+        /// Escaped `Exact` waiters are retained so the guard's `acknowledge()`
+        /// never hits a dropped receiver.
         dispatch: Arc<Mutex<Option<Mailbox>>>,
         stale_inventory: Arc<Mutex<Vec<OrderBlock>>>,
         escaped_waiters: Arc<Mutex<Vec<commonware_utils::acknowledgement::ExactWaiter>>>,
         /// Set to make [`BlockFetcher::pair_at`] answer `None` at every height.
-        /// The default (`false`) models the real invariant — a marshal emits
-        /// `Update::Tip(h)` only from `store_finalization`, which has just written
-        /// the pair at `h` (CW `marshal/core/actor.rs:1404-1463`), so every tip the
-        /// executor sees has a pair behind it. Setting it models the one case
-        /// where it does not: a heartbeat re-poke replaying a tip the floor has
-        /// since moved past.
+        /// The default models the real invariant: a marshal emits `Update::Tip(h)`
+        /// only from `store_finalization`, which has just written the pair at `h`,
+        /// so every tip has a pair behind it. Setting it models a heartbeat
+        /// re-poke replaying a tip the floor has since moved past.
         ///
-        /// A synthesized pair rather than a per-test canned one because nothing in
-        /// this module's re-jump tests reads the target's CONTENT — they script
-        /// the outcome (`Scripted`) — and priming a real certificate per height in
-        /// twenty tests would buy nothing. The stand runs the production jump over
-        /// the production archive, and that is where the content matters.
+        /// The pair is synthesized because nothing in the re-jump tests reads the
+        /// target's content; they script the outcome.
         archive_empty: Arc<Mutex<bool>>,
     }
 
     impl FakeMarshal {
         /// Arm the biased-select escape: `inventory` blocks at height ≤ the floor
-        /// are dispatched into `mailbox` when `reseed_forward` calls `set_floor`.
+        /// are dispatched into `mailbox` when `set_floor` runs.
         fn arm_stale_escape(&self, mailbox: Mailbox, inventory: Vec<OrderBlock>) {
             *self.dispatch.lock().unwrap() = Some(mailbox);
             *self.stale_inventory.lock().unwrap() = inventory;
@@ -4958,7 +4208,7 @@ mod tests {
         marshal: FakeMarshal,
         anchor_hash: B256,
         /// Re-jump callback injected into the built actor's `Config`. `None` by
-        /// default (the re-jump tests set it via `with_re_jump`).
+        /// default; the re-jump tests set it via `with_re_jump`.
         re_jump: Arc<Mutex<Option<ReJump>>>,
         /// Boundary-seeding seam injected into the built actor's `Config`. `None` by
         /// default; the seeding tests set it via `with_boundary_fetch`.
@@ -4969,41 +4219,35 @@ mod tests {
         /// Inert by default; the read-floor test records into a sink via
         /// `with_boundary_read_floor`.
         boundary_read_floor: BoundaryReadFloorFn,
-        /// Self-heal metrics handle the built actor's `Config` carries — exposed so
-        /// the #14 tests assert the `engine_retry` gauge + counter. (It used to name
-        /// `auth_rotate` alongside it; that reason went with `SyncReason::AuthRotate`
-        /// in pass Б2.4, and no test asserts it any more.)
+        /// Self-heal metrics handle the built actor's `Config` carries, exposed so
+        /// the tests assert the `engine_retry` gauge and counter.
         sync_metrics: SyncMetrics,
-        /// Fork-safety latch the built actor's `Config` carries — exposed so the
-        /// Phase-3 SafetyHalt tests assert it engages on divergence / EL-Invalid.
+        /// Fork-safety latch the built actor's `Config` carries, exposed so the
+        /// tests assert it engages on divergence or EL-Invalid.
         safety_halt: crate::sync_metrics::SafetyHalt,
         /// FCU-heartbeat interval. Default 60 s so heartbeats never interfere with
-        /// fast tests; the park tests that rely on the heartbeat re-poke lower it
-        /// (the deterministic clock steps ~1 ms/iteration in real time, so a large
-        /// virtual interval is real seconds) via `with_fcu_heartbeat`.
+        /// fast tests; a park test that relies on the heartbeat re-poke lowers it.
         fcu_heartbeat: Duration,
         /// Randomness handed to the built actor. Default: the real provider over
-        /// the thread's `FIXTURE_SEEDS` store, which the block helpers file into,
-        /// so σ resolves by round exactly as production does. Replace it via
-        /// `with_seed_store` — with a store of the test's own, or with an EMPTY
-        /// one to pin a MISS. Note the DEFAULT epocher is beacon-INACTIVE, so
-        /// the store is only consulted under [`beacon_active_epocher`].
+        /// the thread's `FIXTURE_SEEDS` store, so σ resolves by round as in
+        /// production. Replace it via `with_seed_store`, with an empty store to
+        /// pin a miss. The default epocher is beacon-inactive, so the store is
+        /// consulted only under [`beacon_active_epocher`].
         randomness: std::sync::Arc<dyn crate::beacon::Beacon>,
         /// Block→epoch map handed to the built actor. Default: a single huge
-        /// epoch so every test height maps to epoch 0 — below
-        /// `DETERMINISTIC_BOOTSTRAP_EPOCH`, i.e. beacon-INACTIVE, where the
-        /// agreed derivation is `None` and no block can be held for its σ. A
-        /// test whose subject IS σ overrides with [`beacon_active_epocher`].
+        /// epoch so every test height maps to epoch 0, below
+        /// `DETERMINISTIC_BOOTSTRAP_EPOCH` and therefore beacon-inactive, where
+        /// the agreed derivation is `None`. A test whose subject is σ overrides
+        /// with [`beacon_active_epocher`].
         epocher: crate::epocher::OriginEpocher,
         /// Restart-seed override for `last_execution_finalized_height` (the reth
-        /// head = `provider.last_block_number()`). `None` ⇒ the historical
-        /// `anchor_height` (head == acked == anchor). The
+        /// head). `None` uses `anchor_height`, i.e. head == acked. The
         /// `ordering_finalized`-seed test decouples the two (head ≫ acked with a
-        /// speculative tail) to pin that the cursor seeds from the ACKED cursor.
+        /// speculative tail) to pin that the cursor seeds from the acked cursor.
         last_execution: Option<u64>,
-        /// `Config::initial_marshal_floor` — `0` (inert) everywhere except the
-        /// ladder-step test, which needs a floor BELOW the tip to show the step is
-        /// judged against the floor and not against the tip.
+        /// `Config::initial_marshal_floor`. Zero everywhere except the ladder-step
+        /// test, which needs a floor below the tip to show the step is judged
+        /// against the floor rather than the tip.
         marshal_floor: u64,
     }
 
@@ -5018,15 +4262,15 @@ mod tests {
                 .unwrap()
                 .insert(anchor_height, anchor_hash);
             chain.vis.register(anchor_height, anchor_hash);
-            // Share the by-hash visibility so a beacon FCU advances exactly the
-            // frontier the deriver gates on (the visibility model is coherent end-to-end).
+            // Shared so a beacon FCU advances exactly the frontier the deriver
+            // gates on.
             let beacon = FakeBeacon {
                 vis: chain.vis.clone(),
                 ..Default::default()
             };
-            // The latch shares the SAME `SyncMetrics` gauge family, exactly as
-            // production wires it (`SafetyHalt::new(sync_metrics.clone())`), so a test
-            // reading `fx.sync_metrics` sees the gauge the latch raised.
+            // The latch shares the `SyncMetrics` gauge family, as production wires
+            // it, so a test reading `fx.sync_metrics` sees the gauge the latch
+            // raised.
             let sync_metrics = SyncMetrics::default();
             let safety_halt = crate::sync_metrics::SafetyHalt::new(sync_metrics.clone());
             Self {
@@ -5052,39 +4296,38 @@ mod tests {
             }
         }
 
-        /// Override `last_execution_finalized_height` (the reth head seed),
-        /// decoupling it from the anchor. Set BEFORE `build`.
+        /// Overrides `last_execution_finalized_height` (the reth head seed),
+        /// decoupling it from the anchor. Set before `build`.
         fn with_last_execution(mut self, height: u64) -> Self {
             self.last_execution = Some(height);
             self
         }
 
-        /// Boot with a non-zero marshal floor — a node that has jumped, so its
-        /// marshal holds nothing below `height` and the ladder step's no-op rule
-        /// (`HintFinalized` skipped at `height <= last_processed_height`) has a
-        /// real boundary to be tested against. Set BEFORE `build`.
+        /// Boot with a non-zero marshal floor — a node that has jumped, so the
+        /// ladder step's no-op rule (`HintFinalized` skipped at
+        /// `height <= last_processed_height`) has a real boundary. Set before
+        /// `build`.
         fn with_marshal_floor(mut self, height: u64) -> Self {
             self.marshal_floor = height;
             self
         }
 
-        /// Override the block→epoch map (the epoch-boundary eager-derive
-        /// tests need real, small epochs). Set BEFORE `build`.
+        /// Overrides the block→epoch map (the epoch-boundary tests need small
+        /// epochs). Set before `build`.
         fn with_epocher(mut self, epocher: crate::epocher::OriginEpocher) -> Self {
             self.epocher = epocher;
             self
         }
 
-        /// Replace the default store with `store` — the test's own σ source, and
-        /// (empty) the way to opt out of the default and pin a store MISS. Set
-        /// BEFORE `build`.
+        /// Replaces the default store with `store` — the test's own σ source, and
+        /// (empty) the way to pin a store miss. Set before `build`.
         fn with_seed_store(mut self, store: crate::beacon::testing::SeedStore) -> Self {
             self.randomness = beacon_over(store);
             self
         }
 
-        /// Inject the steady-state re-jump callback the built actor's `Config`
-        /// will carry. Set BEFORE `build`.
+        /// Injects the re-jump callback the built actor's `Config` will carry. Set
+        /// before `build`.
         fn with_re_jump(self, re_jump: ReJump) -> Self {
             *self.re_jump.lock().unwrap() = Some(re_jump);
             self
@@ -5095,16 +4338,16 @@ mod tests {
             self
         }
 
-        /// Record every epoch-entry height the built actor drives into `sink`.
-        /// Set BEFORE `build`.
+        /// Records every epoch-entry height the built actor drives into `sink`. Set
+        /// before `build`.
         fn with_boundary_enter(mut self, sink: Arc<Mutex<Vec<u64>>>) -> Self {
             self.boundary_enter = Arc::new(move |h| sink.lock().unwrap().push(h));
             self
         }
 
         /// Record every read-floor height the built actor publishes into `sink`.
-        /// Sharing one sink with [`Self::with_boundary_enter`] also records the
-        /// ORDER of the two seams. Set BEFORE `build`.
+        /// Sharing one sink with [`Self::with_boundary_enter`] records the order of
+        /// the two seams. Set before `build`.
         fn with_boundary_read_floor(mut self, sink: Arc<Mutex<Vec<u64>>>) -> Self {
             self.boundary_read_floor = Arc::new(move |h| {
                 let sink = sink.clone();
@@ -5113,11 +4356,10 @@ mod tests {
             self
         }
 
-        /// Switch to the GATED-landing model (family-5 gap-1 fidelity): the
-        /// deriver stops landing blocks into the canonical map; only a
-        /// SUCCESSFUL `import_derived` lands them — a transport-failed import
-        /// genuinely leaves the block un-landed, so the postcondition loop has
-        /// something real to converge on. Set BEFORE `build`.
+        /// Model the real EL, where only a successful `import_derived` lands a
+        /// block: the deriver stops writing the canonical map, so a failed import
+        /// leaves the block un-landed and the postcondition loop has something real
+        /// to converge on. Set before `build`.
         fn gate_landing_on_import(&self) {
             self.chain
                 .land_on_import
@@ -5127,7 +4369,7 @@ mod tests {
 
         /// Shrink the FCU-heartbeat interval so a park test that depends on the
         /// heartbeat re-poke resolves in a few virtual ms (≈ real ms) instead of
-        /// real seconds. Set BEFORE `build`.
+        /// real seconds. Set before `build`.
         fn with_fcu_heartbeat(mut self, interval: Duration) -> Self {
             self.fcu_heartbeat = interval;
             self
@@ -5142,12 +4384,12 @@ mod tests {
             Actor<deterministic::Context, FakeBeacon, FakeDeriver, FakeChain, FakeMarshal>,
             Mailbox,
         ) {
-            // The fixtures build chains anchored AT activation (anchor ==
-            // activation), so the cross-check window is unchanged by the split.
+            // The fixtures build chains anchored at activation, so the cross-check
+            // window is unchanged by the anchor/activation split.
             self.build_with_activation(ctx, anchor_height, anchor_height, last_consensus)
         }
 
-        /// `build` with the cold-start anchor DECOUPLED from the chain activation
+        /// `build` with the cold-start anchor decoupled from the chain activation
         /// (the deep-catch-up follower case: anchor ≫ activation).
         fn build_with_activation(
             &self,
@@ -5189,27 +4431,24 @@ mod tests {
                     re_jump: self.re_jump.lock().unwrap().clone(),
                     randomness: self.randomness.clone(),
                     epocher: self.epocher.clone(),
-                    // No committee module in these fixtures — the wake-up has
-                    // nothing to wake. Counting the calls is not this file's
-                    // property to assert: what the module needs is that they sit
-                    // after `advance_finalized`, which is a property of THIS
-                    // file's source and is read there.
+                    // No committee module in these fixtures, so the wake-up has
+                    // nothing to wake.
                     anchor_advanced: std::sync::Arc::new(|| {}),
                 },
             )
         }
     }
 
-    /// One deterministic dummy peer for the finalization-hint target set
-    /// (FakeMarshal ignores the targets' contents — it only records the call).
+    /// One deterministic dummy peer for the finalization-hint target set;
+    /// FakeMarshal records the call and ignores the targets' contents.
     fn dummy_peers() -> Option<NonEmptyVec<PeerPubkey>> {
         use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer as _};
         let pk = Ed25519PrivateKey::from_seed(99).public_key();
         NonEmptyVec::try_from(vec![pk]).ok()
     }
 
-    /// A real recovered threshold seed for `round` (the executor passes it
-    /// through verbatim; it never re-verifies, so any valid `Seed` suffices).
+    /// A real recovered threshold seed for `round`; the executor passes it through
+    /// without re-verifying, so any valid `Seed` suffices.
     fn real_seed(round: commonware_consensus::types::Round) -> crate::beacon::Seed {
         use commonware_cryptography::bls12381::{dkg::deal_anonymous, primitives::variant::MinSig};
         use commonware_utils::{test_rng, N3f1, NZU32};
@@ -5228,9 +4467,8 @@ mod tests {
         }
     }
 
-    /// The same seed behind the witness [`SeedStore::record`] now takes. The
-    /// deal is deterministic, so the key this checks against is the key
-    /// [`real_seed`] signed under.
+    /// The witness [`SeedStore::record`] takes for the same seed; the deal is
+    /// deterministic, so this checks against the key [`real_seed`] signed under.
     fn real_witness(
         round: commonware_consensus::types::Round,
     ) -> crate::beacon::testing::VerifiedSeed {
@@ -5268,13 +4506,11 @@ mod tests {
         panic!("timed out waiting for: {what}");
     }
 
-    /// Pin the SafetyHalt PARK posture (the marshal-zombie fix): the executor is
-    /// still RUNNING (unresolved handle — pre-fix it exited, dropping every ack),
-    /// the halted block's ack is RETAINED un-resolved (neither Ok nor Canceled,
-    /// so the marshal's `last_processed_height` cannot advance past the diverged
-    /// height and the marshal never sees the fatal Canceled), and an ack
-    /// delivered AFTER the halt engaged (the marshal keeps dispatching up to its
-    /// 16-block window) is retained too.
+    /// Assert the SafetyHalt park posture: the executor's handle stays unresolved,
+    /// the halted block's ack is retained un-resolved (so the marshal's
+    /// `last_processed_height` cannot advance past the diverged height and it never
+    /// sees the fatal Canceled), and an ack delivered after the halt engaged is
+    /// retained too.
     async fn assert_parked_retaining_acks(
         ctx: &deterministic::Context,
         mut handle: Handle<()>,
@@ -5284,7 +4520,7 @@ mod tests {
         post_halt_order: OrderBlock,
     ) {
         wait_until(ctx, "SafetyHalt engaged", || halt.is_engaged()).await;
-        // Let the executor reach the park loop before probing ack/handle state.
+        // Wait for the executor to reach the park loop before probing ack state.
         ctx.sleep(Duration::from_millis(20)).await;
         assert!(
             (&mut waiter).now_or_never().is_none(),
@@ -5306,8 +4542,8 @@ mod tests {
         );
     }
 
-    /// A `SpecNotarized` command for `order` (seedless; the executor keys
-    /// speculation off the fetched block's height, not the round).
+    /// A `SpecNotarized` command for `order`; seedless, because speculation keys off
+    /// the fetched block's height, not the round.
     fn spec_msg(order: &OrderBlock) -> Message {
         Message {
             cause: Span::current(),
@@ -5343,8 +4579,7 @@ mod tests {
         assert_eq!(unchanged.forkchoice.head_block_hash, tail);
     }
 
-    /// A pure `LastCanonicalized` literal seeded at the anchor (all three tiers
-    /// equal), used by the `update_safe` unit tests below.
+    /// A `LastCanonicalized` literal with all three tiers equal at `height`.
     fn lc_at(height: u64, hash: B256) -> LastCanonicalized {
         LastCanonicalized {
             forkchoice: ForkchoiceState {
@@ -5358,15 +4593,14 @@ mod tests {
         }
     }
 
-    // `update_finalized` (result tier) + `update_safe` (ordering tier) advance
-    // their OWN monotone guards; `finalized_height ≤ safe_height ≤ head_height`
-    // and the three hashes stay consistent with the heights after each op.
+    // `update_finalized` (result tier) and `update_safe` (ordering tier) advance
+    // their own monotone guards; the three hashes stay consistent with the heights
+    // and `finalized_height ≤ safe_height ≤ head_height` after each op.
     #[test]
     fn finalized_safe_head_ancestry_holds() {
         let h10 = B256::repeat_byte(0x10);
         let mut lc = lc_at(10, h10);
 
-        // ordering-final advances to 13 (safe + head), result-final still 10.
         let h13 = B256::repeat_byte(0x13);
         lc = lc
             .update_safe(Height::new(13), h13)
@@ -5377,7 +4611,6 @@ mod tests {
         assert_eq!(lc.finalized_height, Height::new(10));
         assert!(lc.finalized_height <= lc.safe_height && lc.safe_height <= lc.head_height);
 
-        // result-final catches up to 11 (= 14 − K), safe to the new tip 14.
         let h11 = B256::repeat_byte(0x11);
         let h14 = B256::repeat_byte(0x14);
         lc = lc
@@ -5390,8 +4623,8 @@ mod tests {
         assert!(lc.finalized_height <= lc.safe_height && lc.safe_height <= lc.head_height);
     }
 
-    // An out-of-order / transient lower ordering-final delivery must NOT roll
-    // `safe` backward (its own monotone guard, distinct from `finalized_height`).
+    // An out-of-order or transient lower ordering-final delivery must not roll
+    // `safe` backward; its monotone guard is distinct from `finalized_height`.
     #[test]
     fn safe_monotonic_guard() {
         let h10 = B256::repeat_byte(0x10);
@@ -5405,8 +4638,8 @@ mod tests {
     }
 
     // The `>=` (not `>`) guard: a same-height re-finalization (sibling reorg at
-    // `H == safe_height`) lets the HASH follow onto the freshly-finalized tip —
-    // never pinning `safe` to an orphaned sibling.
+    // `H == safe_height`) lets the hash follow onto the freshly-finalized tip
+    // rather than pin `safe` to an orphaned sibling.
     #[test]
     fn safe_follows_same_height_refinalize() {
         let h10 = B256::repeat_byte(0x10);
@@ -5426,8 +4659,8 @@ mod tests {
         );
     }
 
-    // Pre-K window: finalized stays clamped to the anchor while head follows
-    // the derived tip; from anchor+K onward finalized = derived hash of −K.
+    // Pre-K window: finalized stays clamped to the anchor while head follows the
+    // derived tip; from anchor+K onward finalized is the derived hash K below.
     #[test]
     fn two_tier_finalized_lags_head_by_k_clamped_to_anchor() {
         let runtime = deterministic::Runner::default();
@@ -5453,8 +4686,8 @@ mod tests {
 
             {
                 let fcus = fx.beacon.fcu_calls.lock().unwrap();
-                // Heights ANCHOR+1..=ANCHOR+K-1: finalized pinned to the anchor
-                // while safe (ordering-final) climbs to each just-finalized tip.
+                // Heights ANCHOR+1..=ANCHOR+K-1: finalized pinned to the anchor while
+                // safe (ordering-final) climbs to each just-finalized tip.
                 for (i, fcu) in fcus[..(K - 1) as usize].iter().enumerate() {
                     let ordering_tip = ANCHOR + 1 + i as u64;
                     assert_eq!(fcu.finalized_block_hash, fx.anchor_hash);
@@ -5468,14 +4701,14 @@ mod tests {
                         "no speculative lead ⇒ safe == head"
                     );
                 }
-                // Height ANCHOR+K: result_final = ANCHOR (still the anchor hash);
-                // height ANCHOR+K+1: result_final = ANCHOR+1 = derived hash.
+                // Height ANCHOR+K+1 results-finalizes ANCHOR+1: the K-lag has
+                // passed the clamp.
                 let derived_anchor_plus_1 = fx.chain.spec_executed_hash(ANCHOR + 1).unwrap();
                 let ordering_tip = fx.chain.spec_executed_hash(ANCHOR + K + 1).unwrap();
                 let last = fcus.last().unwrap();
                 assert_eq!(last.finalized_block_hash, derived_anchor_plus_1);
-                // safe = the ordering-final tip = head (no spec lead), K ahead of
-                // finalized once past the clamp.
+                // No speculative lead, so safe equals the ordering-final tip and
+                // head, K ahead of finalized once past the clamp.
                 assert_eq!(last.safe_block_hash, ordering_tip);
                 assert_eq!(last.head_block_hash, ordering_tip);
                 assert_eq!(last.safe_block_hash, last.head_block_hash);
@@ -5491,24 +4724,21 @@ mod tests {
         });
     }
 
-    // #14 SELF-HEAL: a transient TRANSPORT error at the finalize FCU (a Result::Err,
-    // an RPC/channel blip) is retried FOREVER — the block still acks (the loop
-    // survives, no shutdown), `engine_transient_retry_total` counts the retries, and
-    // the `engine_retry` gauge clears on success.
+    // A transient transport error at the finalize FCU (a `Result::Err`, an RPC or
+    // channel blip) is retried until it succeeds: the block still acks, the loop
+    // survives, `engine_transient_retry_total` counts the retries, and the
+    // `engine_retry` gauge clears on success.
     #[test]
     fn transient_finalize_fcu_transport_error_retries_then_acks() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             let fx = Fixture::new(ANCHOR);
-            // The next 3 finalize FCUs blip with a transport error before succeeding.
             *fx.beacon.fcu_transport_errs.lock().unwrap() = 3;
             let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // A single pre-K finalize (result ZERO ⇒ no cross-check): its finalize
-            // FCU eats 3 transport blips, retries, and still acks. The flush
-            // child triggers the derive (pipeline shift).
+            // A single pre-K finalize: result ZERO, so no cross-check fires.
             let order = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
             let (msg, waiter) = finalize_msg(order.clone());
             mailbox.send(msg).expect("send");
@@ -5532,26 +4762,20 @@ mod tests {
         });
     }
 
-    // GAP-1 (family 5): an import-derived TRANSPORT error is now the SAME
-    // `FaultClass::TransientExternal(EngineRetry)` class as its FCU sibling —
-    // degraded + counted, engine STAYS UP — instead of the former
-    // `?`→actor-death asymmetry. The block does NOT die: the finalized path's
-    // canonical POSTCONDITION reconvergence lands it (here the derive already made
-    // it canonical, so the block acks immediately), and the transport failure is
-    // visible in `engine_transient_retry_total`.
+    // An import transport error is `TransientExternal(EngineRetry)` like its FCU
+    // sibling — degraded and counted, engine stays up — and the finalized path's
+    // postcondition reconvergence lands the block, so it still acks.
     #[test]
     fn import_transport_error_is_degraded_not_fatal_and_counted() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             let fx = Fixture::new(ANCHOR);
-            // The next import_derived blips with a closed-channel transport error.
             *fx.beacon.import_transport_errs.lock().unwrap() = 1;
             let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // A single pre-K finalize (result ZERO ⇒ no cross-check). The flush
-            // child triggers the held block's derive → import (which blips).
+            // A single pre-K finalize: result ZERO, so no cross-check fires.
             let order = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
             let (msg, waiter) = finalize_msg(order.clone());
             mailbox.send(msg).expect("send");
@@ -5575,12 +4799,10 @@ mod tests {
         });
     }
 
-    // GAP-1 fidelity (gated landing — the real EL model where a transport-failed
-    // `InsertExecutedBlock` leaves NOTHING behind): while imports keep failing
-    // transport, the block genuinely does not land — the postcondition loop
-    // stays converging (`finalize_apply=1`), and the ack is neither taken (would
+    // Gated landing: while imports keep failing transport the block does not land,
+    // the postcondition loop stays converging, and the ack is neither taken (would
     // durably skip an un-landed height) nor Canceled (kills the marshal). Once
-    // transport heals, the next re-apply import LANDS the block and releases the
+    // transport heals, the next re-apply import lands the block and releases the
     // ack.
     #[test]
     fn unlanded_import_transport_error_holds_the_ack_until_reapply_lands() {
@@ -5590,7 +4812,6 @@ mod tests {
             const H: u64 = ANCHOR + 1;
             let fx = Fixture::new(ANCHOR);
             fx.gate_landing_on_import();
-            // Every import fails transport until the test heals it explicitly.
             *fx.beacon.import_transport_errs.lock().unwrap() = u32::MAX;
             let order = sample_order(Digest(B256::ZERO), H, B256::ZERO);
             // The postcondition re-apply loop re-fetches the order by height.
@@ -5601,7 +4822,6 @@ mod tests {
             let (msg, waiter) = finalize_msg(order.clone());
             mailbox.send(msg).expect("send");
 
-            // Mid-convergence: degraded-visible, block un-landed, ack pending.
             let mut waiter = waiter;
             wait_until(&ctx, "finalize_apply degraded", || {
                 fx.sync_metrics.degraded_value(SyncReason::FinalizeApply) == 1
@@ -5622,7 +4842,6 @@ mod tests {
                 "the transport failures are counted while converging"
             );
 
-            // Heal the transport: the next re-apply import lands the block.
             *fx.beacon.import_transport_errs.lock().unwrap() = 0;
             waiter
                 .await
@@ -5642,9 +4861,8 @@ mod tests {
         });
     }
 
-    // GAP-2 (family 5): a heartbeat FCU transport failure was a bare `warn!`
-    // invisible to the taxonomy; it is now `TransientExternal(EngineRetry)` —
-    // fire-and-forget (the next tick is the retry, no loop) but COUNTED +
+    // A heartbeat FCU transport failure is `TransientExternal(EngineRetry)`:
+    // fire-and-forget (the next tick is the retry, no loop) but counted and
     // degrade-visible, and a clean tick recovers the gauge.
     #[test]
     fn heartbeat_fcu_transport_failure_is_counted_and_degraded() {
@@ -5672,8 +4890,8 @@ mod tests {
                 "the failed heartbeat raised the engine_retry gauge"
             );
 
-            // A subsequent clean heartbeat clears the gauge (fire-and-forget: the
-            // NEXT tick is the retry, no in-place loop).
+            // A clean heartbeat clears the gauge; the model is fire-and-forget, so
+            // the next tick is the retry rather than an in-place loop.
             actor
                 .send_forkchoice_update_heartbeat()
                 .await
@@ -5686,11 +4904,9 @@ mod tests {
         });
     }
 
-    // #14/#15 split: a SEMANTIC `Ok(Invalid)` verdict at the finalize FCU is NOT a
-    // transport error — UNLIKE the retried transport `Err`, it is the #15 Phase-3
-    // SafetyHalt: the block does NOT ack, the executor stops driving reth (the
-    // subsystem exits so the OuterEngine supervisor can park the rest), and the
-    // `el_invalid` fork-safety latch engages (demote-verify-only, `l1`/RPC stay up).
+    // A semantic `Ok(Invalid)` verdict at the finalize FCU is not a transport error:
+    // it is a fork-safety SafetyHalt, so the block does not ack, the executor parks
+    // retaining the ack, and the `el_invalid` latch engages.
     #[test]
     fn invalid_finalize_fcu_engages_safety_halt_and_parks() {
         let runtime = deterministic::Runner::default();
@@ -5708,14 +4924,12 @@ mod tests {
             let post_halt = sample_order(flush.digest(), ANCHOR + 3, B256::ZERO);
             let (msg, waiter) = finalize_msg(refused);
             mailbox.send(msg).expect("send");
-            // The flush child triggers the derive (and the Invalid FCU). Its own
-            // ack sits in `awaiting_seed` when the halt engages — it must be
-            // retained too (the park_halted awaiting_seed clause).
+            // The flush child triggers the derive and the Invalid FCU; its own ack is
+            // held in `awaiting_seed` when the halt engages, and `park_halted`
+            // retains it too.
             let (flush_msg, mut flush_waiter) = finalize_msg(flush);
             mailbox.send(flush_msg).expect("send flush child");
 
-            // An Ok(Invalid) finalize FCU must NOT ack — the block is refused and
-            // the executor parks retaining the ack (SafetyHalt, not a plain crash).
             assert_parked_retaining_acks(
                 &ctx,
                 handle,
@@ -5742,12 +4956,10 @@ mod tests {
         });
     }
 
-    // FAULT-BOUNDARY (family 5). The speculative path is best-effort, and the
-    // taxonomy must not quietly change that: `spec_execute` classifies a derive
-    // failure `Defer(SpecDeriveFailed)`, so the router logs it and the loop
-    // continues. Without the explicit classification the blanket
-    // `From<eyre::Report>` would make it `Corruption` and a transient derive
-    // failure would start killing the executor.
+    // The speculative path is best-effort: `spec_execute` classifies a derive failure
+    // `Defer(SpecDeriveFailed)`, so the router logs it and the loop continues. The
+    // blanket `From<eyre::Report>` would instead make it `Corruption`, and a
+    // transient derive failure would kill the executor.
     #[test]
     fn a_transient_speculative_derive_failure_never_takes_the_node_down() {
         let runtime = deterministic::Runner::default();
@@ -5784,7 +4996,6 @@ mod tests {
                 "speculation is best-effort: the executor must still be running"
             );
 
-            // The finalized path is the authority and still lands the height.
             let (msg, waiter) = finalize_msg(order.clone());
             mailbox.send(msg).expect("send finalize");
             waiter
@@ -5796,17 +5007,15 @@ mod tests {
         });
     }
 
-    // THE ASYMMETRY, PINNED. One and the same `Ok(Invalid)` FCU verdict has two
-    // dispositions, and which one applies is decided by whether the head is
-    // committed:
+    // One `Ok(Invalid)` FCU verdict has two dispositions, decided by whether the
+    // head is committed:
     //
-    //  * SPECULATIVE head (notarized, not finalized) → skip speculation, no
-    //    latch. Consensus may still nullify the view and finalize a sibling, so
-    //    the verdict does not yet indict anything the chain committed.
-    //  * FINALIZED head → #15 SafetyHalt. The block IS committed.
+    //  * speculative head (notarized, not finalized) → skip speculation, no latch:
+    //    consensus may still nullify the view and finalize a sibling, so the
+    //    verdict does not yet indict anything the chain committed.
+    //  * finalized head → SafetyHalt: the block is committed.
     //
-    // The second half is what makes the first half safe: nothing is swallowed,
-    // it is only deferred to the path that has committed evidence.
+    // Nothing is swallowed, only deferred to the path that has committed evidence.
     #[test]
     fn an_invalid_fcu_skips_speculation_but_halts_on_the_finalized_path() {
         let runtime = deterministic::Runner::default();
@@ -5853,7 +5062,6 @@ mod tests {
                 "the executor keeps running; the finalized path is the judge"
             );
 
-            // Same verdict, now on a committed head.
             let (msg, waiter) = finalize_msg(order.clone());
             mailbox.send(msg).expect("send finalize");
             let post_halt = sample_order(Digest(B256::ZERO), ANCHOR + 4, B256::ZERO);
@@ -5874,21 +5082,18 @@ mod tests {
         });
     }
 
-    // THE ORIGINAL DEFECT. `submit_finalized_payload` used to engage the latch
-    // itself and return an untyped `Err`, and the speculative caller reduced that
-    // `Err` to `warn!("speculative execution skipped")` — so the node latched "I
-    // refuse this chain" and then kept driving reth forward with it. Engaging
-    // moved into the router, so a fork-safety verdict raised on the speculative
-    // path now reaches `park_halted` like any other.
+    // A fork-safety verdict raised on the speculative path must reach `park_halted`
+    // like any other verdict instead of being logged and swallowed: engaging the
+    // latch is the router's job, so a caller cannot reduce the verdict to a warning.
     #[test]
     fn a_fork_safety_verdict_on_the_speculative_path_parks_instead_of_being_logged() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             let fx = Fixture::new(ANCHOR);
-            // An `Invalid` IMPORT is a statement about our own derivation against
-            // reth's re-execution — deterministic and branch-independent, so it
-            // halts from either path (unlike the FCU verdict above).
+            // An `Invalid` import says our own derivation disagrees with reth's
+            // re-execution — deterministic and branch-independent, so it halts from
+            // either path, unlike the FCU verdict in the test above.
             *fx.beacon.import_status.lock().unwrap() = Some(PayloadStatusEnum::Invalid {
                 validation_error: "local derivation diverged from re-execution".into(),
             });
@@ -5916,8 +5121,8 @@ mod tests {
                 Some(SyncReason::ElInvalid),
                 "the latch carries the verdict that armed it, not just a bit"
             );
-            // Pre-fix the executor kept consuming work after latching. A block
-            // delivered now must have its ack RETAINED by the park, never acked.
+            // A block delivered after the halt must have its ack retained by the
+            // park, never acked.
             let (msg, mut waiter) = finalize_msg(order);
             mailbox.send(msg).expect("mailbox stays open while parked");
             ctx.sleep(Duration::from_millis(20)).await;
@@ -5928,13 +5133,11 @@ mod tests {
         });
     }
 
-    // ITEM 5. reth answers "unknown finalized/safe hash" with
-    // `Err(ForkchoiceUpdateError::InvalidState)` — it PROCESSED the update and
-    // rejected the state we named. The importer used to flatten that into the
-    // transport class, so `fcu_retrying_transport` re-sent the same unresolvable
-    // hashes forever. It is `Corruption` now: loud actor death, and deliberately
-    // NOT a SafetyHalt, because it says this node's anchor disagrees with this
-    // node's own EL, not that the network disagrees with the chain.
+    // reth answers "unknown finalized/safe hash" with
+    // `Err(ForkchoiceUpdateError::InvalidState)`: it processed the update and
+    // rejected the state we named. That is `Corruption` — loud actor death,
+    // deliberately not a SafetyHalt — because it says this node's anchor disagrees
+    // with this node's own EL, not that the network disagrees with the chain.
     #[test]
     fn an_unresolvable_forkchoice_anchor_dies_loudly_instead_of_retrying_forever() {
         let runtime = deterministic::Runner::default();
@@ -5949,7 +5152,6 @@ mod tests {
             let (msg, _waiter) = finalize_msg(order.clone());
             mailbox.send(msg).expect("send finalize");
 
-            // The whole point: this TERMINATES. Pre-fix the FCU loop had no exit.
             let exited = futures::future::select(
                 Box::pin(handle),
                 Box::pin(ctx.sleep(Duration::from_secs(30))),
@@ -5979,13 +5181,9 @@ mod tests {
         });
     }
 
-    // An OrderBlock whose attested `result` disagrees with the locally-derived
-    // hash at `height − K` means this node would serve a fork; `try_derive` engages
-    // the #2/#3 SafetyHalt (the same trustless property `FluentApp::verify` enforces
-    // on the BFT path). The block does NOT ack — and the executor PARKS retaining
-    // the ack un-resolved (halted-but-observable) instead of exiting: an exit
-    // drops the `Exact`, the marshal reads the cancellation as fatal and dies,
-    // and the "stay up" posture degrades to a zombie serving nobody.
+    // An OrderBlock whose attested `result` disagrees with the locally derived hash
+    // at `height − K` means this node would serve a fork, so `try_derive` raises the
+    // SafetyHalt; the block does not ack and the executor parks retaining its ack.
     #[test]
     fn result_divergence_engages_safety_halt_and_parks() {
         let runtime = deterministic::Runner::default();
@@ -5995,10 +5193,9 @@ mod tests {
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // Pre-K window: result MUST be ZERO (no cross-check fires). Under the
-            // pipeline shift each height derives when its child arrives, so the
-            // divergent block at ANCHOR+K only derives (and halts) when its own
-            // child is delivered.
+            // Pre-K window: the result must be ZERO, so no cross-check fires. Each
+            // height derives when its child arrives, so the divergent block at
+            // ANCHOR+K only derives — and halts — when its own child is delivered.
             let mut parent = Digest(B256::ZERO);
             for i in 1..K {
                 let order = sample_order(parent, ANCHOR + i, B256::ZERO);
@@ -6037,15 +5234,10 @@ mod tests {
         });
     }
 
-    // FIXED behavior of the formerly seed-blind fork-safety bug (bundle block
-    // 5252): a block speculatively executed with a seed of round A while the
-    // AGREED round for that height is B. `spec_executed` records the
-    // speculation's seed ROUND, and `correctly_speculated` requires it to equal
-    // the round the finalized derive resolved. On the A≠B mismatch (after §4.1
-    // an ANOMALY — both sides should be Round(Ep, proposal_view)) the executor
-    // RE-DERIVES SPEC_H with seed_B (the agreed value) and reorgs the head onto
-    // it — so K blocks later the committee-attested result (seed_B → hash_B)
-    // MATCHES the locally executed hash and NO `ResultDivergence` SafetyHalt
+    // A speculation derived with round A while the agreed round for the height is B:
+    // the mismatch makes `correctly_speculated` false, so the executor re-derives
+    // SPEC_H with seed_B and reorgs the head onto it. The attested result K blocks
+    // later then matches the locally executed hash and no `ResultDivergence` halt
     // fires.
     #[test]
     fn spec_seed_mismatch_rederives_with_the_agreed_seed_no_halt() {
@@ -6057,19 +5249,17 @@ mod tests {
             let fx = Fixture::new(ANCHOR).with_epocher(beacon_active_epocher());
             let anchor_hash = fx.anchor_hash;
 
-            // Two seeds for the SAME ordering block: the speculation's round A ≠
-            // the AGREED round B ⇒ (via the prev_randao→mix_hash fold) DISTINCT
-            // hashes. A names the block's own VIEW, so §4.1 keeps it verbatim
-            // rather than re-canonicalising — a divergent local cert state, not a
-            // spin round. B is the round the finalized derive resolves.
+            // Both seeds are for the same ordering block, but round A differs from
+            // the agreed round B, so the prev_randao→mix_hash fold seals distinct
+            // hashes. A carries the block's own view, so speculation keeps it
+            // verbatim rather than re-canonicalising.
             let seed_a = real_seed(Round::new(Epoch::new(0), View::new(SPEC_H)));
             let seed_b = real_seed(active_round(SPEC_H));
             record_fixture_seed(SPEC_H);
             record_fixture_seed(0); // the view every `sample_order` block names
 
-            // The ordering block finalized at SPEC_H (result ZERO — pre-K
-            // window). `proposal_view == seed_a`'s view so the §4.1
-            // re-canonicalisation keeps the spec seed as-is.
+            // The block finalized at SPEC_H is pre-K (result ZERO); its `proposal_view`
+            // equals seed_a's view, so speculation keeps seed_a as-is.
             let order_h = OrderBlock {
                 proposal_view: SPEC_H,
                 ..sample_order(Digest(B256::ZERO), SPEC_H, B256::ZERO)
@@ -6085,21 +5275,18 @@ mod tests {
                 "seed_A and seed_B must derive DISTINCT executed hashes (else the mismatch can't surface)"
             );
 
-            // Ordering chain SPEC_H..=SPEC_H+K. Each element derives from σ of
-            // its OWN round: SPEC_H from seed_B, the rest from `Round(e, 0)` —
-            // `sample_order`'s view — both filed above.
-            // SPEC_H+1 pre-K ⇒ ZERO; +2 commits Height(ANCHOR); +K attests hash_B.
+            // Ordering chain SPEC_H..=SPEC_H+K: SPEC_H+1 is pre-K (ZERO result), +2
+            // commits the anchor hash, +K attests hash_B.
             let order_h1 = sample_order(order_h.digest(), SPEC_H + 1, B256::ZERO);
             let order_h2 = sample_order(order_h1.digest(), SPEC_H + 2, anchor_hash);
             let order_hk = sample_order(order_h2.digest(), SPEC_H + K, hash_b);
 
-            // Only the speculated block is fetched-by-digest (spec_execute).
+            // Only the speculated block is fetched by digest, so only it is canned.
             fx.marshal.canned.lock().unwrap().insert(SPEC_H, order_h.clone());
 
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // (1) Speculatively execute SPEC_H with seed_A → hash_A.
             mailbox
                 .send(Message {
                     cause: Span::current(),
@@ -6110,11 +5297,8 @@ mod tests {
                 })
                 .expect("send spec@A");
 
-            // CRUX of the result-gate fix: once the
-            // speculation lands, the SPECULATIVE head shows hash_A — but the
-            // FINALIZED tier is still empty. A proposer/verifier sampling
-            // `finalized_executed_hash(SPEC_H)` therefore gets `None` and SKIPS
-            // the view; it can NEVER commit hash_A as the result at SPEC_H+K.
+            // Only speculation landed hash_A: the finalized tier still reads `None`,
+            // so hash_A can never be committed as the attested result at SPEC_H+K.
             wait_until(&ctx, "SPEC_H speculated to hash_A", || {
                 fx.chain.spec_executed_hash(SPEC_H) == Some(hash_a)
             })
@@ -6125,33 +5309,27 @@ mod tests {
                 "finalized tier empty while only speculated — the gate reads None, not hash_A"
             );
 
-            // (2) FINALIZE SPEC_H. `correctly_speculated` sees the stored
-            // speculation round A ≠ the agreed round B ⇒ re-derive → hash_B
-            // becomes canonical at SPEC_H.
+            // Finalizing SPEC_H sees the stored round A differ from the agreed round
+            // B, so it re-derives and hash_B becomes canonical there.
             let (m, w) = finalize_msg(order_h.clone());
             mailbox.send(m).expect("send finalize SPEC_H");
             let (m1, w1) = finalize_msg(order_h1);
             mailbox.send(m1).expect("send finalize SPEC_H+1");
             w.await.expect("SPEC_H acks after re-derive with seed_B");
 
-            // The seed-blind reuse is GONE: hash_B (the agreed value) is
-            // canonical at SPEC_H, NOT the seed_A speculation.
             assert_eq!(
                 fx.chain.spec_executed_hash(SPEC_H),
                 Some(hash_b),
                 "round mismatch re-derived SPEC_H with the agreed seed (hash_B)"
             );
-            // The FINALIZED tier now reflects the finalized sibling (hash_B),
-            // NEVER the speculated hash_A: the result gate at SPEC_H+K commits
-            // and cross-checks against hash_B, so the whole-committee SafetyHalt
-            // of the bundle cannot recur.
+            // The finalized tier records the finalized sibling hash_B, not the
+            // speculative hash_A, so the result gate at SPEC_H+K cross-checks against
+            // hash_B and no whole-committee halt fires.
             assert_eq!(
                 fx.chain.finalized_executed_hash(SPEC_H),
                 Some(hash_b),
                 "finalized tier records the finalized sibling (hash_B), never the speculative hash_A"
             );
-            // The deriver ran TWICE for SPEC_H — once at spec (seed_A), once at
-            // finalize (a REAL re-derive with seed_B).
             let spec_h_seeds: Vec<_> = fx
                 .deriver
                 .seeds_seen
@@ -6167,16 +5345,16 @@ mod tests {
                 "SPEC_H derived at spec (seed_A) then RE-DERIVED at finalize (seed_B)"
             );
 
-            // (3) Advance ordering to SPEC_H+K so the hash_B attestation reaches
-            // the result cross-check.
+            // Advance ordering to SPEC_H+K so the hash_B attestation reaches the
+            // result cross-check.
             for order in [order_h2, order_hk] {
                 let (m, _w) = finalize_msg(order);
                 mailbox.send(m).expect("send chain");
             }
             w1.await.expect("intermediate ack");
 
-            // (4) The SPEC_H+K block attests hash_B; the executor HOLDS hash_B ⇒
-            // the cross-check passes and the chain advances past it.
+            // SPEC_H+K attests hash_B, which the executor holds locally, so the
+            // cross-check passes and the chain advances past it.
             wait_until(&ctx, "SPEC_H+K derived", || {
                 fx.chain.spec_executed_hash(SPEC_H + K).is_some()
             })
@@ -6197,11 +5375,9 @@ mod tests {
         });
     }
 
-    // Property (a) — the fast path is INTACT: when the speculation's seed round
-    // EQUALS the finalization cert's seed round (the common case), the block is
-    // KEPT (no re-derive, no head rollback) and no halt fires. Guards the added
-    // seed-round check against regressing `correctly_speculated` toward "always
-    // re-derive" (property (c)).
+    // The fast path: a speculation whose seed round equals the finalization cert's
+    // round is kept (no re-derive, no head rollback) and no halt fires, so
+    // `correctly_speculated` cannot regress to always re-deriving.
     #[test]
     fn spec_same_round_keeps_speculation_no_rederive() {
         let runtime = deterministic::Runner::default();
@@ -6210,8 +5386,8 @@ mod tests {
             const SPEC_H: u64 = ANCHOR + 1;
             let fx = Fixture::new(ANCHOR).with_epocher(beacon_active_epocher());
             let anchor_hash = fx.anchor_hash;
-            // The notarization and the store carry the SAME round (the honest
-            // steady state: both are `Round(epoch(h), proposal_view)`).
+            // The notarization and the store carry the same round — the honest
+            // steady state.
             let seed = real_seed(active_round(SPEC_H));
             record_fixture_seed(SPEC_H);
 
@@ -6252,9 +5428,8 @@ mod tests {
                 Some(hash),
                 "same-round finalize KEPT the speculation's hash (no re-derive)"
             );
-            // The correctly-speculated arm ALSO records the finalized tier (the
-            // spec hash the finalization CONFIRMED) — the steady-state gate
-            // resolves immediately, no behaviour change vs the pre-fix happy path.
+            // The correctly-speculated arm also records the finalized tier with the
+            // hash it confirmed, so the steady-state gate resolves immediately.
             assert_eq!(
                 fx.chain.finalized_executed_hash(SPEC_H),
                 Some(hash),
@@ -6281,31 +5456,10 @@ mod tests {
         });
     }
 
-    // TDD REPRODUCTION of the soak3 fork @ height 9924 (epoch 79) — the REAL
-    // mechanism, pinned from the failure bundle: the seed-round guard WORKED
-    // (spec@View(90) ≠ fin@View(91) → re-derive with the finalization seed), but
-    // the EL silently DROPPED the same-height sibling import (pre-fix reth
-    // `InsertExecutedBlock` skipped any `number <= canonical_block_number()`) and
-    // answered SYNCING to the reorg FCU — which `try_derive` tolerated as success.
-    // The stale speculative sibling stayed canonical, every later parent lookup
-    // (`executed_hash(height)`) extended it, and the ≥2f+1 spec-blind majority
-    // attested the wrong result — the CORRECT minority SafetyHalted.
-    //
-    // The once-suspected alternative — a node holding a finalization whose round
-    // differs from the quorum's — is UNREACHABLE at ≤f byzantine: commonware
-    // `construct_nullify` refuses after an own finalize vote (simplex
-    // voter/round.rs:327-336), so the finalization of round R and the
-    // nullification of R required to re-propose the same height at R+1 cannot
-    // both assemble (their vote sets are disjoint and 2·quorum > n + f).
-    // Finalization per height is UNIQUE; the fork was purely the EL apply drop.
-    //
-    // The re-apply retry on a still-invisible parent is BOUNDED: an unbounded one
-    // re-creates the silent spin the finalized-tier gate removes. Above the
-    // finalized tier (so that gate does not fire), reth keeps a foreign hash at
-    // the height and drops every re-derived sibling, so the loop is really
-    // entered; the parent is then hidden MID-LOOP — the first derive must succeed
-    // for the loop to exist at all — and the walk fails `ParentHeaderMissing`
-    // forever. The bound must convert that into loud death, not a spin.
+    // The re-apply loop on a still-invisible parent is bounded: above the
+    // finalized tier reth keeps a foreign hash at the height and drops every
+    // re-derived sibling, so the loop keeps re-walking, and an exhausted budget
+    // must end in loud death rather than a silent spin.
     #[test]
     fn reapply_parent_visibility_retry_is_bounded_and_dies_loud() {
         let recorder = DebuggingRecorder::new();
@@ -6350,9 +5504,9 @@ mod tests {
                 let before_hiding = derives_at_h();
                 fx.chain.vis.hide(fx.anchor_hash);
 
-                // The bound is 50 * ENGINE_TRANSPORT_RETRY_BACKOFF ~= 10 virtual s,
-                // which outlasts `wait_until`'s 2 s horizon — hence the coarser
-                // local wait, still bounded so an unbounded retry fails by timeout.
+                // The retry bound (~10 virtual s) outlasts `wait_until`'s 2 s
+                // horizon, hence this coarser wheel; it stays bounded so an
+                // unbounded retry fails by timeout.
                 let mut died = false;
                 for _ in 0..2_000 {
                     if (&mut handle).now_or_never().is_some() {
@@ -6374,8 +5528,7 @@ mod tests {
                     "an unreachable parent is local corruption, not a fork-safety verdict"
                 );
                 // Corruption is loud actor death, so the in-flight `Exact` is
-                // DROPPED (Canceled) — the opposite of the SafetyHalt park, which
-                // retains it.
+                // canceled — unlike the SafetyHalt park, which retains it.
                 assert!(
                     waiter.await.is_err(),
                     "the corruption exit cancels the in-flight ack"
@@ -6393,17 +5546,15 @@ mod tests {
     }
 
     // Below the finalized tier the re-apply loop has no lever: `update_head`
-    // refuses to move the head to `height <= finalized_height`, so every iteration
-    // re-sends the SAME forkchoice and reth (which will not reorg below its own
-    // finalized block) keeps serving the other hash. Pre-gate that is a silent
-    // 200 ms spin with `finalize_apply` degraded forever; the conflict is a
-    // fork-safety verdict, so it must LATCH.
+    // refuses to move the head to a height at or below `finalized_height`, so
+    // reth keeps serving the other hash and the conflict must latch the
+    // fork-safety halt instead of spinning.
     #[test]
     fn reapply_below_the_finalized_tier_halts_instead_of_spinning() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
-            // The cold-start trust anchor IS the EL's finalized height, so a block
-            // delivered below it is a finalized-tier conflict by construction.
+            // The cold-start trust anchor is the EL's finalized height, so a block
+            // delivered below it is a finalized-tier conflict.
             const L: u64 = 100;
             let fx = Fixture::new(L);
             fx.chain
@@ -6411,8 +5562,8 @@ mod tests {
                 .lock()
                 .unwrap()
                 .insert(L - 2, B256::repeat_byte(0xB2));
-            // What reth already holds at L-1, and will not give up: the re-derived
-            // sibling is dropped forever (the soak3 `InsertExecutedBlock` model).
+            // What reth already holds at L-1 and will not give up: every
+            // re-derived sibling is dropped.
             fx.chain
                 .canonical
                 .lock()
@@ -6436,9 +5587,8 @@ mod tests {
             let (child_msg, _child_waiter) = finalize_msg(child);
             mailbox.send(child_msg).expect("send the flush child");
 
-            // `wait_until` is the bound: 2000 virtual ms, ~10 re-apply iterations at
-            // ENGINE_TRANSPORT_RETRY_BACKOFF, then a named panic — a spin fails the
-            // test instead of hanging the suite.
+            // `wait_until` is the bound: ~10 re-apply iterations, then a named
+            // panic — a spin fails the test instead of hanging the suite.
             wait_until(&ctx, "SafetyHalt engaged", || fx.safety_halt.is_engaged()).await;
             assert_eq!(
                 fx.sync_metrics.degraded_value(SyncReason::ResultDivergence),
@@ -6457,16 +5607,15 @@ mod tests {
         });
     }
 
-    // The OTHER arm of the same gate: the EL serves NOTHING at a height it holds
-    // as finalized. That is the post-devp2p-backfill by-NUMBER blind spot
-    // `reseed_forward` answers with a belt, not a settled conflict, so the gate
-    // re-reads and the node heals. Pre-belt this is immediate actor death.
+    // The other arm of the same gate: the EL serves nothing at a height it holds
+    // as finalized. That by-number blind spot is a transient — not a settled
+    // conflict — so the gate re-reads and the node heals.
     #[test]
     fn finalized_tier_absent_block_heals_within_the_visibility_belt() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
-            // The cold-start trust anchor IS the EL's finalized height, so a block
-            // delivered below it lands in the finalized-tier gate by construction.
+            // The cold-start trust anchor is the EL's finalized height, so a block
+            // delivered below it lands in the finalized-tier gate.
             const L: u64 = 100;
             let fx = Fixture::new(L);
             fx.chain
@@ -6474,7 +5623,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .insert(L - 2, B256::repeat_byte(0xB2));
-            // The EL lands L-1 on derive but stays by-NUMBER blind for the next
+            // The EL lands L-1 on derive but stays by-number blind for the next
             // three reads — the gate's own plus two belt re-reads.
             fx.chain.missing_reads.lock().unwrap().insert(L - 1, 3);
 
@@ -6517,11 +5666,10 @@ mod tests {
         });
     }
 
-    // The belt is BOUNDED: an EL that never serves a height it claims as finalized
-    // is local corruption, so the actor dies LOUD rather than stalling the ack
-    // forever. Corruption, not fork-safety — the latch must stay clear and the
-    // in-flight `Exact` is dropped (Canceled), exactly like the other corruption
-    // exits in this file.
+    // The belt is bounded: an EL that never serves a height it claims as
+    // finalized is local corruption, so the actor dies loudly rather than
+    // stalling the ack. The latch stays clear and the in-flight `Exact` is
+    // canceled, like the other corruption exits.
     #[test]
     fn finalized_tier_absent_block_dies_loud_once_the_belt_is_spent() {
         let recorder = DebuggingRecorder::new();
@@ -6557,9 +5705,9 @@ mod tests {
                 let (child_msg, _child_waiter) = finalize_msg(child);
                 mailbox.send(child_msg).expect("send the flush child");
 
-                // The bound is 50 * ENGINE_TRANSPORT_RETRY_BACKOFF ~= 10 virtual s,
-                // which outlasts `wait_until`'s 2 s horizon — hence the coarser
-                // local wait, still bounded so an unbounded belt fails by timeout.
+                // The retry bound (~10 virtual s) outlasts `wait_until`'s 2 s
+                // horizon, hence this coarser wheel; it stays bounded so an
+                // unbounded belt fails by timeout.
                 let mut died = false;
                 for _ in 0..2_000 {
                     if (&mut handle).now_or_never().is_some() {
@@ -6607,13 +5755,11 @@ mod tests {
         );
     }
 
-    // This test arms the pre-fix EL model (`sibling_drops` = 2): the `try_derive`
-    // canonical postcondition must keep RE-APPLYING (derive + import + FCU,
-    // `dpos_sync_degraded{reason=finalize_apply}` raised while stuck) instead of
-    // acking past the un-applied reorg — then ack once the EL actually serves the
-    // finalized hash. K blocks later the attested result matches and NO SafetyHalt
-    // fires. Pre-postcondition this test FAILS exactly like the soak: hash_A stays
-    // canonical and the H+K attestation halts the (correct) node.
+    // With the EL dropping the first two same-height sibling imports, the
+    // `try_derive` canonical postcondition keeps re-applying (derive + import +
+    // FCU, `finalize_apply` degraded while stuck) instead of acking past the
+    // un-applied reorg, then acks once the EL serves the finalized hash. K blocks
+    // later the attested result matches and no SafetyHalt fires.
     #[test]
     fn finalized_sibling_reorg_survives_dropped_el_import() {
         use commonware_consensus::types::{Epoch, Round, View};
@@ -6624,15 +5770,15 @@ mod tests {
             let fx = Fixture::new(ANCHOR).with_epocher(beacon_active_epocher());
             let anchor_hash = fx.anchor_hash;
 
-            // Speculation round A ≠ the AGREED round B the finalized derive
-            // resolves from the store.
+            // Speculation round A differs from the agreed round B the finalized
+            // derive resolves from the store.
             let seed_a = real_seed(Round::new(Epoch::new(0), View::new(SPEC_H)));
             let seed_b = real_seed(active_round(SPEC_H));
             record_fixture_seed(SPEC_H);
             record_fixture_seed(0); // the view every `sample_order` block names
 
-            // `proposal_view == seed_a`'s view keeps the §4.1 re-canonicalisation
-            // a no-op for the speculation.
+            // `proposal_view == seed_a`'s view keeps the re-canonicalisation a
+            // no-op for the speculation.
             let order_h = OrderBlock {
                 proposal_view: SPEC_H,
                 ..sample_order(Digest(B256::ZERO), SPEC_H, B256::ZERO)
@@ -6651,12 +5797,13 @@ mod tests {
             .hash();
             assert_ne!(hash_a, hash_b, "distinct sibling hashes required");
 
-            // SPEC_H+1 pre-K ⇒ ZERO; +2 commits Height(ANCHOR); +K attests hash_B.
+            // SPEC_H+1 is pre-activation (ZERO result); +2 commits Height(ANCHOR);
+            // +K attests hash_B.
             let order_h1 = sample_order(order_h.digest(), SPEC_H + 1, B256::ZERO);
             let order_h2 = sample_order(order_h1.digest(), SPEC_H + 2, anchor_hash);
             let order_hk = sample_order(order_h2.digest(), SPEC_H + K, hash_b);
 
-            // The marshal serves SPEC_H by digest (spec_execute) AND by height
+            // The marshal serves SPEC_H by digest (spec_execute) and by height
             // (the postcondition re-apply loop's re-fetch).
             fx.marshal
                 .canned
@@ -6664,15 +5811,14 @@ mod tests {
                 .unwrap()
                 .insert(SPEC_H, order_h.clone());
 
-            // Pre-fix reth: the first TWO same-height sibling imports are silently
-            // dropped (the soak EL dropped every one; two drops prove the loop
-            // RETRIES rather than merely re-attempting once).
+            // The first two same-height sibling imports are silently dropped: two
+            // drops prove the loop retries rather than merely re-attempting once.
             *fx.chain.sibling_drops.lock().unwrap() = 2;
 
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // (1) Speculate SPEC_H at notarization round A → hash_A canonical.
+            // Speculate SPEC_H at notarization round A → hash_A canonical.
             mailbox
                 .send(Message {
                     cause: Span::current(),
@@ -6683,8 +5829,8 @@ mod tests {
                 })
                 .expect("send spec@A");
 
-            // (2) Finalize SPEC_H: the round guard routes to the re-derive, whose
-            // sibling import the EL DROPS twice; the ack must not fire until the
+            // Finalize SPEC_H: the round guard routes to the re-derive, whose
+            // sibling import the EL drops twice; the ack must not fire until the
             // re-apply loop lands hash_B.
             let (m, w) = finalize_msg(order_h.clone());
             mailbox.send(m).expect("send finalize SPEC_H");
@@ -6731,9 +5877,8 @@ mod tests {
                 "the finalize_apply gauge clears once the EL serves the finalized hash"
             );
 
-            // (3) Advance to SPEC_H+K: the attested hash_B matches the local
-            // chain → derives cleanly, NO SafetyHalt (pre-fix: ResultDivergence
-            // here).
+            // Advance to SPEC_H+K: the attested hash_B matches the local chain, so
+            // it derives cleanly with no SafetyHalt.
             for order in [order_h2, order_hk] {
                 let (m, _w) = finalize_msg(order);
                 mailbox.send(m).expect("send chain");
@@ -6760,11 +5905,10 @@ mod tests {
     }
 
     // A deep-catch-up follower trust-anchors at the live frontier (anchor ≫
-    // activation) and derives the K-below-anchor blocks. Those are
-    // POST-activation and carry real (non-zero) results — keying the
-    // pre-activation window on the cold-start anchor instead of the chain
-    // activation block mis-classifies them as pre-activation (expect ZERO) and
-    // shuts the executor down (the smoke-byzantine-vrf full-node wedge).
+    // activation) and derives the K-below-anchor blocks. Those are post-activation
+    // and carry real (non-zero) results, so keying the pre-activation window on
+    // the cold-start anchor instead of the chain activation block mis-classifies
+    // them as pre-activation (ZERO expected) and shuts the executor down.
     #[test]
     fn below_anchor_post_activation_block_passes_cross_check() {
         let runtime = deterministic::Runner::default();
@@ -6784,10 +5928,10 @@ mod tests {
             }
             assert_ne!(result_at_201, B256::ZERO);
 
-            // Marshal floor = ANCHOR − K = 203 ⇒ first dispatched height 204,
-            // BELOW the anchor (206) but ABOVE activation+K (195). Its result
+            // Marshal floor = ANCHOR − K = 203, so the first dispatched height is
+            // 204 — below the anchor (206) but above activation+K (195). Its result
             // commits the already-present derived hash at 204 − K = 201.
-            let below_anchor = ANCHOR - K + 1; // 204
+            let below_anchor = ANCHOR - K + 1;
             let order = sample_order(Digest(B256::ZERO), below_anchor, result_at_201);
 
             let (actor, mailbox) = fx.build_with_activation(ctx, ANCHOR, ACTIVATION, ANCHOR);
@@ -6823,7 +5967,7 @@ mod tests {
             let (actor, mailbox) = fx.build(ctx, ANCHOR, 3);
             let handle = actor.start();
 
-            // A live finalize for height 4 lands BEFORE the backfill drains; it
+            // A live finalize for height 4 lands before the backfill drains; it
             // must still derive after 1..=3.
             let (msg, waiter) = finalize_msg(chain[3].clone());
             mailbox.send(msg).expect("send");
@@ -6850,7 +5994,7 @@ mod tests {
             const ANCHOR: u64 = 100;
             let fx = Fixture::new(ANCHOR);
             let chain = result_consistent_chain(ANCHOR, fx.anchor_hash, 4);
-            // Heights 101..=103 exist ONLY in the marshal (not yet derived).
+            // Heights 101..=103 exist only in the marshal (not yet derived).
             {
                 let mut canned = fx.marshal.canned.lock().unwrap();
                 for order in &chain[..3] {
@@ -6860,10 +6004,10 @@ mod tests {
             let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // Deliver height 104 directly with an UNRESOLVABLE parent digest — its
-            // real parent 103 is underived, so the gap-walk fills 101..103 first
-            // (each element resolves σ at its own round; the walk needs no
-            // certs). The result still commits the derived hash at 101.
+            // Height 104 is delivered with an unresolvable parent digest: its real
+            // parent 103 is underived, so the gap-walk fills 101..103 first (each
+            // element resolves σ at its own round; the walk needs no certs). The
+            // result still commits the derived hash at 101.
             let delivered = OrderBlock {
                 parent: Digest(B256::ZERO),
                 ..chain[3].clone()
@@ -6887,8 +6031,8 @@ mod tests {
         });
     }
 
-    // The gap-walk PREFIX resolves σ the same way the main path does — at each
-    // element's OWN round, predicate first — and never from the delivered block.
+    // The gap-walk prefix resolves σ the way the main path does — at each
+    // element's own round, predicate first — never from the delivered block.
     #[test]
     fn the_gap_walk_prefix_resolves_each_element_at_its_own_round() {
         let runtime = deterministic::Runner::default();
@@ -6908,7 +6052,7 @@ mod tests {
                 proposal_view: view,
                 ..sample_order(parent, view, result)
             };
-            // 101/102 are inside the pre-activation window (result MUST be ZERO);
+            // 101/102 are inside the pre-activation window (result must be ZERO);
             // 103 commits executed_hash(100) = the anchor; 104 commits
             // executed_hash(101), which the walk itself produces.
             let o1 = at(101, Digest(B256::ZERO), B256::ZERO);
@@ -6948,18 +6092,17 @@ mod tests {
         });
     }
 
-    // A gap-walk PREFIX element on a beacon-ACTIVE round with no σ PARKS. The walk
-    // owns neither `cause` nor the ack, so it cannot hold the block itself — it
-    // reports the typed leaf and `try_derive`, which owns the park, converts it.
-    // Deriving with the digest fallback would silently fork, so waiting is the only
-    // correct answer.
+    // A gap-walk prefix element on a beacon-active round with no σ parks. The walk
+    // owns neither `cause` nor the ack, so it reports the typed leaf and lets
+    // `try_derive`, which owns the park, convert it: deriving with the digest
+    // fallback would silently fork, so waiting is the only correct answer.
     #[test]
     fn a_gap_walk_prefix_miss_on_a_beacon_active_round_parks() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             let store = crate::beacon::testing::SeedStore::new();
-            // σ for the DELIVERED height only — the prefix element at 101 has none.
+            // σ for the delivered height only — the prefix element at 101 has none.
             let delivered_seed = real_seed(active_round(102));
             store.record(real_witness(delivered_seed.target_round));
             let fx = Fixture::new(ANCHOR)
@@ -7014,10 +6157,10 @@ mod tests {
         });
     }
 
-    // The park's only exit: σ lands in the SAME store the walk reads (in production
-    // the cert inlet writes it), the parked block is re-poked, and the walk re-runs
-    // its own per-element lookup — which is why the park can carry the DELIVERED
-    // height's σ without ever carrying `None` for the prefix.
+    // The park's only exit: σ lands in the same store the walk reads, the parked
+    // block is re-poked, and the walk re-runs its own per-element lookup — which is
+    // why the park can carry the delivered height's σ without ever carrying `None`
+    // for the prefix.
     #[test]
     fn a_parked_prefix_seed_derives_when_sigma_lands() {
         let runtime = deterministic::Runner::default();
@@ -7050,7 +6193,7 @@ mod tests {
             actor.defer_if_needed(outcome, true).await;
             assert!(actor.deferred.is_some(), "the block is parked, not dropped");
 
-            // The arrival the park waits for. Nothing is asked of any peer.
+            // The σ the park waits for arrives locally; nothing is asked of any peer.
             store.record(real_witness(prefix_seed.target_round));
             actor
                 .repoke_deferred()
@@ -7071,15 +6214,15 @@ mod tests {
         });
     }
 
-    // The beacon-INACTIVE arm is not a miss and must NEVER hold: `None` is the
+    // The beacon-inactive arm is not a miss and must never hold: `None` is the
     // agreed derivation there, so the block derives at its own delivery even with
-    // an EMPTY store. Holding would wedge every pre-beacon height forever.
+    // an empty store. Holding would wedge every pre-beacon height forever.
     #[test]
     fn a_beacon_inactive_height_derives_immediately_and_never_holds() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
-            // Default epocher ⇒ epoch 0 ⇒ beacon-INACTIVE; store deliberately empty.
+            // Default epocher ⇒ epoch 0 ⇒ beacon-inactive; store deliberately empty.
             let fx = Fixture::new(ANCHOR).with_seed_store(crate::beacon::testing::SeedStore::new());
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
 
@@ -7105,26 +6248,23 @@ mod tests {
         });
     }
 
-    // PARENT-VISIBILITY, gap-walk: the walk imports each prefix block and hands
-    // its hash to the NEXT derive as a by-hash parent. Without a canonicalization
-    // FCU per landed block the walk's SECOND element derives against a parent that
-    // only exists in reth's tree-private state — pre-fix this fails with
-    // ParentHeaderMissing at height 98.
+    // The gap-walk imports each prefix block and hands its hash to the next derive
+    // as a by-hash parent. Without a canonicalization FCU per landed block the
+    // walk's second element derives against a parent that exists only in reth's
+    // tree-private state and fails with ParentHeaderMissing.
     #[test]
     fn gap_walk_canonicalizes_each_landed_block_for_the_next_by_hash_parent() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 96;
             let fx = Fixture::new(ANCHOR);
-            // Arm the by-hash lag: everything above the anchor is present by
-            // NUMBER but invisible by HASH until an FCU raises the frontier.
-            // Without this `visible()` short-circuits to true and the test proves
-            // nothing.
+            // Everything above the anchor is present by number but invisible by
+            // hash until an FCU raises the frontier; without this `visible()`
+            // short-circuits to true and the test proves nothing.
             fx.chain.vis.set_frontier(ANCHOR);
-            // A TWO-block prefix exercises parent-to-parent chaining WITHIN the
-            // walk: 98 derives on a parent the walk itself imported one iteration
-            // earlier. The one-block shape — the one observed live — is covered
-            // separately, where the walk's only element is also its last.
+            // The two-block prefix exercises parent-to-parent chaining within the
+            // walk: 98 derives on a parent the walk imported one iteration earlier.
+            // The one-block shape is covered separately.
             {
                 let mut canned = fx.marshal.canned.lock().unwrap();
                 canned.insert(97, sample_order(Digest(B256::ZERO), 97, B256::ZERO));
@@ -7153,11 +6293,9 @@ mod tests {
                 ),
             }
 
-            // The mechanism, not just the outcome. Asserted on the RECORDED SET:
-            // `FakeBeacon` stores `fcu_calls` with no derive interleaving, so
-            // "issued before the next derive" is not directly observable — and does
-            // not need to be, since the outcome assertion above already fails
-            // without the FCU.
+            // Asserted on the recorded set, not on ordering: `FakeBeacon` stores
+            // `fcu_calls` with no derive interleaving, and the outcome assertion
+            // above already fails without the FCU.
             let heads: Vec<B256> = fx
                 .beacon
                 .fcu_calls
@@ -7176,14 +6314,13 @@ mod tests {
         });
     }
 
-    /// Drive a ONE-block gap: 97 missing, 98 delivered, by-hash frontier at the
-    /// anchor. This is the shape observed live (`first_missing == target`), where
-    /// the walk's only element is also its last — so the walk returns `Ok` and the
-    /// DELIVERED derive is what depends on the canonicalization, which is exactly
-    /// what an entry-only catch misses. Both 97 and 98 are pre-activation
-    /// (`< anchor + K`), so a ZERO result is the correct commitment at each.
+    /// Drive a one-block gap: 97 missing, 98 delivered, by-hash frontier at the
+    /// anchor. The walk's only element is also its last, so the walk returns `Ok`
+    /// and the delivered derive is what depends on the canonicalization. Both 97
+    /// and 98 are pre-activation (`< anchor + K`), so a ZERO result is the correct
+    /// commitment at each.
     ///
-    /// The CALLER decides whether the FCU can land: arm nothing and the walk heals;
+    /// The caller decides whether the FCU can land: arm nothing and the walk heals;
     /// arm a transport blip or a SYNCING backfill and it parks. Either way
     /// `try_derive` must not fail.
     async fn derive_across_a_one_block_gap(
@@ -7214,11 +6351,10 @@ mod tests {
         (actor, outcome, waiter)
     }
 
-    // THE SHAPE THAT CRASHED LIVE, healed: a one-block gap where the walk's only
-    // element is also its last, so the block the walk imports is handed straight to
-    // the DELIVERED derive as a by-hash parent. The two park tests cover this same
-    // shape with the FCU defeated — without this one it would be asserted to fail
-    // safe and never asserted to make progress.
+    // A one-block gap whose only walk element is also its last: the block the walk
+    // imports is handed straight to the delivered derive as a by-hash parent. The
+    // two park tests cover the same shape with the FCU defeated; this one asserts
+    // the FCU lands and the derive makes progress.
     #[test]
     fn a_one_block_gap_heals_when_the_canonicalization_fcu_lands() {
         let runtime = deterministic::Runner::default();
@@ -7276,8 +6412,8 @@ mod tests {
 
     // The cause the park primarily exists for: `cold_start_jump` arms a devp2p
     // backfill, reth answers SYNCING while it holds the engine, and a SYNCING
-    // forkchoice canonicalizes NOTHING — which is why the fix cannot simply await
-    // VALID, and why the walk must survive an FCU that does not land.
+    // forkchoice canonicalizes nothing — so the walk cannot simply await VALID and
+    // must survive an FCU that does not land.
     #[test]
     fn a_syncing_backfill_that_canonicalizes_nothing_parks_instead_of_dying() {
         let runtime = deterministic::Runner::default();
@@ -7324,11 +6460,10 @@ mod tests {
                 "the park is observable while it lasts"
             );
 
-            // The backfill goes idle: reth answers VALID again, and 97 — imported
-            // but never canonicalized — is correspondingly absent from the
-            // by-number canonical index the re-walk probes (`provider.block_hash`
-            // in production). So the re-poke RE-WALKS, and it is the re-issued FCU
-            // that finally canonicalizes 97.
+            // The backfill goes idle and reth answers VALID again; 97, imported but
+            // never canonicalized, is correspondingly absent from the by-number
+            // canonical index the re-walk probes, so the re-poke re-walks and the
+            // re-issued FCU finally canonicalizes 97.
             *fx.beacon.fcu_status.lock().unwrap() = None;
             fx.chain.canonical.lock().unwrap().remove(&97);
             actor
@@ -7345,15 +6480,12 @@ mod tests {
         });
     }
 
-    // A GAP block (filled by `derive_finalized_with_gap_fill`, not the top-level delivery)
-    // carries its OWN attested `result`; a forged value on a gap-range block must
-    // fail loud just like the top-level cross-check — otherwise a
-    // committee-attested wrong result on a gap block is imported unchecked (the
-    // byzantine-vrf defense). Here ANCHOR+K (the first POST-pre-activation gap
-    // height) commits a forged hash; the gap-walk derives it, the cross-check
-    // engages the SafetyHalt, and the executor parks retaining the ack. This
-    // pins the `?`-propagated halt path (the engage fires INSIDE
-    // `derive_finalized_with_gap_fill`, below the `inflight_ack` slot).
+    // A gap block (filled by `derive_finalized_with_gap_fill`, not the top-level
+    // delivery) carries its own attested `result`, so a forged value on a gap-range
+    // block must fail loud like the top-level cross-check; otherwise a
+    // committee-attested wrong result is imported unchecked. The halt fires inside
+    // `derive_finalized_with_gap_fill`, below the `inflight_ack` slot, and the
+    // executor parks retaining the ack.
     #[test]
     fn gap_block_result_divergence_engages_safety_halt_and_parks() {
         let runtime = deterministic::Runner::default();
@@ -7361,15 +6493,15 @@ mod tests {
             const ANCHOR: u64 = 100;
             let fx = Fixture::new(ANCHOR);
             let chain = result_consistent_chain(ANCHOR, fx.anchor_hash, K + 2);
-            // Forge the `result` on the gap block at ANCHOR+K (index K-1): it is
-            // the first gap height past the pre-activation window, so its cross-check
-            // fires against the derived hash at ANCHOR (already canonical).
+            // Forge the `result` on the gap block at ANCHOR+K (index K-1), the first
+            // gap height past the pre-activation window: its cross-check fires
+            // against the already-canonical derived hash at ANCHOR.
             let forged_idx = (K - 1) as usize;
             let forged = B256::repeat_byte(0xEE);
             assert_ne!(forged, fx.chain.spec_executed_hash(ANCHOR).unwrap());
             let mut forged_chain = chain.clone();
             forged_chain[forged_idx].result = forged;
-            // All gap heights ANCHOR+1 ..= ANCHOR+K+1 exist ONLY in the marshal.
+            // All gap heights ANCHOR+1 ..= ANCHOR+K+1 exist only in the marshal.
             {
                 let mut canned = fx.marshal.canned.lock().unwrap();
                 for order in &forged_chain[..(K + 1) as usize] {
@@ -7379,8 +6511,8 @@ mod tests {
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // Deliver the TOP height (ANCHOR+K+1) with an unresolvable parent so the
-            // gap-walk fills ANCHOR+1 ..= ANCHOR+K first — hitting the forged gap
+            // The top height (ANCHOR+K+1) is delivered with an unresolvable parent so
+            // the gap-walk fills ANCHOR+1 ..= ANCHOR+K first, hitting the forged gap
             // block at ANCHOR+K. The delivered block itself has a consistent result.
             let delivered = OrderBlock {
                 parent: Digest(B256::ZERO),
@@ -7409,7 +6541,7 @@ mod tests {
         });
     }
 
-    // The tip digest is an ordering digest reth cannot resolve — Update::Tip
+    // The tip digest is an ordering digest reth cannot resolve, so `Update::Tip`
     // must never become an FCU target.
     #[test]
     fn tip_is_inert_for_forkchoice() {
@@ -7429,8 +6561,8 @@ mod tests {
                             commonware_consensus::types::Epoch::new(0),
                             commonware_consensus::types::View::new(5),
                         ),
-                        // Below ANCHOR+1+K so guard #2 stays cold — this test is
-                        // about the tip's FCU-inertness, not the catch-up guard.
+                        // Below ANCHOR+1+K so guard #2 stays cold: this test is
+                        // about the tip's FCU-inertness, not catch-up.
                         Height::new(ANCHOR + 2),
                         tip_digest,
                     ))),
@@ -7457,8 +6589,8 @@ mod tests {
         });
     }
 
-    // Speculative execution imports the block at NOTARIZATION (advancing the
-    // head ahead of finalization); the matching finalization reconciles WITHOUT
+    // Speculative execution imports the block at notarization, advancing the head
+    // ahead of finalization; the matching finalization reconciles without
     // re-deriving and keeps the head where speculation put it.
     #[test]
     fn speculation_advances_head_then_reconciles_without_redrive() {
@@ -7478,7 +6610,7 @@ mod tests {
                 .insert(ANCHOR + 1, order.clone());
 
             mailbox.send(spec_msg(&order)).expect("send spec");
-            // Finalize the SAME order — reconciliation must skip the re-derive.
+            // Finalize the same order — reconciliation must skip the re-derive.
             let (msg, waiter) = finalize_msg(order.clone());
             mailbox.send(msg).expect("send finalize");
             waiter.await.expect("ack");
@@ -7505,8 +6637,8 @@ mod tests {
         });
     }
 
-    // A notarized block that then gets nullified (a SIBLING finalizes) must be
-    // rolled back: the finalized sibling is derived and the head reorgs onto it.
+    // A notarized block that then gets nullified (a sibling finalizes) is rolled
+    // back: the finalized sibling is derived and the head reorgs onto it.
     #[test]
     fn speculation_rolls_back_to_finalized_sibling() {
         let runtime = deterministic::Runner::default();
@@ -7516,9 +6648,8 @@ mod tests {
             let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // Speculatively execute sibling A (notarized at ANCHOR+1). The
-            // siblings are distinguished by `extra_data` (ANCHOR+1 is in the
-            // pre-activation window, so both commit `result == ZERO`).
+            // `extra_data` distinguishes the siblings: ANCHOR+1 is in the
+            // pre-activation window, so both commit `result == ZERO`.
             let order_a = OrderBlock {
                 extra_data: Bytes::from_static(b"A"),
                 ..sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO)
@@ -7530,7 +6661,7 @@ mod tests {
                 .insert(ANCHOR + 1, order_a.clone());
             mailbox.send(spec_msg(&order_a)).expect("send spec A");
 
-            // But a different sibling B finalizes (A was nullified).
+            // A different sibling B finalizes (A was nullified).
             let order_b = OrderBlock {
                 extra_data: Bytes::from_static(b"B"),
                 ..sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO)
@@ -7562,12 +6693,12 @@ mod tests {
         });
     }
 
-    // A block on a beacon-ACTIVE round whose σ has not landed is HELD, not
+    // A block on a beacon-active round whose σ has not landed is held, not
     // parked: no derive, no ack, no park (`deferred` stays empty), no hint, and
-    // no marshal fetch. Recording σ into the store the actor holds fires the
-    // seed-record Notify, and the executor's REAL `seed_notify` select! arm —
-    // not a hand-driven call — derives and acks it. That arm is the hold's only
-    // exit: no further delivery, no timer.
+    // no marshal fetch. Recording σ into the actor's seed store fires the
+    // seed-record Notify, and the executor's real `seed_notify` select! arm —
+    // not a hand-driven call — derives and acks it; that arm is the hold's only
+    // exit.
     #[test]
     fn a_held_block_derives_when_its_seed_lands_through_the_real_notify_arm() {
         let runtime = deterministic::Runner::default();
@@ -7607,7 +6738,7 @@ mod tests {
 
             let seed = real_seed(active_round(h));
             store.record(real_witness(seed.target_round));
-            // `wait_until` panics after 2000 virtual ms, so a regression FAILS
+            // `wait_until` panics after 2000 virtual ms, so a regression fails
             // here instead of hanging on the ack below.
             wait_until(&ctx, "the notify arm derived the held block", || {
                 fx.chain.finalized_executed_hash(h).is_some()
@@ -7625,12 +6756,10 @@ mod tests {
         });
     }
 
-    // (a) THE soak7 BUG, reproduced at the executor contract — the headline
-    // test. No per-height finalization cert exists ANYWHERE (the executor has no
-    // cert lookup), `spec_executed` is EMPTY (a restarted / lagging / following
-    // node), and no successor has been delivered ⇒ the height derives with the
-    // REAL threshold seed of its OWN round and acks. Pre-B′: permanent park
-    // (CertMissing → PARK on every re-poke, forever, network-wide).
+    // No per-height finalization cert exists (the executor has no cert lookup),
+    // `spec_executed` is empty (a restarted / lagging / following node), and no
+    // successor has been delivered: the height derives with the real threshold
+    // seed of its own round and acks.
     #[test]
     fn a_height_derives_from_its_own_round_without_any_cert_or_speculation() {
         let runtime = deterministic::Runner::default();
@@ -7669,8 +6798,8 @@ mod tests {
     }
 
     // A pre-bootstrap link — a height whose epoch the agreed map calls
-    // beacon-INACTIVE — derives IMMEDIATELY with the `order.digest()` fallback:
-    // no hold, no hint. `None` is the agreed derivation there, not a miss, and
+    // beacon-inactive — derives immediately with the `order.digest()` fallback:
+    // no hold, no hint. `None` is the agreed derivation there, not a miss;
     // holding would wedge every pre-beacon height forever.
     #[test]
     fn pre_bootstrap_link_derives_with_fallback_without_hinting() {
@@ -7706,11 +6835,9 @@ mod tests {
         });
     }
 
-    // PREDICATE FIRST, and this is the case that distinguishes it: σ IS in the
-    // store for the block's own round, but the agreed epoch map calls that epoch
-    // beacon-INACTIVE, so the derive must IGNORE it and use `None` — what the
-    // rest of the network derives. Store-first ordering passes every other test
-    // in this file and fails exactly here.
+    // σ is in the store for the block's own round, but the agreed epoch map
+    // calls that epoch beacon-inactive, so the derive must ignore it and use
+    // `None` — what the rest of the network derives.
     #[test]
     fn a_seed_at_a_beacon_inactive_round_is_ignored_not_obeyed() {
         use commonware_consensus::types::{Epoch, Epocher as _, Round, View};
@@ -7721,7 +6848,7 @@ mod tests {
             // The default fixture's single huge epocher puts every height in
             // epoch 0, below `DETERMINISTIC_BOOTSTRAP_EPOCH` — beacon-inactive.
             // Filed directly rather than through `record_fixture_seed`, which
-            // keys on the beacon-ACTIVE epoch: the round wanted here is the one
+            // keys on the beacon-active epoch: the round wanted here is the one
             // this fixture's epocher names, and it is the inactive one.
             let round = Round::new(Epoch::new(0), View::new(VIEW));
             FIXTURE_SEEDS.with(|seeds| seeds.record(real_witness(round)));
@@ -7766,15 +6893,13 @@ mod tests {
         });
     }
 
-    // The bootstrap edge, which the old field-keyed derive could not serve: at
-    // the FIRST block of the first beacon-active epoch `witness_link` keys the
-    // wire field on the PARENT's epoch (`mandatory_at(1)` — false), so an honest
-    // block there carries no seed at all, while the beacon IS active at its own
-    // epoch and σ for `Round(2, 16)` exists. Keyed at the block's OWN round the
-    // derive finds it; keyed off the wire it fell through to the digest fallback.
+    // At the first block of the first beacon-active epoch `witness_link` keys the
+    // wire field on the parent's epoch (`mandatory_at(1)` — false), so an honest
+    // block there carries no seed, while the beacon is active at its own epoch
+    // and σ for `Round(2, 16)` exists: only keying the derive at the block's own
+    // round finds it.
     //
-    // h = 17 is the second half of the claim: the successor derives with
-    // σ(2, 17), its own round, not with the edge's.
+    // The successor derives with σ(2, 17), its own round, not with the edge's.
     #[test]
     fn the_bootstrap_edge_derives_from_its_own_round_though_the_wire_carries_none() {
         use commonware_consensus::types::{Epoch, Epocher as _, Round, View};
@@ -7834,9 +6959,8 @@ mod tests {
         });
     }
 
-    /// A `SpecNotarized` command carrying a real recovered seed (populates
-    /// `spec_executed[h].seed_round` — reconciled against the round the
-    /// finalized derive resolves).
+    /// Carries a real recovered seed, so `spec_executed[h].seed_round`
+    /// reconciles against the round the finalized derive resolves.
     fn spec_msg_seeded(order: &OrderBlock, seed: crate::beacon::Seed) -> Message {
         Message {
             cause: Span::current(),
@@ -7847,12 +6971,9 @@ mod tests {
         }
     }
 
-    // (Fix 1 🔴) THE PIPELINE-SHIFT REGRESSION TEST: speculation MUST run at
-    // every height at the tip, so the reth head advances at NOTARIZATION
-    // latency while the finalized derive rides exactly one block behind. Under
-    // a park-based design (revision 4's `NeedChild`) `deferred.is_some()` at
-    // every height switches speculation OFF via the `spec_execute` guard and
-    // this test fails on every clause.
+    // Speculation must run at every height at the tip, so the reth head advances
+    // at notarization latency while the finalized derive rides exactly one block
+    // behind.
     #[test]
     fn speculation_runs_at_every_height_at_the_tip() {
         let runtime = deterministic::Runner::default();
@@ -7864,7 +6985,7 @@ mod tests {
             let handle = actor.start();
 
             // A linked seedless chain ANCHOR+1..=ANCHOR+N whose `result` fields
-            // commit the hashes the deriver WILL produce: every height now
+            // commit the hashes the deriver will produce: every height now
             // derives at its own delivery, so every cross-check actually runs.
             let chain = result_consistent_chain(ANCHOR, fx.anchor_hash, N);
             {
@@ -7885,7 +7006,7 @@ mod tests {
                     mailbox.send(m).expect("send finalize");
                     waiters.push(w);
                 }
-                // Assert per height: speculation ran (the EL head advanced at
+                // Per height: speculation ran (the EL head advanced at
                 // notarization latency) — payload for `h` present.
                 let target = ANCHOR + i;
                 wait_until(&ctx, "speculative import at h", || {
@@ -7904,7 +7025,7 @@ mod tests {
             }
 
             {
-                // Each height imported exactly ONCE — the finalized reconcile
+                // Each height imported exactly once — the finalized reconcile
                 // reused every speculation (correctly_speculated, no re-derive).
                 let payloads = fx.beacon.new_payload_calls.lock().unwrap();
                 let heights: Vec<u64> = payloads.iter().map(|p| p.number).collect();
@@ -7934,9 +7055,9 @@ mod tests {
         });
     }
 
-    // (f) STEADY STATE IS ZERO-COST: at the tip (`last_tip < h + K`) guard #2
-    // never fires and the derive path issues NO `fetch_block_by_height` at all
-    // (σ is resolved locally and every delivered block is its own walk element).
+    // At the tip (`last_tip < h + K`) guard #2 never fires, so the derive path
+    // issues no `fetch_block_by_height`: σ is resolved locally and every
+    // delivered block is its own walk element.
     #[test]
     fn steady_state_derive_issues_no_marshal_fetches() {
         let runtime = deterministic::Runner::default();
@@ -7967,12 +7088,12 @@ mod tests {
         });
     }
 
-    // (d) GUARD #2, re-gated to `last_tip >= h + K`: a catching-up node whose
+    // Guard #2 with `last_tip >= h + K`: a catching-up node whose
     // committee-attested block at `h + K` disagrees with the hash it derived
-    // engages SafetyHalt(ResultDivergence) BEFORE the ack. Green ONLY because
-    // this fixture's `FakeDeriver` lands the derived hash at derive time
-    // (`land_on_import` off, the default); with reth's FCU-only canonicalisation the guard reads
-    // `None` and the halt comes K blocks later (R-006 scenario 1, testbed (3b)).
+    // engages SafetyHalt(ResultDivergence) before the ack. The fixture's
+    // `FakeDeriver` lands the derived hash at derive time (`land_on_import` off,
+    // the default), so the guard sees it immediately; reth's FCU-only
+    // canonicalisation would read `None` and the halt come K blocks later.
     #[test]
     fn guard2_convergence_mismatch_engages_safety_halt() {
         let runtime = deterministic::Runner::default();
@@ -7984,13 +7105,13 @@ mod tests {
             let handle = actor.start();
 
             let order_h = sample_order(Digest(B256::ZERO), H, B256::ZERO);
-            // The attested root at H+K commits a DIFFERENT hash than the derive
-            // produces ⇒ a fork the guard must catch.
+            // The attested root at H+K commits a different hash than the derive
+            // produces, so the guard sees a fork.
             let forged = B256::repeat_byte(0xEE);
             let order_hk = sample_order(Digest(B256::ZERO), H + K, forged);
             fx.marshal.canned.lock().unwrap().insert(H + K, order_hk);
 
-            // The node is BEHIND: the finalized frontier is already past H+K.
+            // The node is behind: the finalized frontier is already past H+K.
             mailbox.send(tip_msg(H + K)).expect("send tip");
             let (m, w) = finalize_msg(order_h.clone());
             mailbox.send(m).expect("send finalize");
@@ -8006,14 +7127,13 @@ mod tests {
         });
     }
 
-    // (e) GUARD #2's absent-body arm — the executor's ONLY park: the node is
-    // behind (`tip >= h + K`) but the attested body at `h + K` is not
-    // backfilled yet ⇒ PARK before the ack and before the `split_off` prune,
-    // hint exactly `h + K`, hold the next delivery QUEUED behind the park (the
-    // drain is gated on it), and keep speculation suppressed while parked (the
-    // `spec_execute` guard is kept, not narrowed). When the body lands, the
-    // re-poke re-derives with the RETAINED seed (zero lookups) and the queued
-    // child derives right after — nothing is lost.
+    // Guard #2's absent-body arm — the executor's only park: the node is behind
+    // (`tip >= h + K`) but the attested body at `h + K` is not backfilled, so
+    // the executor parks before the ack and before the `split_off` prune, hints
+    // exactly `h + K`, holds the next delivery queued behind the park (the drain
+    // is gated on it), and keeps speculation suppressed (the `spec_execute`
+    // guard is not narrowed). When the body lands, the re-poke re-derives with
+    // the retained seed and the queued child derives right after.
     #[test]
     fn guard2_body_absent_parks_then_derives_when_body_lands() {
         let runtime = deterministic::Runner::default();
@@ -8035,8 +7155,8 @@ mod tests {
             let (mc, wc) = finalize_msg(child.clone());
             mailbox.send(mc).expect("send child");
 
-            // The derive ran (import happened) but the ack is withheld — parked
-            // on the absent H+K body, with exactly H+K hinted.
+            // The derive ran (import happened) but the ack is withheld, parked on
+            // the absent H+K body with exactly H+K hinted.
             ctx.sleep(Duration::from_millis(50)).await;
             {
                 let payloads = fx.beacon.new_payload_calls.lock().unwrap();
@@ -8046,7 +7166,7 @@ mod tests {
                     "H derived + imported before parking on the absent h+K body"
                 );
                 // H may import more than once — every later delivery re-pokes the
-                // park, and the re-poke re-derives. What must NOT appear is H+1:
+                // park, and the re-poke re-derives. What must not appear is H+1:
                 // the drain is gated while a block is parked.
                 assert!(
                     heights.iter().all(|n| *n == H),
@@ -8063,7 +7183,7 @@ mod tests {
                 "an absent-body park is not a fork"
             );
 
-            // Speculation stays suppressed while parked — the guard is KEPT.
+            // Speculation stays suppressed while parked — the guard is kept.
             let spec_order = child_of(&child);
             fx.marshal
                 .canned
@@ -8084,14 +7204,14 @@ mod tests {
                 "speculation must stay suppressed while a block is parked (guard kept)"
             );
 
-            // The H+K body lands (attesting the hash the derive produced) → the
-            // tip re-poke re-derives with the RETAINED σ and acks.
+            // The H+K body lands, attesting the hash the derive produced; the tip
+            // re-poke re-derives with the retained σ and acks.
             let attested = fx.chain.spec_executed_hash(H).unwrap();
             let order_hk = sample_order(Digest(B256::ZERO), H + K, attested);
             fx.marshal.canned.lock().unwrap().insert(H + K, order_hk);
-            // Same-height tip: the re-poke is the event; keeping the tip at
-            // H+K leaves guard #2 COLD for the held child (tip < child + K), so
-            // the child derives + acks below without needing an H+K+1 body.
+            // Same-height tip: the re-poke is the event; keeping the tip at H+K
+            // leaves guard #2 cold for the held child (tip < child + K), so the
+            // child derives and acks below without needing an H+K+1 body.
             mailbox.send(tip_msg(H + K)).expect("send tip re-poke");
             w.await.expect("parked block acks once the h+K body lands");
 
@@ -8106,11 +7226,10 @@ mod tests {
         });
     }
 
-    // (e′) The guard-#2 park's DELIVERY-INDEPENDENT backstop: a body landing at
-    // `height <= tip` fires no `Update::Tip`, so the FCU-heartbeat re-poke is
-    // what clears the park ([[dpos-deferred-catchup-invariants]] #3 — reused
-    // tick, no new timer). The re-poke re-derives from the RETAINED σ
-    // (`Deferred::seed`) with zero lookups.
+    // The guard-#2 park's delivery-independent backstop: a body landing at
+    // `height <= tip` fires no `Update::Tip`, so the FCU-heartbeat re-poke
+    // clears the park (a reused tick, no new timer). The re-poke re-derives from
+    // the retained σ (`Deferred::seed`) with zero lookups.
     #[test]
     fn guard2_park_clears_on_heartbeat_repoke_without_delivery() {
         let runtime = deterministic::Runner::default();
@@ -8134,7 +7253,7 @@ mod tests {
                 "parked on the absent h+K body"
             );
 
-            // The body lands SILENTLY (no tip, no delivery) — only the heartbeat
+            // The body lands silently (no tip, no delivery) — only the heartbeat
             // (auto-advanced by the deterministic clock) can re-poke the park.
             let attested = fx.chain.spec_executed_hash(H).unwrap();
             fx.marshal
@@ -8150,17 +7269,16 @@ mod tests {
         });
     }
 
-    // (Fix A-1 🟠) The held block is NEVER acked before it is derived — even at
-    // shutdown. Acking it would durably advance the marshal's
-    // `last_processed_height` past an underived height: a PERMANENT hole. The
-    // drop (→ Canceled) is the deliberate disposition; the withheld ack is the
-    // restart self-heal.
+    // A held block is never acked before it is derived, even at shutdown: an ack
+    // would durably advance the marshal's `last_processed_height` past an
+    // underived height — a permanent hole. The drop (→ Canceled) is deliberate;
+    // the withheld ack is the restart self-heal.
     #[test]
     fn held_block_is_never_acked_at_shutdown() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
-            // Beacon-ACTIVE epoch + an EMPTY store: the only way to hold a block.
+            // Beacon-active epoch + an empty store: the only way to hold a block.
             let fx = Fixture::new(ANCHOR)
                 .with_seed_store(crate::beacon::testing::SeedStore::new())
                 .with_epocher(beacon_active_epocher());
@@ -8172,11 +7290,11 @@ mod tests {
             mailbox.send(m).expect("send h (becomes the held tip)");
             ctx.sleep(Duration::from_millis(20)).await;
 
-            // Stop the executor while it holds `h`.
+            // Dropping the mailbox stops the executor while it holds `h`.
             drop(mailbox);
             handle.await.expect("executor exits on mailbox close");
 
-            // The ack resolved CANCELED (dropped), not Ok: the executor did not
+            // The ack resolved canceled (dropped), not Ok: the executor did not
             // acknowledge a block it never derived.
             assert!(
                 w.await.is_err(),
@@ -8194,11 +7312,11 @@ mod tests {
         });
     }
 
-    // (Fix A-2 🟠) The restart SELF-HEAL: a node that stopped while holding `h`
-    // for its σ re-dispatches `h` (the marshal's `last_processed_height` never
-    // advanced) and derives it once σ is there, with NO hole — the hash equals
-    // the one a never-stopped node derives. `awaiting_seed` needs no
-    // persistence; the withheld ack is the durable record.
+    // A node that stopped while holding `h` for its σ re-dispatches `h` (the
+    // marshal's `last_processed_height` never advanced) and derives it once σ is
+    // there, with no hole — the hash equals the one a never-stopped node
+    // derives. `awaiting_seed` needs no persistence; the withheld ack is the
+    // durable record.
     #[test]
     fn restart_after_stop_while_holding_rederives_without_hole() {
         let runtime = deterministic::Runner::default();
@@ -8221,7 +7339,7 @@ mod tests {
             )
             .hash();
 
-            // Run 1: deliver `h`, stop while holding it.
+            // Deliver `h`, stop while holding it.
             {
                 let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
                 let handle = actor.start();
@@ -8237,7 +7355,7 @@ mod tests {
                 );
             }
 
-            // Run 2 ("restart"): the marshal re-dispatches from
+            // The restarted run: the marshal re-dispatches from
             // `last_processed + 1` = the held height. σ lands while `h` is held
             // and the notify arm derives it. (A fresh metrics label: a real
             // restart is a fresh process.)
@@ -8259,11 +7377,11 @@ mod tests {
         });
     }
 
-    // (P2 🟡) A FIRST-SEEN SPIN NOTARIZATION must not speculate with the spin
-    // round's seed: §4.1 re-canonicalises the round to the block's own
-    // `proposal_view`. Without a `SeedIndex` entry for the canonical round the
-    // speculation is SKIPPED (never speculate with a known-wrong seed); once σ
-    // for that round lands the finalized path derives it exactly once, no reorg.
+    // A first-seen spin notarization must not speculate with the spin round's
+    // seed: the round is re-canonicalised to the block's own `proposal_view`.
+    // Without a `SeedIndex` entry for the canonical round the speculation is
+    // skipped (never speculate with a known-wrong seed); once σ for that round
+    // lands the finalized path derives it exactly once, no reorg.
     #[test]
     fn spin_notarization_without_canonical_seed_skips_speculation() {
         let runtime = deterministic::Runner::default();
@@ -8287,7 +7405,7 @@ mod tests {
             let seed_v0 = real_seed(canonical);
             let seed_spin = real_seed(active_round(V0 + 30));
 
-            // First-seen notarization at a SPIN round, store EMPTY → skip (no
+            // First-seen notarization at a spin round, store empty → skip (no
             // import).
             mailbox
                 .send(spec_msg_seeded(&order, seed_spin))
@@ -8315,10 +7433,10 @@ mod tests {
         });
     }
 
-    // (P2 🟡, the SeedStore arm) A node that HOLDS the canonical round's seed in
-    // its `SeedIndex` re-canonicalises the spin notarization and speculates with
-    // the SAME seed everyone else uses — the finalized reconcile then reuses the
-    // speculation (rounds match; no re-derive, no reorg).
+    // A node that holds the canonical round's seed in its `SeedIndex`
+    // re-canonicalises the spin notarization and speculates with the same seed
+    // everyone else uses; the finalized reconcile then reuses the speculation
+    // (rounds match, no re-derive, no reorg).
     #[test]
     fn spin_notarization_recanonicalises_from_seed_store() {
         let runtime = deterministic::Runner::default();
@@ -8347,7 +7465,7 @@ mod tests {
             mailbox
                 .send(spec_msg_seeded(&order, seed_spin))
                 .expect("send spin spec");
-            // Finalize resolves the SAME round → reconcile REUSES the spec.
+            // Finalize resolves the same round → reconcile reuses the spec.
             let (m, w) = finalize_msg(order.clone());
             mailbox.send(m).expect("send finalize");
             w.await.expect("ack");
@@ -8363,11 +7481,9 @@ mod tests {
         });
     }
 
-    // (c′) F4 CROSS-NODE CONVERGENCE — the fork hazard this design kills: two
-    // nodes whose local cert state named DIFFERENT spin rounds for the same
-    // height both derive it from σ of the block's OWN agreed round ⇒ identical
-    // hash. (Under the pre-B′ `lookup_seed` path each derived from its own local
-    // cert's round.)
+    // Two nodes whose local cert state named different spin rounds for the same
+    // height both derive it from σ of the block's own agreed round, so their
+    // hashes agree.
     #[test]
     fn nodes_with_divergent_local_cert_state_derive_identically_from_the_agreed_round() {
         let runtime = deterministic::Runner::default();
@@ -8405,7 +7521,7 @@ mod tests {
         });
     }
 
-    // A multi-height speculative lead (spec_head 3 ahead) where a SIBLING
+    // A multi-height speculative lead (spec_head 3 ahead) where a sibling
     // finalizes mid-lead must roll back exactly at the diverging height: the
     // finalized sibling is re-derived and the speculative entries strictly above
     // it (split_off) are dropped so the next notarization re-speculates forward.
@@ -8438,7 +7554,7 @@ mod tests {
             mailbox.send(spec_msg(&o2a)).expect("spec 2a");
             mailbox.send(spec_msg(&o3)).expect("spec 3");
 
-            // Finalize ANCHOR+1 as speculated (no re-derive), then a SIBLING B at
+            // Finalize ANCHOR+1 as speculated (no re-derive), then a sibling B at
             // ANCHOR+2 finalizes — o2a was nullified. Rollback derives B at +2;
             // the +3 speculation (built on the orphaned o2a) is discarded.
             let (m1, w1) = finalize_msg(o1.clone());
@@ -8474,10 +7590,10 @@ mod tests {
                     last.head_block_hash, hash_b,
                     "head reorged back onto the finalized sibling at +2"
                 );
-                // The `>=` guard let `safe` FOLLOW the same-height sibling reorg
+                // The `>=` guard let `safe` follow the same-height sibling reorg
                 // onto the finalized hash — never stuck on the orphaned o2a.
                 // (FakeBeacon returns Valid unconditionally and does not model
-                // reth's `find_canonical_header`, so this VALUE assert is the
+                // reth's `find_canonical_header`, so this value assert is the
                 // only thing that catches an orphan-safe bug.)
                 assert_eq!(
                     last.safe_block_hash, hash_b,
@@ -8487,9 +7603,9 @@ mod tests {
                     last.safe_block_hash, last.head_block_hash,
                     "no surviving spec lead after the rollback ⇒ safe == head"
                 );
-                // D9 proxy: `safe` is a block reth was told about (imported) at a
-                // height ≤ head before the FCU named it — the precondition reth's
-                // real `find_canonical_header(safe) == Some` relies on.
+                // `safe` is a block reth was told about (imported) at a height
+                // ≤ head before the FCU named it — the precondition reth's real
+                // `find_canonical_header(safe) == Some` relies on.
                 assert!(
                     payloads.iter().any(|p| p.hash() == last.safe_block_hash),
                     "safe was imported (new_payload'd) before the FCU named it"
@@ -8501,15 +7617,12 @@ mod tests {
         });
     }
 
-    // (a) THE DEATH SPIRAL, in miniature: a
-    // notarization for a height AHEAD of `spec_head` (a gap) is PARKED, not
+    // A notarization for a height ahead of `spec_head` (a gap) is parked, not
     // dropped, and resumes speculation once `spec_head` catches up via the
-    // finalized path. Pre-fix the gap notarization was silently dropped, so once
-    // the executor fell behind it lost its speculative lead permanently. Here
-    // 103's notarization arrives while `spec_head == ANCHOR (100)` — a gap
-    // (103 > 101) — and the ONLY spec message for 103 is that parked one; 103's
-    // own finalized derive needs its child 104, which is never delivered. So a
-    // speculatively-executed 103 can ONLY come from the drain firing when the
+    // finalized path. Here 103's notarization arrives while `spec_head ==
+    // ANCHOR (100)` — a gap — and it is the only spec message for 103; 103's own
+    // finalized derive needs its child 104, which is never delivered, so a
+    // speculatively executed 103 can only come from the drain firing when the
     // finalized derive of 102 advances `spec_head` to 102.
     #[test]
     fn parked_gap_notarization_resumes_speculation_on_finalized_advance() {
@@ -8532,7 +7645,7 @@ mod tests {
             let handle = actor.start();
 
             // The notarization for 103 arrives while spec_head is still the anchor
-            // (100): a gap (103 > 101) ⇒ PARKED (pre-fix: dropped forever).
+            // (100): a gap (103 > 101), so it is parked.
             mailbox
                 .send(spec_msg(&o3))
                 .expect("spec 103 (gap → parked)");
@@ -8544,8 +7657,8 @@ mod tests {
                 mailbox.send(m).expect("finalize");
             }
 
-            // 103 becomes executed ONLY via the parked-drain (no 104 ⇒ no finalized
-            // derive of 103, no re-sent live notarization). Pre-fix this times out.
+            // 103 becomes executed only via the parked drain (no 104, so no
+            // finalized derive of 103 and no re-sent live notarization).
             wait_until(&ctx, "parked 103 resumed via drain", || {
                 fx.chain.spec_executed_hash(ANCHOR + 3).is_some()
             })
@@ -8577,9 +7690,9 @@ mod tests {
         });
     }
 
-    // (b) PRUNE: on a `spec_head` advance the drain drops every parked height ≤
-    // `spec_head` (finalized OR already speculated ⇒ stale); a not-yet-drainable
-    // higher entry survives. Direct-call so the pre/post parked map is inspectable.
+    // On a `spec_head` advance the drain drops every parked height ≤ `spec_head`
+    // (finalized or already speculated, so stale); a not-yet-drainable higher
+    // entry survives. Direct-call so the pre/post parked map is inspectable.
     #[test]
     fn drain_prunes_parked_at_or_below_spec_head() {
         let runtime = deterministic::Runner::default();
@@ -8605,7 +7718,7 @@ mod tests {
             );
 
             // Finalization advanced spec_head to 104; drop 105's body so the drain
-            // STOPS at 105 (keeping it) — isolating the prune from the drain.
+            // stops at 105 (keeping it) — isolating the prune from the drain.
             actor.spec_head = ANCHOR + 4;
             fx.marshal.canned.lock().unwrap().remove(&(ANCHOR + 5));
             actor.try_drain_parked(&cause).await.expect("drain");
@@ -8618,9 +7731,9 @@ mod tests {
         });
     }
 
-    // (c) OVERWRITE-BY-HEIGHT: a later sibling notarization at the same parked
-    // height replaces the earlier guess (a wrong guess is safe —
-    // `correctly_speculated` reconciles it at finalization).
+    // A later sibling notarization at the same parked height replaces the earlier
+    // guess (a wrong guess is safe — `correctly_speculated` reconciles it at
+    // finalization).
     #[test]
     fn later_sibling_overwrites_parked_entry() {
         let runtime = deterministic::Runner::default();
@@ -8631,8 +7744,8 @@ mod tests {
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR); // spec_head = 100
             let cause = Span::current();
 
-            // Two siblings at the SAME height, distinct proposal_view + extra_data
-            // ⇒ distinct digests. FakeMarshal keys `canned` by height, so swap the
+            // Two siblings at the same height, distinct proposal_view + extra_data,
+            // so distinct digests. FakeMarshal keys `canned` by height, so swap the
             // buffered body between calls to make each fetchable by its own digest.
             let earlier = OrderBlock {
                 proposal_view: GAP,
@@ -8674,7 +7787,7 @@ mod tests {
         });
     }
 
-    // (d) The drain KEEPS a parked entry (and stops) when its block body is not
+    // The drain keeps a parked entry (and stops) when its block body is not
     // buffered yet — the body may arrive later; a later advance retries.
     #[test]
     fn drain_keeps_parked_entry_when_body_not_buffered() {
@@ -8717,12 +7830,11 @@ mod tests {
         });
     }
 
-    // ACCEPTED RESIDUAL + SELF-HEAL: a live notarization for exactly spec_head+1
-    // whose BODY is not yet buffered is dropped WITHOUT parking (the body fetch
-    // precedes the height gate — the height is unknowable without the body, so
-    // it structurally cannot be parked). Bounded and self-healing: a later
-    // higher notarization PARKS, and the next finalized advance re-drains
-    // speculation past the lost height. This pins the self-heal.
+    // A live notarization for exactly spec_head+1 whose body is not yet buffered
+    // is dropped without parking: the body fetch precedes the height gate, and
+    // the height is unknowable without the body. The loss is self-healing — a
+    // later higher notarization parks, and the next finalized advance re-drains
+    // speculation past the lost height.
     #[test]
     fn bodyless_live_notarization_drop_self_heals_via_later_park() {
         let runtime = deterministic::Runner::default();
@@ -8733,7 +7845,7 @@ mod tests {
             // committed result must match what the deriver produces at 100.
             let chain = result_consistent_chain(ANCHOR, fx.anchor_hash, 3);
             let (o1, o2, o3) = (chain[0].clone(), chain[1].clone(), chain[2].clone());
-            // 101's body is deliberately NOT buffered (its live notarization is
+            // 101's body is deliberately not buffered (its live notarization is
             // the residual drop); 103's is (it parks).
             {
                 let mut canned = fx.marshal.canned.lock().unwrap();
@@ -8745,7 +7857,7 @@ mod tests {
             let handle = actor.start();
 
             // The residual: 101 == spec_head+1 but its body is missing → dropped,
-            // NOT parked (height unknowable). 103 is a gap → parked.
+            // not parked (height unknowable). 103 is a gap → parked.
             mailbox
                 .send(spec_msg(&o1))
                 .expect("spec 101 (bodyless → dropped)");
@@ -8765,7 +7877,7 @@ mod tests {
             })
             .await;
 
-            // 101 was derived by the finalized path ONLY (its live spec was the
+            // 101 was derived by the finalized path only (its live spec was the
             // residual drop); 103 exactly once, via the drained park.
             let heights: Vec<u64> = fx
                 .beacon
@@ -8792,9 +7904,9 @@ mod tests {
         });
     }
 
-    // The parent-not-executed PARK gate: a notarization at exactly spec_head+1
-    // whose PARENT has not executed is parked (pre-fix: dropped), and the drain
-    // executes it once the parent lands (a spec_head advance retries it).
+    // The parent-not-executed park gate: a notarization at exactly spec_head+1
+    // whose parent has not executed is parked, and the drain executes it once
+    // the parent lands (a spec_head advance retries it).
     #[test]
     fn parent_missing_notarization_parks_then_drains_when_parent_lands() {
         let runtime = deterministic::Runner::default();
@@ -8804,7 +7916,7 @@ mod tests {
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let cause = Span::current();
 
-            // spec_head at 101 while 101 is NOT executed (only the anchor 100 is)
+            // spec_head at 101 while 101 is not executed (only the anchor 100 is)
             // — the fall-behind shape where the next notarization's parent is
             // still missing.
             actor.spec_head = ANCHOR + 1;
@@ -8851,16 +7963,10 @@ mod tests {
         });
     }
 
-    // (a) THE SIBLING-ROLLBACK CRASH, in miniature: a
-    // speculative lead h..h+2 where h finalizes as a SIBLING (seed-round
-    // mismatch) → rollback + re-derive; THEN h+1 finalizes with the SAME ordering
-    // digest that was speculated. Pre-fix the orphaned-parent speculated h+1
-    // survived the rollback (`split_off` RETAINED the suffix) and
-    // `correctly_speculated` — checking only seed-round + executed-hash-present —
-    // REUSED it: head stayed at h while finalization advanced (the K-lag
-    // underflow), and h+1 sat on the wrong (View-h-a) pre-state → next re-derive
-    // fatal. With suffix-invalidation + parent-linkage, h+1 RE-DERIVES on the
-    // finalized parent and head advances onto it.
+    // A speculative lead h..h+2 where h finalizes as a sibling (seed-round
+    // mismatch) rolls back and re-derives; h+1 then finalizes with the same
+    // ordering digest that was speculated and must re-derive on the finalized
+    // parent instead of reusing the orphaned speculation.
     #[test]
     fn rolled_back_sibling_child_is_rederived_not_reused() {
         use commonware_consensus::types::{Epoch, Round, View};
@@ -8870,11 +7976,10 @@ mod tests {
             let fx = Fixture::new(ANCHOR).with_epocher(beacon_active_epocher());
             let anchor = fx.anchor_hash;
 
-            // 101 is speculated with a round the AGREED map does not name (a
-            // divergent local cert state at the block's own view, which §4.1
-            // keeps verbatim) ⇒ the finalized derive re-keys it and rolls back.
-            // 102/103 speculate with their own agreed rounds, so ONLY 101 rolls
-            // back.
+            // 101 is speculated with a round the agreed map does not name (a
+            // divergent local cert state at the block's own view, kept verbatim),
+            // so the finalized derive re-keys it and rolls back. 102/103
+            // speculate with their own agreed rounds, so only 101 rolls back.
             let spec_seed_101 = real_seed(Round::new(Epoch::new(0), View::new(101)));
             let agreed_101 = real_seed(active_round(101));
             let seed_102 = real_seed(active_round(102));
@@ -8915,8 +8020,8 @@ mod tests {
                 seed_folded_discriminator(o1.digest(), &Some(agreed_101.clone())),
             )
             .hash();
-            // Fork-A 102 was speculated on the ORPHANED 101 (hash_spec_101); the
-            // finalized re-derive lands it on the NEW canonical 101 (hash_fin_101).
+            // Fork-A 102 was speculated on the orphaned 101 (hash_spec_101); the
+            // finalized re-derive lands it on the new canonical 101 (hash_fin_101).
             let hash_spec_102 = sealed_at(
                 hash_spec_101,
                 102,
@@ -8954,15 +8059,14 @@ mod tests {
             mailbox
                 .send(spec(o3.digest(), Some(seed_103.clone())))
                 .unwrap();
-            // The load-bearing precondition: fork-A 102 is speculated on the
-            // orphaned 101 (the block pre-fix reused it as final).
+            // Precondition: fork-A 102 is speculated on the orphaned 101.
             wait_until(&ctx, "fork-A 102 speculated", || {
                 fx.chain.spec_executed_hash(102) == Some(hash_spec_102)
             })
             .await;
 
             // Each height derives at its own delivery: 101 (round mismatch →
-            // rollback + re-derive), then 102 (must RE-DERIVE, not reuse fork-A),
+            // rollback + re-derive), then 102 (must re-derive, not reuse fork-A),
             // then 103.
             for order in [o1.clone(), o2.clone(), o3.clone()] {
                 let (m, _w) = finalize_msg(order);
@@ -8983,10 +8087,9 @@ mod tests {
                 Some(hash_fin_102),
                 "102 re-derived on the finalized 101 (fork-A speculation NOT reused)"
             );
-            // 103 derives on top of the re-derived 102, so the FINAL head is
-            // 103's hash — but it must DESCEND from hash_fin_102, and the head
-            // must have visited hash_fin_102 on the way (pre-fix it stayed stuck
-            // at 101 and never reached either).
+            // 103 derives on top of the re-derived 102, so the final head is
+            // 103's hash — but it must descend from hash_fin_102, and the head
+            // must have visited hash_fin_102 on the way.
             assert!(
                 fx.beacon
                     .fcu_calls
@@ -9029,13 +8132,12 @@ mod tests {
         });
     }
 
-    // (b) PARENT-LINKAGE, isolated: a speculated block whose recorded parent no
-    // longer matches the block canonical at `height − 1` is REJECTED by
-    // `correctly_speculated` and re-derived — even though the seed ROUND and the
-    // ordering DIGEST both match. Here the seed VALUE is identical on
-    // both paths, so the only difference between the reuse hash and the re-derive
-    // hash is the PARENT — proof the parent-linkage clause (not the round clause)
-    // forced the re-derive.
+    // Parent-linkage, isolated: a speculated block whose recorded parent does
+    // not match the block canonical at `height − 1` is rejected by
+    // `correctly_speculated` and re-derived even though the seed round and the
+    // ordering digest both match. The seed value is identical on both paths, so
+    // the parent is the only difference between the reuse hash and the re-derive
+    // hash.
     #[test]
     fn stale_parent_speculation_is_rejected_despite_matching_round() {
         let runtime = deterministic::Runner::default();
@@ -9045,7 +8147,7 @@ mod tests {
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let cause = Span::current();
 
-            // 101 speculated with the SAME σ the finalized derive resolves for
+            // 101 speculated with the same σ the finalized derive resolves for
             // its own round ⇒ the round clause passes on both paths.
             let seed = real_seed(active_round(101));
             record_fixture_seed(101);
@@ -9060,7 +8162,7 @@ mod tests {
                 .unwrap();
             let hash_spec = fx.chain.spec_executed_hash(101).unwrap();
 
-            // A parent reorg with NO rollback event of its own: the block canonical
+            // A parent reorg with no rollback event of its own: the block canonical
             // at 100 changes out from under the recorded speculation (stored parent
             // == `anchor`).
             let stale_parent = B256::repeat_byte(0xEE);
@@ -9097,11 +8199,10 @@ mod tests {
         });
     }
 
-    // EAGER FINALIZED DERIVE (record-lag closer): a
-    // delivered finalized `h` whose OWN agreed round `Round(0, proposal_view)` is
-    // in the seed index is derived + finalized-recorded AT DELIVERY, before its
-    // child `h+1` exists — closing the recorded_tip = delivered_tip − 1 lag that
-    // livelocked the finalized-tier result gate (nullify storm / stall).
+    // A delivered finalized `h` whose own agreed round `Round(0, proposal_view)`
+    // is in the seed index is derived and finalized-recorded at delivery, before
+    // its child `h+1` exists — closing the recorded_tip = delivered_tip − 1 lag
+    // that stalled the finalized-tier result gate.
     #[test]
     fn eager_finalized_derive_records_before_child_arrives() {
         let runtime = deterministic::Runner::default();
@@ -9139,12 +8240,12 @@ mod tests {
         });
     }
 
-    // The fixture's DEFAULT σ source is a LIVE store, not a negative provider:
+    // The fixture's default σ source is a live store, not a negative provider:
     // a witnessed link files σ under the parent's own round, so `h` derives from
-    // the store at its OWN delivery with no `with_seed_store` and no child. This
-    // is the source the derive re-keys onto, and a default that silently went
-    // back to answering `None` would leave every such link deriving from the
-    // child body instead — invisible here, a hang once the child stops carrying it.
+    // the store at its own delivery with no `with_seed_store` and no child. A
+    // default that silently answered `None` would leave such a link deriving from
+    // the child body instead — invisible here, a hang once the child stops
+    // carrying it.
     #[test]
     fn the_default_fixture_serves_a_recorded_round_from_its_own_store() {
         let runtime = deterministic::Runner::default();
@@ -9182,16 +8283,16 @@ mod tests {
         });
     }
 
-    // MISS: with the round ABSENT from the store — and the epoch beacon-ACTIVE,
-    // so `None` is not the agreed answer — the delivered block stays HELD. The
-    // only exit is σ arriving; there is no fallback and no deadline.
+    // With the round absent from the store — and the epoch beacon-active, so
+    // `None` is not the agreed answer — the delivered block stays held. The only
+    // exit is σ arriving; there is no fallback and no deadline.
     #[test]
     fn a_store_miss_on_a_beacon_active_round_holds_the_block() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             let h = ANCHOR + 1;
-            // Store present but EMPTY — the opt-out from the fixture default, and
+            // Store present but empty — the opt-out from the fixture default, and
             // the only difference from the hit test is the missing round entry
             // (isolates the miss branch).
             let store = crate::beacon::testing::SeedStore::new();
@@ -9224,10 +8325,9 @@ mod tests {
         });
     }
 
-    // EAGER + REORG: `h` speculated as sibling A, then finalized-DELIVERED as a
-    // DIFFERENT sibling B while the round is in the store — the eager derive takes
-    // the re-derive path (the v21-shape assertion at the eager site), records B,
-    // and NEVER leaves the speculated A behind.
+    // `h` speculated as sibling A, then delivered finalized as a different
+    // sibling B while the round is in the store — the eager derive takes the
+    // re-derive path, records B, and never leaves the speculated A behind.
     #[test]
     fn eager_derive_reorgs_a_speculated_sibling() {
         let runtime = deterministic::Runner::default();
@@ -9289,9 +8389,9 @@ mod tests {
         });
     }
 
-    // CHILD-DELIVERY-AFTER-EAGER: once `h` is eager-consumed, delivering its child
-    // `h+1` must NOT re-derive `h` (the hold is gone) — `h+1` simply becomes the
-    // new held tip (its own round is not in the store ⇒ a miss ⇒ hold).
+    // Once `h` is eager-consumed, delivering its child `h+1` must not re-derive
+    // `h` (the hold is gone) — `h+1` simply becomes the new held tip (its own
+    // round is not in the store ⇒ a miss ⇒ hold).
     #[test]
     fn child_delivery_after_eager_does_not_double_derive() {
         let runtime = deterministic::Runner::default();
@@ -9330,7 +8430,7 @@ mod tests {
             let hash_h = fx.chain.spec_executed_hash(h).unwrap();
 
             // Child h+1 delivered: held is empty (h consumed) ⇒ h+1 held; its own
-            // round `Round(0, h+1)` is NOT in the store ⇒ a miss ⇒ hold.
+            // round `Round(0, h+1)` is not in the store ⇒ a miss ⇒ hold.
             let (ack_c, _wc) = Exact::handle();
             actor
                 .on_finalized_block(cause.clone(), child.clone(), ack_c)
@@ -9364,20 +8464,19 @@ mod tests {
         });
     }
 
-    // EPOCH-BOUNDARY eager derive (the divergence-critical epoch identity): `h` is
-    // the LAST block of epoch e, so its child crosses into e+1 and `witness_link`'s
-    // boundary adjustment (`ec − 1`) pins the wire field's round epoch to e — which is
-    // exactly `epocher.containing(h).epoch()`. With the store populated under
-    // `Round(e, view)` the eager derive HITS with the correctly computed epoch-e
-    // round and records `h` before the child exists.
+    // `h` is the last block of epoch e, so its child crosses into e+1 and
+    // `witness_link`'s boundary adjustment (`ec − 1`) pins the wire field's round
+    // epoch to e — exactly `epocher.containing(h).epoch()`. With the store
+    // populated under `Round(e, view)` the eager derive hits with the correctly
+    // computed epoch-e round and records `h` before the child exists.
     #[test]
     fn eager_derive_hits_at_the_epoch_boundary_with_the_parent_epoch_round() {
         use commonware_consensus::types::{Epocher as _, Round, View};
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
-            // origin 0, length 8: epoch 2 = heights 16..=23; h = 23 is its LAST
+            // origin 0, length 8: epoch 2 = heights 16..=23; h = 23 is its last
             // block (the child at 24 is the first block of epoch 3). Epoch 2 is
-            // `DETERMINISTIC_BOOTSTRAP_EPOCH`, the first beacon-ACTIVE one — a
+            // `DETERMINISTIC_BOOTSTRAP_EPOCH`, the first beacon-active one — a
             // boundary below it would derive `None` and never consult the store.
             let epocher = crate::epocher::OriginEpocher::new(
                 0,
@@ -9429,8 +8528,8 @@ mod tests {
         });
     }
 
-    // Negative twin: the SAME boundary height with the store populated ONLY under
-    // the NEXT epoch's round `Round(e+1, view)` must MISS — the eager round is a
+    // Negative twin: the same boundary height with the store populated only under
+    // the next epoch's round `Round(e+1, view)` must miss — the eager round is a
     // pure function of h's own epoch, so a neighbouring epoch's entry (same view)
     // can never false-hit and yield a cross-epoch seed.
     #[test]
@@ -9445,7 +8544,7 @@ mod tests {
             const ANCHOR: u64 = 22;
             const H: u64 = 23; // last block of epoch 2, the bootstrap epoch
             let store = crate::beacon::testing::SeedStore::new();
-            // SAME view, WRONG epoch (e+1 = 3): the only entry in the store.
+            // Same view, wrong epoch (e+1 = 3): the only entry in the store.
             let wrong = real_seed(Round::new(Epoch::new(3), View::new(H)));
             store.record(real_witness(wrong.target_round));
             let fx = Fixture::new(ANCHOR)
@@ -9472,26 +8571,19 @@ mod tests {
         });
     }
 
-    // SEED-NOTIFY RE-ATTEMPT (the deadlock-breaker; migrated from the deleted
-    // `SpecNotarized` Poke — the race in miniature):
-    // `h` is finalized-delivered BEFORE its seed is recorded → the on-delivery
-    // eager derive MISSES → `h` is HELD. Then the notarization for `h`'s round
-    // lands: the Reporter records the seed into the shared seed index (which
-    // publishes `BeaconEvent::SeedRecorded` on the beacon's broadcast — not a
-    // `Notify`), and the executor's seed-notify `select!` arm re-runs the
-    // eager derive. `h` is derived + finalized-recorded WITHOUT any further
-    // finalized delivery — the exact event that a stalled chain cannot produce.
-    // Drives the arm's BODY (`try_eager_finalized_derive(Notified)`) directly —
-    // the arm's WAKEUP (no lost notification) is covered by the seed index's own
-    // `seed_index_record_notifies_without_a_lost_wakeup`
-    // (`beacon/seed_index.rs:634`).
+    // `h` is finalized-delivered before its seed is recorded, so the on-delivery
+    // eager derive misses and `h` is held. The notarization for `h`'s round then
+    // records the seed into the shared index, and the executor's seed-notify
+    // `select!` arm re-runs the eager derive: `h` is derived and
+    // finalized-recorded with no further finalized delivery. This drives the
+    // arm's body directly, not its wakeup.
     #[test]
     fn seed_notify_recovers_a_held_tip_after_a_late_seed_record() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             let h = ANCHOR + 1;
-            // Store starts EMPTY: the delivery-time eager derive must miss.
+            // Store starts empty: the delivery-time eager derive must miss.
             let store = crate::beacon::testing::SeedStore::new();
             let fx = Fixture::new(ANCHOR)
                 .with_seed_store(store.clone())
@@ -9505,7 +8597,7 @@ mod tests {
             };
             fx.marshal.canned.lock().unwrap().insert(h, o1.clone());
 
-            // Deliver h with the seed NOT yet recorded → eager MISS → HELD.
+            // Deliver h with the seed not yet recorded → eager miss → held.
             let (ack, _w) = Exact::handle();
             actor
                 .on_finalized_block(cause.clone(), o1.clone(), ack)
@@ -9544,18 +8636,17 @@ mod tests {
         });
     }
 
-    // SEED-NOTIFY NO-OP (b): a notify re-attempt must NOT spuriously derive when
-    // either (i) nothing is held (the arm's `awaiting_seed.is_some()` guard is
-    // false), or (ii) a tip is held but the store STILL misses its round (the
-    // seed has not landed yet — a later notify will derive
-    // it). Neither path may advance the EL or touch the hold.
+    // A notify re-attempt must not spuriously derive when nothing is held (the
+    // arm's `awaiting_seed.is_some()` guard is false), or when a tip is held but
+    // the store still misses its round (the seed has not landed yet, so a later
+    // notify will derive it). Neither path may advance the EL or touch the hold.
     #[test]
     fn seed_notify_is_a_noop_without_hold_or_seed() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
             let h = ANCHOR + 1;
-            // EMPTY store: the opt-out from the fixture default, so both arms
+            // Empty store: the opt-out from the fixture default, so both arms
             // below are reached with nothing recorded for h's round.
             let store = crate::beacon::testing::SeedStore::new();
             let fx = Fixture::new(ANCHOR)
@@ -9564,8 +8655,8 @@ mod tests {
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let cause = Span::current();
 
-            // (i) No hold: the arm's guard (`awaiting_seed.is_some()`) is false,
-            // so the body is a no-op even if driven directly (the take() early
+            // No hold: the arm's guard (`awaiting_seed.is_some()`) is false, so
+            // the body is a no-op even if driven directly (the take() early
             // returns).
             assert!(actor.awaiting_seed.is_none(), "premise: nothing held");
             actor
@@ -9581,7 +8672,7 @@ mod tests {
                 "no-hold notify created no hold"
             );
 
-            // (ii) Held tip but the store still misses its round → held-and-quiet.
+            // Held tip but the store still misses its round → held-and-quiet.
             let o1 = OrderBlock {
                 proposal_view: h,
                 ..sample_order(Digest(B256::ZERO), h, B256::ZERO)
@@ -9609,10 +8700,10 @@ mod tests {
         });
     }
 
-    // (c) RE-HEAL SYNERGY: a rollback INVALIDATES the `spec_executed` suffix but
-    // KEEPS the parked notarizations above the reorg point, and the post-rollback
-    // drain re-executes them against the NEW canonical parent. Fork-A 102 is a
-    // live speculation (the invalidated suffix); fork-B 102 is a parked gap
+    // A rollback invalidates the `spec_executed` suffix but keeps the parked
+    // notarizations above the reorg point, and the post-rollback drain
+    // re-executes them against the new canonical parent. Fork-A 102 is a live
+    // speculation (the invalidated suffix); fork-B 102 is a parked gap
     // notarization. After 101 finalizes as fork-B's sibling, the drain speculates
     // fork-B 102 on the re-derived 101 — not the orphaned fork-A 101.
     #[test]
@@ -9639,7 +8730,7 @@ mod tests {
                 c.insert(102, o2b.clone()); // fetched-by-digest for the parked drain
             }
 
-            // PARK fork-B 102 as a gap (102 > spec_head+1 while spec_head == 100).
+            // Park fork-B 102 as a gap (102 > spec_head+1 while spec_head == 100).
             actor
                 .spec_execute(cause.clone(), o2b.digest(), None)
                 .await
@@ -9665,7 +8756,7 @@ mod tests {
             let hash_o2a = fx.chain.spec_executed_hash(102).unwrap();
 
             // Finalize 101 as fork-B's sibling (digest mismatch → rollback). This
-            // invalidates the `spec_executed` suffix {102=o2a}, KEEPS parked{102=
+            // invalidates the `spec_executed` suffix {102=o2a}, keeps parked{102=
             // o2b}, and its internal drain re-executes o2b on the re-derived 101.
             let hash_o1b = sealed_at(anchor, 101, o1b.digest().0).hash();
             let (ack, _w) = Exact::handle();
@@ -9701,11 +8792,11 @@ mod tests {
         });
     }
 
-    // A speculative head advance NEVER moves `safe`/`finalized`: `spec_execute`
+    // A speculative head advance never moves `safe`/`finalized`: `spec_execute`
     // calls `update_head` only. After finalizing anchor+1 (which sets safe =
     // h(anchor+1)), speculating +2 and +3 climbs head to h(anchor+3) while safe
     // stays at h(anchor+1) and finalized stays at the anchor — the load-bearing
-    // `head > safe` speculative lead (the whole point of the split).
+    // `head > safe` speculative lead.
     #[test]
     fn safe_unchanged_across_speculative_head_advance() {
         let runtime = deterministic::Runner::default();
@@ -9716,7 +8807,7 @@ mod tests {
             let handle = actor.start();
 
             // Finalize anchor+1 (sets safe = head = h(anchor+1); finalized
-            // clamped at the anchor in the pre-K window). +2 is NOT finalized —
+            // clamped at the anchor in the pre-K window). +2 is not finalized —
             // it is the speculative lead this test is about.
             let o1 = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
             let o2 = sample_order(o1.digest(), ANCHOR + 2, B256::ZERO);
@@ -9768,11 +8859,6 @@ mod tests {
         });
     }
 
-    // (The former `invalid_fcu_status_is_fatal` — import VALID, FCU INVALID —
-    // is now byte-identical in behavior to
-    // `invalid_finalize_fcu_engages_safety_halt_and_parks` above, which also
-    // asserts the gauges; the duplicate was removed with the ack-retention park.)
-
     // A SYNCING status (both import and FCU) is the tolerated cold-start /
     // rejoin window — the block still derives and acks.
     #[test]
@@ -9802,10 +8888,10 @@ mod tests {
         });
     }
 
-    // Speculative path: the seed recovered from the NOTARIZATION cert (the
+    // Speculative path: the seed recovered from the notarization cert (the
     // `SpecNotarized` command) reaches the deriver during speculative
-    // execution, and the same-round reconcile keeps the speculation
-    // (the deriver runs exactly once).
+    // execution, and the same-round reconcile keeps the speculation (the
+    // deriver runs exactly once).
     #[test]
     fn notarization_seed_reaches_deriver_on_speculation() {
         let runtime = deterministic::Runner::default();
@@ -9818,7 +8904,7 @@ mod tests {
             let handle = actor.start();
 
             // `proposal_view` matches the notarization round (the honest steady
-            // state), so the §4.1 re-canonicalisation is a no-op.
+            // state), so the re-canonicalisation is a no-op.
             let order = OrderBlock {
                 proposal_view: ANCHOR + 1,
                 ..sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO)
@@ -9833,7 +8919,7 @@ mod tests {
             mailbox
                 .send(spec_msg_seeded(&order, seed.clone()))
                 .expect("send spec");
-            // Finalize the same order: the store answers the SAME round, so the
+            // Finalize the same order: the store answers the same round, so the
             // reconcile keeps the speculation (no re-derive).
             let (m, w) = finalize_msg(order.clone());
             mailbox.send(m).expect("send finalize");
@@ -9853,8 +8939,6 @@ mod tests {
         });
     }
 
-    // steady-state re-jump
-
     use crate::cold_start_jump::JUMP_THRESHOLD;
 
     /// An `Update::Tip` command at `height` (the marshal-frontier event the
@@ -9871,10 +8955,10 @@ mod tests {
         }
     }
 
-    /// The catch-up ACK BARRIER: deliver `order` and await its ack. The re-jump
-    /// tests park the frontier far
-    /// ahead, so guard #2 is armed (`tip >= h + K`) — can a result-consistent
-    /// attested block at `h + K` so the guard converges instead of parking.
+    /// The catch-up ack barrier: deliver `order` and await its ack. The re-jump
+    /// tests park the frontier far ahead, so guard #2 is armed (`tip >= h + K`);
+    /// a canned result-consistent attested block at `h + K` lets the guard
+    /// converge instead of parking.
     async fn finalize_and_ack_behind(fx: &Fixture, mailbox: &Mailbox, order: OrderBlock) {
         let parent = fx
             .chain
@@ -9932,17 +9016,15 @@ mod tests {
         }
     }
 
-    /// A re-jump callback recording each `from` it was invoked with and returning
-    /// the scripted [`crate::cold_start_jump::JumpOutcome`].
+    /// The `from` heights recorded by a recording re-jump callback.
     type RejumpCalls = Arc<Mutex<Vec<u64>>>;
     fn recording_re_jump(scripted: Scripted) -> (ReJump, RejumpCalls) {
         let (cb, calls, _targets) = recording_re_jump_with_targets(scripted);
         (cb, calls)
     }
 
-    /// As [`recording_re_jump`] but also returns the TARGET heights the executor
-    /// handed in — the `(finalization, block)` pair it read out of its own marshal
-    /// archive at the tip it triggered on (§5.2).
+    /// As [`recording_re_jump`], also recording the target height the executor read
+    /// from its marshal archive at the tip it triggered on.
     fn recording_re_jump_with_targets(
         scripted: Scripted,
     ) -> (ReJump, RejumpCalls, Arc<Mutex<Vec<u64>>>) {
@@ -9969,12 +9051,9 @@ mod tests {
         )
     }
 
-    /// As [`recording_re_jump`] but wires a RECORDING `rotate` escape (the
-    /// recording-rotate idiom from `cert_inlet::tests`), returning the rotation-count
-    /// atomic so a test can assert Rule-L failover fired the expected number of times.
-    /// `scripts` is a SATURATING sequence — call N returns `scripts[min(N, len−1)]` —
-    /// so a single-element vec is the single-outcome case and a longer vec scripts a
-    /// per-call outcome sequence.
+    /// As [`recording_re_jump`], with a `rotate` escape that counts its invocations.
+    /// `scripts` is saturating: call N returns `scripts[min(N, len−1)]`, so one element
+    /// is a single outcome and a longer vec scripts a per-call sequence.
     fn recording_re_jump_with_rotate(
         scripts: Vec<Scripted>,
     ) -> (ReJump, RejumpCalls, Arc<std::sync::atomic::AtomicU32>) {
@@ -10014,13 +9093,8 @@ mod tests {
         )
     }
 
-    // (a) The re-jump FIRES when `Update::Tip.height − ordering_finalized >
-    // JUMP_THRESHOLD`: the executor SPAWNS the read-only waiter, and its
-    // `oneshot` completion arm re-seeds the anchor (finalized cursor moves to the
-    // landing) + advances the running marshal floor via `set_floor(floor)`. The
-    // OFF-BY-K assertion (`ordering_finalized == landing`, not `floor`) is pinned
-    // directly in `reseed_forward_off_by_k_raises_cursor_to_landing` (the cursor
-    // is private); here we assert the observable reseed + floor advance.
+    // A gap past JUMP_THRESHOLD spawns the read-only waiter, and its completion arm
+    // re-seeds the anchor to the landing and advances the marshal floor to `landing − K`.
     #[test]
     fn re_jump_fires_and_reseeds_anchor_and_marshal_floor() {
         let runtime = deterministic::Runner::default();
@@ -10038,18 +9112,14 @@ mod tests {
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // Frontier far beyond the serving window ⇒ trigger (spawns the waiter).
             mailbox
                 .send(tip_msg(ANCHOR + JUMP_THRESHOLD + 5_010))
                 .expect("send tip");
-            // Yield so the deterministic runtime drives the spawned waiter to
-            // completion + its `jump_done` arm re-seeds before the barrier below.
+            // Let the spawned waiter's completion arm re-seed before the barrier below.
             ctx.sleep(Duration::from_millis(10)).await;
 
-            // Barrier: a real finalize at landing+1 — its parent (the re-seeded
-            // landing) must be canonical for the parent read to succeed. It acks
-            // only AFTER the spawned waiter's completion arm has re-seeded (the
-            // marshal floor recorder confirms the reseed ran).
+            // Barrier finalize at landing + 1: its parent must be canonical, so it
+            // only acks after the completion arm re-seeded the landing.
             fx.chain
                 .canonical
                 .lock()
@@ -10078,15 +9148,9 @@ mod tests {
         });
     }
 
-    // STALE FINALIZATION BACKLOG PRUNE: deliveries
-    // queued while the drain arm is gated off by an IN-FLIGHT jump are stale
-    // below-landing blocks; reseed_forward must prune them (ack Ok — canonical
-    // post-backfill, never Canceled) so the reopened drain does not re-populate
-    // `awaiting_seed` with a jumped-over height — pre-fix, the first genuine
-    // post-floor dispatch walked back into the jump-pruned range and hit the
-    // missing-artifact fatal (a jump-MANUFACTURED skip-gap misclassified as
-    // archive corruption). Post-fix: backlog pruned+acked, the next post-floor
-    // dispatch derives and acks cleanly, executor stays up.
+    // A jump that is in flight gates the drain arm, so `Update::Block` deliveries
+    // queue as stale below-landing entries; `reseed_forward` must prune and ack them
+    // Ok (canonical post-backfill, never Canceled) before reopening the drain.
     #[test]
     fn reseed_prunes_stale_queued_finalizations_no_missing_artifact_fatal() {
         let runtime = deterministic::Runner::default();
@@ -10095,8 +9159,7 @@ mod tests {
             let landing_h = ANCHOR + JUMP_THRESHOLD + 5_000;
             let landing_hash = B256::repeat_byte(0xE1);
             let floor = landing_h - K;
-            // A jump that stays IN FLIGHT until the test releases it — the
-            // window in which stale deliveries accumulate.
+            // A jump held in flight so stale deliveries accumulate while the drain is gated.
             let gate = Arc::new(tokio::sync::Notify::new());
             let gate_cl = gate.clone();
             let call: ReJumpFn = Arc::new(move |_from, _target| {
@@ -10121,12 +9184,9 @@ mod tests {
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // Spawn the jump (blocked on the gate).
             mailbox.send(tip_msg(landing_h + 10)).expect("send tip");
             ctx.sleep(Duration::from_millis(5)).await;
 
-            // Two stale below-landing deliveries queue while the drain arm is
-            // gated off (jump in flight).
             let o1 = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
             let o2 = sample_order(o1.digest(), ANCHOR + 2, B256::ZERO);
             let (m1, w1) = finalize_msg(o1);
@@ -10135,7 +9195,6 @@ mod tests {
             mailbox.send(m2).expect("queue stale 2");
             ctx.sleep(Duration::from_millis(5)).await;
 
-            // Release the jump → reseed_forward prunes the stale backlog.
             gate.notify_one();
             w1.await
                 .expect("stale delivery 1 acked Ok by the prune (not Canceled)");
@@ -10147,10 +9206,6 @@ mod tests {
                 "reseed completed (floor advanced)"
             );
 
-            // The drain reopened CLEAN: the next post-floor dispatch derives +
-            // acks. Pre-fix the stale 101/102 drained first and THIS arrival's
-            // gap-walk fetch of the (jump-pruned) prefix returned None — the
-            // missing-artifact fatal.
             fx.chain
                 .canonical
                 .lock()
@@ -10168,9 +9223,8 @@ mod tests {
         });
     }
 
-    // The stale-backlog prune keys on the LANDING: a queued entry ABOVE it (not
-    // covered by the jump's backfill) survives with its ack untouched; entries
-    // at/below are pruned + acked Ok. Direct-call so the queue is inspectable.
+    // The prune keys on the landing: a queued entry above it survives with its ack
+    // untouched, while entries at or below it are pruned and acked Ok.
     #[test]
     fn reseed_keeps_queued_finalizations_above_landing() {
         let runtime = deterministic::Runner::default();
@@ -10211,17 +9265,10 @@ mod tests {
         });
     }
 
-    // STALE-DISPATCH GUARD (`marshal_floor`): `reseed_forward`'s disposals
-    // `acknowledge()` acks BEFORE `set_floor`; in the real marshal each freed slot
-    // lets the biased select dispatch the next OLD-range block into the executor
-    // mailbox before it processes `SetFloor` (fire-and-forget). Such escaped
-    // `≤ floor` deliveries drain via `handle_message`'s `Update::Block` arm; without
-    // the guard the deep-gap case derives them and PARKS on a pruned `h + K`
-    // (guard #2 `NeedAttestation`, permanent) — here modelled by `FakeMarshal`
-    // dispatching a below-floor block at `set_floor`. Post-fix the arm acks it Ok
-    // (never derives, never parks) and counts it. Revert-check: with the guard
-    // removed the escaped block imports (`new_payload` at `≤ floor`) and hints its
-    // pruned `h + K`.
+    // `reseed_forward` acks its disposals before `set_floor`, and `set_floor` is
+    // fire-and-forget: the marshal can dispatch freed old-range blocks into the
+    // executor mailbox before it processes the floor, so `Update::Block` must ack a
+    // below-floor block without deriving instead of parking on a pruned `h + K`.
     #[test]
     fn stale_dispatch_below_floor_acked_without_derive() {
         use metrics_util::debugging::{DebugValue, DebuggingRecorder};
@@ -10234,8 +9281,7 @@ mod tests {
                 let landing_h = ANCHOR + JUMP_THRESHOLD + 5_000;
                 let landing_hash = B256::repeat_byte(0xE1);
                 let floor = landing_h - K;
-                // A jump gated until the test releases it (mirrors the stale-prune
-                // test) so the escape is deterministic.
+                // Gate the jump so the escape below is deterministic.
                 let gate = Arc::new(tokio::sync::Notify::new());
                 let gate_cl = gate.clone();
                 let call: ReJumpFn = Arc::new(move |_from, _target| {
@@ -10258,9 +9304,6 @@ mod tests {
                 };
                 let fx = Fixture::new(ANCHOR).with_re_jump(cb);
                 let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
-                // OLD-range blocks the marshal's biased select escapes into the
-                // mailbox when `reseed_forward` calls `set_floor` — both far below
-                // the floor, so a derive would park on a pruned `h + K`.
                 fx.marshal.arm_stale_escape(
                     mailbox.clone(),
                     vec![
@@ -10278,7 +9321,6 @@ mod tests {
                     !fx.marshal.floors.lock().unwrap().is_empty()
                 })
                 .await;
-                // Drain the escaped below-floor deliveries through the guard.
                 ctx.sleep(Duration::from_millis(20)).await;
 
                 assert!(
@@ -10303,8 +9345,7 @@ mod tests {
                     "the executor stays up (no missing-artifact fatal)"
                 );
 
-                // The escape model holds a Mailbox CLONE — release it so the
-                // executor's channel closes and the run loop exits.
+                // The escape model holds a mailbox clone; release it so the channel closes.
                 *fx.marshal.dispatch.lock().unwrap() = None;
                 drop(mailbox);
                 let _ = handle.await;
@@ -10326,37 +9367,9 @@ mod tests {
         );
     }
 
-    // (4.2 Б1.1) THE TRIGGER IS THE MARSHAL TIP AND NOTHING ELSE — however loud
-    // an unauthenticated source is about how far ahead the chain has run.
-    //
-    // WHAT THIS TEST USED TO SAY. It was
-    // `re_jump_fires_off_upstream_frontier_when_marshal_tip_frozen`, and it
-    // asserted the OPPOSITE: that a frozen marshal tip plus a far-ahead
-    // `upstream_frontier` atomic MUST fire the jump, because the trigger read
-    // `max(tip, upstream_frontier)`. That atomic existed for one reason — under
-    // the "committee[E] not committed" defer the inlet stored nothing, so the tip
-    // froze exactly when the jump was needed — and it paid for that with an input
-    // nobody had authenticated: whoever fed the inlet, or answered the probe's
-    // `Latest`, chose the number the deep trigger compared against. §5.2 removes
-    // both the atomic and the reason: the frozen-tip probe puts the ladder step
-    // `Finalized{last(T+1)}` on the marshal every frozen tick, a served step goes
-    // through `verify_delivered`, and the tip moves. A tip that stays frozen is a
-    // tip nothing VERIFIED has moved, and that is not a state to jump out of.
-    //
-    // The remaining unauthenticated input on the path is the probe's `Latest`
-    // height, which is exactly what this test shouts: a probe answering with a
-    // height 5_010 blocks past the serving window, and a marshal tip five blocks
-    // above the anchor.
-    //
-    // RED under the mutation that hands the trigger that height — one line in
-    // `probe_frontier`, `let _ = self.maybe_re_jump(frontier).await;`, which is
-    // what `max(tip, upstream_frontier)` amounted to once the probe was the
-    // atomic's only writer: `a re-jump was spawned on a height no one
-    // authenticated: [100]`. (Run 2026-09-12; the mutation was reverted.)
-    //
-    // Falsifier: any recorded call (an unverified height reached the trigger); a
-    // probe that never ran (then the loud source never spoke and the test is
-    // vacuous).
+    // The trigger reads the marshal tip alone, so a probe's `Latest` answer far past
+    // the serving window buys one by-height hint and no re-jump; the next frozen tip
+    // still measures the gap off the tip.
     #[test]
     fn a_frozen_tip_spawns_no_re_jump_however_far_ahead_the_probe_claims_the_chain_is() {
         let runtime = deterministic::Runner::default();
@@ -10372,14 +9385,13 @@ mod tests {
             let fx = Fixture::new(ANCHOR).with_re_jump(cb);
             let (mut actor, _mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
 
-            // A LOW (frozen) marshal tip: the gap off the tip is ≤ threshold.
             actor
                 .maybe_re_jump(Height::new(ANCHOR + 5))
                 .await
                 .expect("no fault");
             ctx.sleep(Duration::from_millis(10)).await;
-            // The loud source speaks — and is believed only as far as one
-            // `hint_finalization`, which is a fetch the marshal verifies itself.
+            // The probe's answer is believed only as one hint_finalization, which the
+            // marshal verifies itself.
             actor.probe_frontier().await;
             assert_eq!(
                 ticks.load(std::sync::atomic::Ordering::Relaxed),
@@ -10391,7 +9403,6 @@ mod tests {
                 vec![far],
                 "the probe's `Latest` bought one by-height hint and nothing else"
             );
-            // ...and the next frozen tip still measures the gap off the tip.
             actor
                 .maybe_re_jump(Height::new(ANCHOR + 5))
                 .await
@@ -10406,11 +9417,8 @@ mod tests {
         });
     }
 
-    // (4.2 Б1.2) AND THE TARGET COMES OUT OF THE NODE'S OWN ARCHIVE, AT THE TIP
-    // IT TRIGGERED ON — not from anything a peer answered.
-    //
-    // Falsifier: a target height that is not the tip; no call at all (then the
-    // fixture stopped triggering and the assert above it is vacuous).
+    // The re-jump target is the archive pair at the tip the trigger fired on, not a
+    // height a peer answered.
     #[test]
     fn the_re_jump_target_is_the_pair_at_the_tip_the_trigger_fired_on() {
         let runtime = deterministic::Runner::default();
@@ -10437,8 +9445,7 @@ mod tests {
                 "the jump target was not the archive pair at the triggering tip"
             );
 
-            // And with NO pair at that tip the trigger declines rather than
-            // guesses: a heartbeat re-poke of a tip the floor moved past.
+            // With no pair at the tip the trigger declines rather than guesses.
             *fx.marshal.archive_empty.lock().unwrap() = true;
             actor
                 .maybe_re_jump(Height::new(tip + 1))
@@ -10453,14 +9460,9 @@ mod tests {
         });
     }
 
-    /// A `ReJump` whose probe REPLAYS canned outcomes, one per tick (saturating on
-    /// the last), and counts the ticks that actually reached the probe body.
-    ///
-    /// The probe closure itself is production's (`consensus/dpos.rs`, `stand.rs`)
-    /// and is not under test here; what is under test is what
-    /// `Actor::probe_frontier` DOES with a named step, which is why the outcomes
-    /// are canned. `tracked_epoch` answers a constant: the only thing
-    /// `probe_frontier` does with it is pass it to the closure and log it.
+    /// A `ReJump` whose probe replays canned outcomes, one per tick (saturating on
+    /// the last), and counts the ticks that reached the probe body. Only
+    /// `Actor::probe_frontier`'s handling of a named step is under test.
     fn scripted_probe(
         outcomes: Vec<ProbeOutcome>,
     ) -> (ReJump, Arc<std::sync::atomic::AtomicUsize>) {
@@ -10490,15 +9492,12 @@ mod tests {
         )
     }
 
-    /// A named ladder step for `height`, addressed at the dummy committee.
     fn step_at(height: u64) -> Option<(Height, NonEmptyVec<PeerPubkey>)> {
         Some((Height::new(height), dummy_peers().expect("one peer")))
     }
 
-    /// A `CertUpstream` that answers nothing. The probe's `Latest` arm then
-    /// returns `None`, so the only thing the follower-shape test below can
-    /// observe is the LADDER STEP — which is the point: the step must not need
-    /// an answered `Latest` to be taken (review A2-01 removed `servable`).
+    /// A `CertUpstream` that answers nothing, so the probe's `Latest` is `None` and
+    /// the only observable is the ladder step — which must be takeable without it.
     #[derive(Clone)]
     struct SilentUpstream;
 
@@ -10516,8 +9515,7 @@ mod tests {
     }
 
     /// A committee module with a frozen geometry and a readable record at every
-    /// epoch — the two things `dpos::frontier_probe` reads to NAME a rung
-    /// (`geometry().last(T+1)` and `committee(T+1).participants`).
+    /// epoch — the two things `dpos::frontier_probe` reads to name a rung.
     fn committee_with_participants(
         activation: u64,
         interval: u64,
@@ -10591,41 +9589,9 @@ mod tests {
         )
     }
 
-    // (review B1-01) A FOLLOWER CLIMBS THE SAME LADDER, AND ITS `T` IS ITS OWN.
-    //
-    // The two production pieces a follower now wires (`consensus/dpos.rs`, the
-    // `launch_follower` re-jump: `probe: Some(frontier_probe(up, committee))` and
-    // `tracked_epoch: Some(local_tracked_epoch(committee, finalized_cursor))`),
-    // composed exactly as that site composes them, over an executor whose tip is
-    // frozen. What the run has to show is one thing: the rung `last(T+1)` reaches
-    // the marshal.
-    //
-    // WHY IT MATTERS THAT IT IS THE FOLLOWER. Until this pass the follower wired
-    // `probe: None, tracked_epoch: None` — a validator's step and a follower's
-    // silence — on the reasoning that its WS inlet is an always-on live producer.
-    // The inlet is a SUBSCRIPTION: it replays no intermediate height, and every
-    // cert above this node's own two-epoch ceiling is deferred by the committee
-    // read window, storing nothing. With `upstream_frontier` deleted (§5.2) the
-    // trigger reads the marshal tip alone, so at `fin == tip == ceiling` the gap
-    // is 0, the tip is frozen, and nothing local can unfreeze it. The step is what
-    // does: the marshal pulls `last(T+1)` BY HEIGHT through this node's own
-    // upstream, `verify_delivered` stores it, `Update::Tip` re-arms the trigger.
-    //
-    // THE FIXTURE IS THAT STATE. `fin = tip = 95 = last(2)`, so ET's rule gives
-    // `T = 3` and the rung is `last(4) = 159` — above the tip, which is the only
-    // reason putting it does anything.
-    //
-    // RED before the fix (mutation: `local_tracked_epoch` returning `None`, which
-    // IS the follower's pre-fix `tracked_epoch: None`): no step is named, `hints`
-    // stays empty.
-    //
-    // WHAT IT DOES NOT SHOW, said here because the journal says it too: a live
-    // follower under a real deep lag. The stand builds no follower, so the
-    // acceptance for that class stays open (В§0(5)).
-    //
-    // Falsifier: an empty `hints` (the follower names no rung, i.e. the pre-fix
-    // state); a rung at or below the frozen tip (a fetch the marshal discards);
-    // a rung that is not `last(T+1)` for the LOCAL `T`.
+    // A follower-shaped re-jump wires the production probe and `local_tracked_epoch`,
+    // as `launch_follower` does, over an executor whose tip is frozen: it must name
+    // and put its own ladder rung `last(T+1)` on the marshal.
     #[test]
     fn a_follower_shaped_re_jump_puts_its_own_ladder_step_on_the_marshal() {
         let runtime = deterministic::Runner::default();
@@ -10653,8 +9619,8 @@ mod tests {
                 )),
             };
             let fx = Fixture::new(PARKED).with_re_jump(re_jump);
-            // `last_consensus` seeds BOTH `last_tip_height` and `probe_prev_tip`,
-            // so the tip is 95 and frozen from tick one.
+            // `last_consensus` seeds both `last_tip_height` and `probe_prev_tip`, so
+            // the tip is frozen from the first tick.
             let (mut actor, _mailbox) = fx.build(ctx, PARKED, PARKED);
 
             actor.probe_frontier().await;
@@ -10674,16 +9640,9 @@ mod tests {
         });
     }
 
-    // (4.2 А) THE LADDER IS THE REPETITION OF THE TICK: a step the marshal can act
-    // on is put AGAIN on the next frozen tick, not once.
-    //
-    // §5.2 has no state machine here — "лестница = повторение того же шага". The
-    // repetition is what makes an unserved step harmless (§5.4 "догон вместо
-    // прыжка": the node keeps walking contiguously and asks again) and it is what
-    // nothing pinned before this pass.
-    //
-    // Falsifier: an empty `hints` (the step never reached the marshal); a single
-    // hint over two frozen ticks (the ladder became a one-shot).
+    // The ladder is the repetition of the tick: a step the marshal can act on is put
+    // again on the next frozen tick, not once, which makes an unserved step harmless
+    // (the node keeps walking contiguously and asks again).
     #[test]
     fn a_ladder_step_is_put_on_the_marshal_again_on_every_frozen_tick() {
         let runtime = deterministic::Runner::default();
@@ -10691,10 +9650,9 @@ mod tests {
             const ANCHOR: u64 = 100;
             const STEP: u64 = 191;
             let (re_jump, ticks) = scripted_probe(vec![ProbeOutcome {
-                // A `Latest` answer ABOVE the step: the network has produced
-                // `last(T+1)`, so `servable` holds (see `probe_frontier`). A
-                // distinct height so the step's hints are told apart from the
-                // untargeted frontier hint the same tick also puts.
+                // A `Latest` answer above the step, at a distinct height so the
+                // step's hint can be told apart from the untargeted frontier hint the
+                // same tick also puts.
                 frontier: Some(Height::new(STEP + 9)),
                 step: step_at(STEP),
             }]);
@@ -10719,29 +9677,17 @@ mod tests {
         });
     }
 
-    // (4.2 А, review A2-10) THE STEP IS JUDGED AGAINST THE MARSHAL FLOOR, NOT THE
-    // TIP — and the difference is the hole a jumped node carries.
-    //
-    // The marshal drops `HintFinalized` when `height <= last_processed_height`
-    // (`marshal/core/actor.rs:633-635`), so a step at or below the FLOOR is a
-    // fetch nobody acts on and is skipped here. A step between the floor and the
-    // tip is the opposite case: a node that jumped holds nothing in that range,
-    // the marshal WILL fetch and store it, and gating on the tip — which is what
-    // this code did — suppressed exactly those.
-    //
-    // RED before this change: the arm read `height <= self.last_tip_height`, so
-    // the in-hole step at 160 was skipped and `hints` stayed empty.
-    //
-    // Falsifier: the in-hole step missing from `hints` (the tip is still the
-    // gate); the at-floor step present (a fetch the marshal discards).
+    // The step is judged against the marshal floor, not the tip: the marshal drops a
+    // hint at or below the floor, while a step between the floor and the tip lands in
+    // the hole a jumped node carries and is exactly the one it must fetch.
     #[test]
     fn a_ladder_step_is_skipped_at_the_marshal_floor_and_put_inside_the_hole() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 200;
             const FLOOR: u64 = 150;
-            // Tip 200, floor 150: heights 151..=200 are the hole the jump left,
-            // and the `Latest` witness is above both so `servable` never decides.
+            // Tip 200, floor 150: heights 151..=200 are the hole the jump left, and
+            // the `Latest` witness is above both.
             let (re_jump, _ticks) = scripted_probe(vec![
                 ProbeOutcome {
                     frontier: Some(Height::new(ANCHOR)),
@@ -10755,8 +9701,8 @@ mod tests {
             let fx = Fixture::new(ANCHOR)
                 .with_marshal_floor(FLOOR)
                 .with_re_jump(re_jump);
-            // `last_consensus` seeds BOTH `last_tip_height` and `probe_prev_tip`,
-            // so the tip is 200 and frozen from tick one.
+            // `last_consensus` seeds both `last_tip_height` and `probe_prev_tip`, so
+            // the tip is frozen from the first tick.
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
 
             actor.probe_frontier().await;
@@ -10776,10 +9722,9 @@ mod tests {
         });
     }
 
-    // OFF-BY-K (direct, cursor is private): `reseed_forward` raises the executed
-    // cursor to the LANDING, not the floor — the landing IS executed
-    // post-backfill; the K below-landing blocks are governed by the two-tier
-    // result-lag. (Pre-fix it pinned the cursor at `floor`, lagging by K.)
+    // `reseed_forward` raises the executed cursor to the landing, not the floor: the
+    // landing is executed post-backfill and the `K` below it are governed by the
+    // two-tier result lag.
     #[test]
     fn reseed_forward_off_by_k_raises_cursor_to_landing() {
         let runtime = deterministic::Runner::default();
@@ -10803,9 +9748,8 @@ mod tests {
                 "off-by-K: cursor raised to the LANDING, not the floor ({floor})"
             );
             assert_eq!(anchor_finalized, (Height::new(landing), landing_hash));
-            // B1 option (a): the in-memory `finalized_height` is raised to the
-            // LANDING (the FCU re-pins the engine tag to the floor); `safe` rides
-            // the landing too.
+            // The in-memory `finalized_height` is raised to the landing (the FCU
+            // re-pins the engine tag to the floor); `safe` rides the landing too.
             assert_eq!(finalized_height, Height::new(landing));
             assert_eq!(
                 safe_height,
@@ -10817,12 +9761,9 @@ mod tests {
                 "stale-spec: spec_head raised to the landing"
             );
 
-            // Finalized cursor advanced to the LANDING: the first post-jump
-            // proposals at landing+1..landing+K sample the gate at
-            // landing+1−K..landing — heights BELOW the landing that only the
-            // cursor's provider resolve can serve. Advancing only to the landing
-            // (vs a landing-only entry) is what covers them; else None →
-            // K-block propose-skip/false-vote gap post-jump.
+            // Advancing to the landing (not a landing-only entry) is what lets the
+            // cursor's provider cover the below-landing gate sampled by the first
+            // post-jump proposals.
             let below = B256::repeat_byte(0xE0);
             fx.chain
                 .canonical
@@ -10847,23 +9788,10 @@ mod tests {
         });
     }
 
-    // (4.2 Б2 fix-1, B2-02) THE STARTUP DRAIN'S `None` ARM IS REACHABLE AND FATAL,
-    // and the fatal is the END of #12's deferral, not a pause in it. The drain walks
-    // `(reth's last block .. the marshal's acked cursor]`, and that cursor IS the
-    // marshal's floor (`.claude/COMMONWARE_INTERNALS.md:190-193`), which the marshal
-    // never repairs below — so a marshal that cannot serve a drained height will
-    // never be able to, and the jump cannot cover for it either (`maybe_re_jump`
-    // refuses to spawn while this drain is non-empty). The executor must therefore
-    // DIE here rather than skip; the message it dies with names the floor and the
-    // operator's two ways out (this test pins the death, `dispatch_fault`'s log
-    // carries the text).
-    //
-    // NOT a SafetyHalt: nothing here says the NETWORK disagrees with this node —
-    // only that this node's own two stores disagree.
-    //
-    // Falsifier: the actor still running after the drain hit a hole (the deferral
-    // would then be silently permanent, with `dpos_sync_degraded{crash_recover}`
-    // stuck raised); the fork-safety latch engaging.
+    // The startup drain's `None` arm is fatal: the drain walks up to the marshal
+    // floor, which never heals below, and `maybe_re_jump` refuses to spawn while the
+    // drain is non-empty. Only this node's own two stores disagree, so it is not a
+    // SafetyHalt.
     #[test]
     fn a_startup_drain_over_a_hole_the_marshal_cannot_repair_dies_loudly() {
         let runtime = deterministic::Runner::default();
@@ -10871,8 +9799,8 @@ mod tests {
             const ANCHOR: u64 = 100; // reth's last block = the drain's lower bound
             const CURSOR: u64 = ANCHOR + 2; // the marshal's acked cursor = its floor
             let fx = Fixture::new(ANCHOR);
-            // The marshal holds NOTHING at ANCHOR+1: `FakeMarshal::canned` is empty,
-            // so the very first drained height comes back `None`.
+            // `FakeMarshal::canned` is empty, so the first drained height comes back
+            // `None`.
             let (actor, _mailbox) = fx.build(ctx.clone(), ANCHOR, CURSOR);
             let handle = actor.start();
 
@@ -10895,15 +9823,10 @@ mod tests {
         });
     }
 
-    // STARTUP-BACKFILL FAST-FORWARD (the v33 fresh-spare freeze in miniature):
-    // a fresh spare's `[last_execution+1 ..= last_consensus]`
-    // backfill iterator is pending at a LOW height (377) when a fast-jump lands far
-    // above it. `reseed_forward` must fast-forward the iterator so its next yielded
-    // height is `landing + 1` — else the post-jump drain resumes at 377 and
-    // re-derives the whole jumped `[.. landing]` range (mdbx-timeout freeze). The
-    // drain site (`self.finalized_heights_to_backfill.next()`) is the ONLY source
-    // of backfill heights reaching the deriver, so asserting the iterator yields
-    // nothing ≤ landing IS the "deriver never sees the jumped range" guarantee.
+    // A backfill iterator pending at a low height when a jump lands far above it:
+    // `reseed_forward` must fast-forward it to `landing + 1`, else the post-jump
+    // drain re-derives the whole jumped range. The iterator is the only source of
+    // backfill heights for the deriver, so yielding nothing ≤ landing is the guarantee.
     #[test]
     fn reseed_forward_fast_forwards_backfill_past_landing() {
         let runtime = deterministic::Runner::default();
@@ -10913,13 +9836,12 @@ mod tests {
             let landing = ANCHOR + JUMP_THRESHOLD + 4_000;
             let landing_hash = B256::repeat_byte(0xE1);
             let floor = landing - K;
-            // Backfill end ABOVE the landing so we also pin that the ORIGINAL upper
+            // End above the landing so the assertion also pins that the original upper
             // bound is preserved (only the ≤ landing prefix is skipped).
             let end = landing + 50;
 
             let fx = Fixture::new(ANCHOR);
             let (mut actor, _mailbox) = fx.build(ctx, ANCHOR, end);
-            // Pre-jump: the iterator is pending at the low height.
             assert_eq!(
                 *actor.finalized_heights_to_backfill.start(),
                 NEXT,
@@ -10932,9 +9854,6 @@ mod tests {
                 .await
                 .expect("reseed_forward");
 
-            // The next drained backfill height is landing+1 — the entire jumped
-            // range [NEXT ..= landing] is skipped, and every remaining height is
-            // strictly above the landing (the deriver never sees the jumped range).
             let remaining: Vec<u64> = actor.finalized_heights_to_backfill.clone().collect();
             assert_eq!(
                 remaining.first().copied(),
@@ -10950,8 +9869,7 @@ mod tests {
                 remaining.iter().all(|&h| h > landing),
                 "no backfill height ≤ landing survives (deriver never re-derives the jumped range)"
             );
-            // Skipped exactly the [NEXT ..= landing] prefix: the iterator shrank by
-            // that many heights (the count the fast-forward metric increments by).
+            // The shrink equals the skipped [NEXT ..= landing] prefix the metric counts.
             assert_eq!(
                 len_before - remaining.len(),
                 (landing - NEXT + 1) as usize,
@@ -10960,9 +9878,8 @@ mod tests {
         });
     }
 
-    // NO-OP boundary: when the landing is at/below the iterator's next-to-yield
-    // height, there is nothing ≤ landing to skip, so the iterator is untouched.
-    // Uses landing == NEXT-1 (the highest landing that skips nothing).
+    // When the landing is at or below the iterator's next-to-yield height there is
+    // nothing ≤ landing to skip, so the iterator is untouched.
     #[test]
     fn reseed_forward_backfill_noop_when_landing_below_next() {
         let runtime = deterministic::Runner::default();
@@ -10992,15 +9909,10 @@ mod tests {
         });
     }
 
-    // RESTART SIMULATION (review blocker): a fresh process starts with the
-    // finalized-execution cursor at 0 but a provider populated up to the
-    // marshal-acked cursor T (`last_consensus_finalized_height` = marshal
-    // `last_processed`). Each acked height is consensus-finalized (unique) and
-    // passed the canonical postcondition pre-restart — no sibling can exist
-    // there. `init` seeds the cursor at T, so the result gate serves provider
-    // hashes for h ≤ T (the first K post-restart proposals sample T+1−K..T)
-    // instead of None — pre-fix, a coordinated ≥f+1 restart wedged the committee
-    // permanently (propose skips + verify false-bias, the cursor never seeding).
+    // A fresh process starts with the finalized-execution cursor at 0 but a provider
+    // populated to the marshal-acked cursor T; `init` must seed the cursor at T so the
+    // result gate serves provider hashes for h ≤ T — the first K post-restart
+    // proposals sample T+1−K..T — instead of None.
     #[test]
     fn init_seeds_result_gate_floor_at_marshal_acked() {
         let runtime = deterministic::Runner::default();
@@ -11009,7 +9921,7 @@ mod tests {
             let fx = Fixture::new(T);
             let persisted_below = B256::repeat_byte(0x99);
             // Persisted pre-restart canonical content: T−1 (acked, final) and a
-            // speculative tail block ABOVE the acked point.
+            // speculative tail block above the acked point.
             fx.chain
                 .canonical
                 .lock()
@@ -11021,9 +9933,8 @@ mod tests {
                 .unwrap()
                 .insert(T + 1, B256::repeat_byte(0xAA));
 
-            // `build` wires last_consensus_finalized_height (the acked cursor,
-            // the cursor seed source) = T; reth head also = T here (the clean
-            // common case where the acked cursor and the head coincide).
+            // `build` wires the acked cursor and the reth head both to T: the common
+            // case where they coincide.
             let (_actor, _mailbox) = fx.build(ctx, T, T);
 
             assert_eq!(
@@ -11036,9 +9947,8 @@ mod tests {
                 Some(persisted_below),
                 "heights below the acked point resolve via the provider"
             );
-            // The persisted SPECULATIVE tail above the acked point must NOT be
-            // served as finalized — it can still be reorged by the startup
-            // reconcile.
+            // The persisted speculative tail above the acked point must not be served
+            // as finalized: the startup reconcile can still reorg it.
             assert_eq!(
                 fx.chain.finalized_executed_hash(T + 1),
                 None,
@@ -11047,43 +9957,35 @@ mod tests {
         });
     }
 
-    // SOUNDNESS (family2_finalized_tier.md §1.1): a clean shutdown persists
-    // reth's HEAD, and under deferred execution the head carries a SPECULATIVE
-    // tail ABOVE the marshal-acked cursor (`spec_execute` advances the head at
-    // notarization latency). Heights in `(acked, head]` are notarized-only — a
-    // sibling can still finalize (notarize A → nullify → finalize B). The floor
-    // MUST seed from the acked cursor (`last_consensus_finalized_height`), NOT
-    // the reth head (`last_execution_finalized_height`) — else a restart
-    // straddling a nullify race serves the orphaned speculative sibling as a
-    // finalized result (the whole-committee divergence, re-entered through
-    // restart). Pre-fix (floor = reth head) the assertion
-    // below returned `Some(the speculative hash)`.
+    // A clean shutdown persists reth's head, which under deferred execution carries a
+    // speculative tail above the marshal-acked cursor; heights in `(acked, head]` are
+    // notarized-only and a sibling can still finalize. The floor must seed from the
+    // acked cursor, not the head, or a restart straddling a nullify race serves the
+    // orphaned sibling as finalized.
     #[test]
     fn init_floor_excludes_speculative_tail_above_acked() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ACKED: u64 = 100; // marshal last_processed (durable, finalized)
             const RETH_HEAD: u64 = ACKED + 1; // clean-shutdown speculative tail
-                                              // `Fixture::new` seeds `fx.anchor_hash` at RETH_HEAD (the persisted
-                                              // provider head — the speculative-tail block).
+                                              // `Fixture::new` seeds `fx.anchor_hash` at
+                                              // RETH_HEAD, the speculative-tail block.
             let fx = Fixture::new(RETH_HEAD);
             let acked_hash = B256::repeat_byte(0x77);
             fx.chain.canonical.lock().unwrap().insert(ACKED, acked_hash);
 
-            // reth head (last_execution) = RETH_HEAD, marshal acked cursor
-            // (last_consensus, the floor seed) = ACKED < RETH_HEAD.
+            // reth head (`last_execution`) = RETH_HEAD; the marshal-acked cursor
+            // (`last_consensus`, the floor seed) = ACKED < RETH_HEAD.
             let (_actor, _mailbox) = fx.build(ctx, RETH_HEAD, ACKED);
 
-            // The acked cursor resolves via the provider (floor seeded there;
-            // beyond reorg).
+            // The acked cursor resolves via the provider: the floor is seeded there.
             assert_eq!(
                 fx.chain.finalized_executed_hash(ACKED),
                 Some(acked_hash),
                 "the marshal-acked height resolves via the floor→provider fallback"
             );
-            // The speculative tail sits ABOVE the acked floor: the provider HAS
-            // it (clean shutdown persisted the head), but it is notarized-only
-            // and a sibling can still finalize ⇒ it MUST NOT be served.
+            // The speculative tail sits above the acked floor: the provider has it, but
+            // it is notarized-only and a sibling can still finalize, so it is not served.
             assert_eq!(
                 fx.chain.finalized_executed_hash(RETH_HEAD),
                 None,
@@ -11093,16 +9995,11 @@ mod tests {
         });
     }
 
-    // SOUNDNESS (Fix 1, same family as `init_floor_excludes_speculative_tail`):
-    // `ordering_finalized` (the result-final cursor) MUST seed from the marshal-
-    // acked cursor, NOT the reth head. Seeded from the head (= acked + N), the
-    // first finalized delivery at acked+1 computes `result_final = head − K` and
-    // pins the engine-API `finalized` (and `head`) onto the SPECULATIVE tail hash
-    // at `acked + N − K` — an orphanable sibling. Seeded from the acked cursor the
-    // finalized tier stays at the anchor and `update_head` rolls the head onto the
-    // re-derived block. Revert-check: with the seed reverted to
-    // `last_execution_finalized_height`, both asserts below observe the
-    // `acked + N − K` speculative hash instead.
+    // `ordering_finalized` (the result-final cursor) must seed from the marshal-acked
+    // cursor, not the reth head: seeded from the head, the first finalized delivery at
+    // acked+1 computes `result_final = head − K` and pins the engine-API `finalized`
+    // onto the orphanable speculative hash at `acked + N − K`; seeded from the acked
+    // cursor the tier stays at the anchor and the head rolls onto the re-derived block.
     #[test]
     fn ordering_finalized_seeds_from_acked_not_reth_head() {
         let runtime = deterministic::Runner::default();
@@ -11114,7 +10011,7 @@ mod tests {
             let fx = Fixture::new(ACKED).with_last_execution(reth_head);
             let anchor_hash = fx.anchor_hash;
             // Persisted speculative tail above the acked cursor: acked+1 carries a
-            // SIBLING (≠ the re-derive), acked+N−K a distinct spec hash.
+            // sibling, and acked+N−K a distinct spec hash.
             let sibling = B256::repeat_byte(0x51);
             let spec_final_hash = B256::repeat_byte(0x57);
             fx.chain
@@ -11131,8 +10028,8 @@ mod tests {
             let (actor, mailbox) = fx.build(ctx.clone(), ACKED, ACKED);
             let handle = actor.start();
 
-            // One finalized delivery at acked+1 (its flush child supplies the
-            // witness so it derives). No tip ⇒ guard #2 cold.
+            // One finalized delivery at acked+1; its flush child supplies the witness
+            // so it derives, and with no tip guard #2 stays cold.
             finalize_and_ack_behind(
                 &fx,
                 &mailbox,
@@ -11169,10 +10066,8 @@ mod tests {
         });
     }
 
-    // `reseed_forward` is the steady-state MIRROR of `init`'s seed: at a given
-    // landing the two MUST agree on field shape (the "never diverge" pin). Seed
-    // one actor via `init` at the landing and reseed another there from a stale
-    // anchor; their `seed_fields` snapshots must be byte-identical.
+    // `reseed_forward` must produce the same seed fields as cold-start `init`
+    // at the landing, so the two actors' `seed_fields` snapshots match.
     #[test]
     fn reseed_forward_agrees_with_init() {
         let runtime = deterministic::Runner::default();
@@ -11182,9 +10077,6 @@ mod tests {
             let landing_hash = B256::repeat_byte(0xE1);
             let floor = landing - K;
 
-            // (1) Cold-start `init` AT the landing (the reference seed). The
-            // finalized cursor `init` seeds is the executed tip (landing), with
-            // the anchor at the same point.
             let fx_init = Fixture::new(landing);
             fx_init
                 .chain
@@ -11192,13 +10084,11 @@ mod tests {
                 .lock()
                 .unwrap()
                 .insert(landing, landing_hash);
-            // Distinct labels so the two actors' `pending_finalizations` gauges
-            // do not collide in the shared deterministic metrics registry.
+            // Distinct labels so the two actors' `pending_finalizations` gauges do
+            // not collide in the shared metrics registry.
             let (init_actor, _m1) = fx_init.build(ctx.with_label("init"), landing, landing);
             let init_fields = init_actor.seed_fields();
 
-            // (2) A second actor cold-started at the STALE anchor, then reseeded
-            // forward to the landing.
             let fx_re = Fixture::new(ANCHOR);
             let (mut re_actor, _m2) = fx_re.build(ctx.with_label("reseed"), ANCHOR, ANCHOR);
             re_actor
@@ -11214,13 +10104,9 @@ mod tests {
         });
     }
 
-    // PARENT-VISIBILITY (non-blind): `reseed_forward` MUST issue the
-    // canonicalization FCU that mirrors cold-start `init`. With the by-HASH
-    // visibility model the test is NON-blind — the backfilled `floor` is present
-    // by NUMBER but INVISIBLE by hash until the FCU lands, so deriving `floor + 1`
-    // (parent = `floor`) ParentHeaderMissing-fails BEFORE the reseed and succeeds
-    // AFTER it. Pre-fix (no FCU in `reseed_forward`) the floor would stay
-    // invisible and the floor would freeze.
+    // `reseed_forward` must issue the canonicalization FCU that mirrors cold-start
+    // `init`: it makes the backfilled `floor` visible by hash, so deriving
+    // `floor + 1` fails before the reseed and succeeds after.
     #[test]
     fn reseed_forward_fcu_makes_backfilled_floor_visible_by_hash() {
         let runtime = deterministic::Runner::default();
@@ -11232,9 +10118,6 @@ mod tests {
             let floor_hash = B256::repeat_byte(0xF0);
 
             let fx = Fixture::new(ANCHOR);
-            // Post-devp2p-backfill, pre-FCU state: floor + landing are present by
-            // NUMBER and tracked for the by-hash model, but the by-hash frontier
-            // sits BELOW floor (the segment is not yet canonical by hash).
             {
                 let mut canon = fx.chain.canonical.lock().unwrap();
                 canon.insert(floor, floor_hash);
@@ -11244,8 +10127,6 @@ mod tests {
             fx.chain.vis.register(landing, landing_hash);
             fx.chain.vis.set_frontier(floor - 1);
 
-            // (a) Before the reseed FCU: floor is invisible by hash, so deriving
-            // floor+1 on top of it ParentHeaderMissing-fails.
             assert!(
                 !fx.chain.vis.visible(floor_hash),
                 "floor must be by-hash-invisible before the reseed FCU"
@@ -11269,9 +10150,6 @@ mod tests {
                 .await
                 .expect("reseed_forward");
 
-            // The reseed issued the canonicalization FCU: head = safe = landing
-            // (covers the whole segment; the landing is BFT ordering-final),
-            // finalized = floor (two-tier, never ahead of the result tier).
             {
                 let fcus = fx.beacon.fcu_calls.lock().unwrap();
                 let reseed_fcu = fcus
@@ -11291,8 +10169,6 @@ mod tests {
                 );
             }
 
-            // (b) After the reseed FCU canonicalized the segment: floor is visible,
-            // so deriving floor+1 on top of it now succeeds.
             assert!(
                 fx.chain.vis.visible(floor_hash),
                 "the reseed FCU must make the backfilled floor visible by hash"
@@ -11312,8 +10188,8 @@ mod tests {
         });
     }
 
-    // (b) NO-OP when the gap ≤ JUMP_THRESHOLD: the inlet's ordinary pulls still
-    // cover the serving window, so the re-jump callback is never invoked.
+    // The re-jump callback is not invoked while the gap is at most JUMP_THRESHOLD:
+    // the inlet's ordinary pulls still cover the serving window.
     #[test]
     fn re_jump_is_noop_within_serving_window() {
         let runtime = deterministic::Runner::default();
@@ -11324,12 +10200,10 @@ mod tests {
             let (actor, mailbox) = fx.build(ctx, ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // Tip exactly AT the threshold (gap == JUMP_THRESHOLD, not >): no fire.
             mailbox
                 .send(tip_msg(ANCHOR + JUMP_THRESHOLD))
                 .expect("send tip");
 
-            // Barrier finalize to flush the mailbox past the tip.
             finalize_and_ack_behind(
                 &fx,
                 &mailbox,
@@ -11351,11 +10225,8 @@ mod tests {
         });
     }
 
-    // (c'') Connected-but-wedged EL pipeline (soak v43): a `StalledWithPeers`
-    // outcome is NON-fatal, must NOT rotate the upstream (the wedge is local to
-    // reth, not a bad-upstream branch), must NOT advance the marshal floor (the
-    // refill stays deferred — chain-safe), and BUMPS the observability counter so a
-    // deterministic re-wedge is visible instead of silent.
+    // A `StalledWithPeers` outcome (a connected but wedged EL) is non-fatal: no
+    // upstream rotation, no floor advance, but the observability counter is bumped.
     #[test]
     fn re_jump_stalled_with_peers_is_nonfatal_does_not_rotate_and_bumps_counter() {
         let runtime = deterministic::Runner::default();
@@ -11372,10 +10243,8 @@ mod tests {
             mailbox
                 .send(tip_msg(ANCHOR + JUMP_THRESHOLD + 5_010))
                 .expect("send tip");
-            // Yield so the spawned waiter completes + its `jump_done` arm runs.
             ctx.sleep(Duration::from_millis(10)).await;
 
-            // Follow-up finalize: must STILL ack ⇒ the loop survived the wedge.
             finalize_and_ack_behind(
                 &fx,
                 &mailbox,
@@ -11408,10 +10277,8 @@ mod tests {
         });
     }
 
-    // (c') THE transient-stall-crash regression test: a `Stalled` outcome (an
-    // `EL_SYNC_NO_PROGRESS` transport stall) is NON-fatal — the executor KEEPS
-    // RUNNING and a follow-up finalize still acks. Pre-fix, `sync_to`'s `?`
-    // propagated the stall as a fatal `Err` and froze the whole chain.
+    // A `Stalled` outcome (an `EL_SYNC_NO_PROGRESS` transport stall) is non-fatal:
+    // the executor keeps running and a follow-up finalize still acks.
     #[test]
     fn re_jump_stalled_is_nonfatal() {
         let runtime = deterministic::Runner::default();
@@ -11426,10 +10293,8 @@ mod tests {
             mailbox
                 .send(tip_msg(ANCHOR + JUMP_THRESHOLD + 5_010))
                 .expect("send tip");
-            // Yield so the spawned waiter completes + its `jump_done` arm runs.
             ctx.sleep(Duration::from_millis(10)).await;
 
-            // Follow-up finalize: must STILL ack ⇒ the loop survived the stall.
             finalize_and_ack_behind(
                 &fx,
                 &mailbox,
@@ -11452,8 +10317,8 @@ mod tests {
         });
     }
 
-    // (d) `Lagging` (stale / shallow target) is a no-op: no re-seed, no set_floor,
-    // the executor keeps running.
+    // A `Lagging` (stale / shallow) target is a no-op: no re-seed, no `set_floor`,
+    // and the executor keeps running.
     #[test]
     fn re_jump_lagging_is_noop() {
         let runtime = deterministic::Runner::default();
@@ -11467,10 +10332,8 @@ mod tests {
             mailbox
                 .send(tip_msg(ANCHOR + JUMP_THRESHOLD + 5_010))
                 .expect("send tip");
-            // Yield so the spawned waiter completes + its `jump_done` arm runs.
             ctx.sleep(Duration::from_millis(10)).await;
 
-            // Barrier finalize: still acks ⇒ the loop survived a Lagging re-jump.
             finalize_and_ack_behind(
                 &fx,
                 &mailbox,
@@ -11493,28 +10356,9 @@ mod tests {
         });
     }
 
-    // (d''', review B1-04) THE LANDING CONTRADICTS AN AUTHENTICATED CERTIFICATE ⇒
-    // `Fault::corruption`, AND NOTHING IS ROTATED.
-    //
-    // WHAT THIS TEST SAID BEFORE. It was `re_jump_invalid_target_rotates` and it
-    // pinned the opposite: `rotations == 1` and a surviving loop, on the reasoning
-    // that `InvalidTarget` is "the same NON-fatal bad-upstream treatment as
-    // BadTarget". That reasoning belongs to the era when the jump target came from
-    // `CertUpstream::get_latest` — an answer a peer chose. Since §5.2 the
-    // steady-state target is the `(finalization, block)` pair this node read out of
-    // its OWN marshal archive, written only by `store_finalization` after
-    // `verify_delivered`, so there is no upstream to rotate away from: rotating
-    // moves the fetch seam and leaves the contradiction standing. §5.4 files both
-    // routes into this outcome — "Посадка не на заверенную ветку" and "reth
-    // Invalid" — as `Fault::corruption`.
-    //
-    // RED before the fix (mutation: the arm restored to `self.rotate_upstream()`),
-    // on `rotations == 0` and on the handle never resolving.
-    //
-    // Falsifier: a rotation (the node treats a local EL contradiction as somebody
-    // else's fault); a surviving loop (it keeps driving reth after the EL
-    // contradicted an authenticated certificate); no jump call at all (the fixture
-    // stopped triggering and everything above is vacuous); a floor advance.
+    // A landing contradicting an authenticated certificate is `Fault::corruption`
+    // and rotates nothing: the target came from this node's own archive, so there
+    // is no upstream to rotate away from.
     #[test]
     fn re_jump_invalid_target_is_corruption_and_does_not_rotate() {
         let recorder = DebuggingRecorder::new();
@@ -11534,7 +10378,6 @@ mod tests {
                 mailbox
                     .send(tip_msg(ANCHOR + JUMP_THRESHOLD + 5_010))
                     .expect("send tip");
-                // Yield so the spawned waiter completes + its `jump_done` arm runs.
                 ctx.sleep(Duration::from_millis(20)).await;
 
                 assert_eq!(
@@ -11574,12 +10417,11 @@ mod tests {
         );
     }
 
-    // #10 SafetyHalt (Phase 3): a steady-state re-jump `L1Fork` (the EL-synced head
-    // does NOT descend from the L1-finalized checkpoint) is DISTINCT from `AuthFailed`
-    // — there is no honest upstream to rotate to (L1 finality itself disagrees), so
-    // the executor HALTS: it engages the fork-safety latch (`l1_fork=1`), does NOT
-    // rotate, and PARKS retaining marshal acks (a follow-up finalize is neither
-    // derived nor acked — the ack is retained un-resolved so the marshal stays alive).
+    // A steady-state `L1Fork` (the EL-synced head does not descend from the
+    // L1-finalized checkpoint) is distinct from `AuthFailed`: L1 finality itself
+    // disagrees, so there is no honest upstream to rotate to and the executor
+    // engages the fork-safety latch and parks, retaining marshal acks un-resolved
+    // so the marshal stays alive.
     #[test]
     fn re_jump_l1_fork_engages_safety_halt_and_does_not_rotate() {
         let runtime = deterministic::Runner::default();
@@ -11601,8 +10443,6 @@ mod tests {
             })
             .await;
             ctx.sleep(Duration::from_millis(20)).await;
-            // The parked executor keeps its mailbox open and RETAINS the ack of a
-            // post-halt finalize (never derives it, never cancels the marshal).
             let (msg, mut post_waiter) =
                 finalize_msg(sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO));
             mailbox
@@ -11645,11 +10485,9 @@ mod tests {
         });
     }
 
-    // (d'') Rule L: a single `Stalled` must NOT insta-rotate (an honest transient
-    // stall is tolerated); only at MAX_UPSTREAM_FAULTS consecutive stalls does the
-    // executor fail the upstream over — exactly ONCE — and then the streak resets,
-    // so a further single stall does not re-rotate. Mirrors the inlet's
-    // `consecutive_data_faults_rotate_once_…` for the SECOND (re-jump) streak.
+    // A single `Stalled` does not rotate (an honest transient stall is tolerated);
+    // at `MAX_UPSTREAM_FAULTS` consecutive stalls the upstream is failed over once
+    // and the streak resets, so a further stall does not rotate.
     #[test]
     fn re_jump_stalled_rotates_after_streak_then_resets() {
         let runtime = deterministic::Runner::default();
@@ -11662,9 +10500,8 @@ mod tests {
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // Drive MAX_UPSTREAM_FAULTS consecutive Stalled re-jumps. Stalled never
-            // reseeds, so `ordering_finalized` stays at ANCHOR and the same tip
-            // re-triggers each time once the prior jump's `jump_done` arm has cleared.
+            // `Stalled` never reseeds, so `ordering_finalized` stays at ANCHOR and
+            // the same tip re-triggers once the prior jump's `jump_done` arm clears.
             for _ in 0..crate::cert_inlet::MAX_UPSTREAM_FAULTS {
                 mailbox
                     .send(tip_msg(ANCHOR + JUMP_THRESHOLD + 5_010))
@@ -11677,7 +10514,6 @@ mod tests {
                 "exactly ONE rotate at the MAX_UPSTREAM_FAULTS-th consecutive stall"
             );
 
-            // Streak reset after the rotate: one more stall must NOT re-rotate.
             mailbox
                 .send(tip_msg(ANCHOR + JUMP_THRESHOLD + 5_010))
                 .expect("send tip");
@@ -11698,10 +10534,8 @@ mod tests {
         });
     }
 
-    // Case (A) no-regression: while the tip is HELD (`awaiting_seed`), a
-    // SHALLOW gap (≤ JUMP_THRESHOLD) must NOT start a re-jump — the hold
-    // proceeds untouched. Only a deep gap (> JUMP_THRESHOLD) engages the
-    // re-jump.
+    // While the tip is held (`awaiting_seed`), a shallow gap (≤ JUMP_THRESHOLD)
+    // does not start a re-jump; only a deep gap (> JUMP_THRESHOLD) does.
     #[test]
     fn re_jump_does_not_start_on_shallow_gap_while_block_held() {
         let runtime = deterministic::Runner::default();
@@ -11715,13 +10549,10 @@ mod tests {
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // Beacon-active round with no σ in the store ⇒ the block is HELD.
             let (msg, _waiter) =
                 finalize_msg(sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO));
             mailbox.send(msg).expect("send held block");
 
-            // A SHALLOW frontier tip (gap == JUMP_THRESHOLD, not >) → the gap test
-            // early-returns → no re-jump, even though a block is held.
             mailbox
                 .send(tip_msg(ANCHOR + JUMP_THRESHOLD))
                 .expect("send shallow tip");
@@ -11741,15 +10572,12 @@ mod tests {
         });
     }
 
-    // THE SEED HOLD MUST NOT GATE `maybe_re_jump` (research B3): that gate is
-    // what bounds a σ-less node's stall, so a block held for its σ must not
-    // suppress the spawn. Pinned here as a test rather than a comment — adding
-    // `awaiting_seed.is_none()` to `maybe_re_jump`'s five gates makes this fail.
+    // The seed hold does not gate `maybe_re_jump`: that gate bounds a σ-less
+    // node's stall, so a block held for its σ must not suppress the spawn.
     //
-    // And (f′, Fix A) `reseed_forward` disposes the held block with
-    // `acknowledge()` (Ok, NEVER a drop — a dropped `Exact` is a Canceled ack,
-    // fatal to the marshal): the floor moves past the held height, so it is
-    // pruned, not skipped.
+    // `reseed_forward` disposes the held block with `acknowledge()` — a dropped
+    // `Exact` is a Canceled ack, fatal to the marshal — so it is pruned, not
+    // skipped.
     #[test]
     fn a_deep_gap_spawns_a_rejump_even_while_a_block_is_held_for_its_seed() {
         let runtime = deterministic::Runner::default();
@@ -11770,8 +10598,6 @@ mod tests {
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // The block is HELD (its σ never lands — the node is about to jump
-            // far past it).
             let (m1, mut w1) =
                 finalize_msg(sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO));
             mailbox.send(m1).expect("send held block");
@@ -11781,13 +10607,10 @@ mod tests {
                 "premise: the block is HELD (unacked) when the deep tip arrives"
             );
 
-            // A DEEP frontier tip (gap > JUMP_THRESHOLD) while holding → re-jump spawns.
             mailbox
                 .send(tip_msg(ANCHOR + JUMP_THRESHOLD + 5_010))
                 .expect("send deep tip");
 
-            // `wait_until` panics after 2000 virtual ms, so gating `maybe_re_jump`
-            // on the hold FAILS here instead of hanging on the ack below.
             wait_until(&ctx, "the re-jump spawned despite the held block", || {
                 !calls.lock().unwrap().is_empty()
             })
@@ -11797,7 +10620,6 @@ mod tests {
                 vec![ANCHOR],
                 "re-jump SPAWNED once despite the held block (durably-stuck recovery)"
             );
-            // The Landed reseed disposes the held block via `acknowledge()` → Ok.
             w1.await.expect(
                 "held block disposed via acknowledge (Ok, never Canceled) on the landed re-jump",
             );
@@ -11812,12 +10634,9 @@ mod tests {
         });
     }
 
-    // bug 10: a hole in the marshal's own floor..=last_finalized backfill range
-    // cannot self-heal (`get_block` is local-only), so the executor must fail loud
-    // AT the backfill site — not warn-and-skip (which relocates + mislabels the
-    // fatal to a later gap-walk at the WRONG height). Backfill range = 101..=102
-    // with an empty marshal → the first fetch returns None → immediate shutdown,
-    // before any block derives.
+    // A hole in the marshal's backfill range cannot self-heal (`get_block` is
+    // local-only), so the executor fails at the backfill site rather than
+    // warn-and-skipping to a later gap-walk at the wrong height.
     #[test]
     fn backfill_hole_is_fatal_at_the_backfill_site() {
         let runtime = deterministic::Runner::default();
@@ -11827,8 +10646,6 @@ mod tests {
             // last_consensus = ANCHOR + 2 ⇒ backfill range 101..=102; `canned` empty.
             let (actor, _mailbox) = fx.build(ctx, ANCHOR, ANCHOR + 2);
             let handle = actor.start();
-            // The actor shuts down from the backfill-None fatal (handle joins);
-            // pre-fix it would warn-and-skip and keep running (heartbeat loop).
             let _ = handle.await;
             assert!(
                 fx.beacon.new_payload_calls.lock().unwrap().is_empty(),
@@ -11842,8 +10659,8 @@ mod tests {
         CompositeKey,
     };
 
-    /// `Snapshotter::snapshot` RESETS every counter it reads, so a test takes
-    /// exactly ONE snapshot and queries this drained copy.
+    /// `Snapshotter::snapshot` resets every counter it reads, so a test takes one
+    /// snapshot and queries this drained copy.
     fn drain_counters(snap: &Snapshotter) -> Vec<(CompositeKey, u64)> {
         snap.snapshot()
             .into_vec()
@@ -11855,7 +10672,7 @@ mod tests {
             .collect()
     }
 
-    /// Total of an UNLABELLED counter — the shape both detector counters use.
+    /// Total of an unlabelled counter — the shape both detector counters use.
     fn counter_total(drained: &[(CompositeKey, u64)], name: &str) -> u64 {
         drained
             .iter()
@@ -11878,21 +10695,17 @@ mod tests {
             .sum()
     }
 
-    // THE DETECTOR, and the four things it must be. It (1) stays SILENT below the
-    // threshold, (2) reports once the hold outlives it, (3) reports ONCE rather
-    // than once per call, and (4) CHANGES NOTHING — the block is still held
-    // afterwards and still derives the moment σ lands, which is the only correct
-    // exit.
+    // The detector stays silent below the threshold, reports once when the hold
+    // outlives it (not once per call), and changes nothing: the block stays held
+    // and derives when σ lands.
     //
-    // Clause (2) is asserted twice, the second time AFTER a miss re-hold, which
-    // is what pins that `HeldForSeed::since` rides through
-    // `try_eager_finalized_derive`'s restore. Resetting it there would keep the
-    // detector permanently silent under a stream of unrelated seed records — the
-    // exact condition it exists to report.
+    // `HeldForSeed::since` must ride through `try_eager_finalized_derive`'s
+    // restore — resetting it there would keep the detector silent under a stream
+    // of unrelated seed records, the exact condition it exists to report.
     //
-    // The hold is BACK-DATED rather than waited out: the deterministic runtime
+    // The hold is back-dated rather than waited out: the deterministic runtime
     // advances virtual time in 1 ms cycles, so sleeping past a 60 s threshold
-    // costs ~60 s of real time and would dominate the suite.
+    // would dominate the suite.
     #[test]
     fn a_fresh_seed_hold_is_silent_and_a_stalled_one_reports_once() {
         let recorder = DebuggingRecorder::new();
@@ -11920,12 +10733,8 @@ mod tests {
                     .expect("beacon-active round, empty store");
                 assert!(actor.awaiting_seed.is_some(), "premise: the block is HELD");
 
-                // `drain_counters` DRAINS, as its name says: each read reports the
-                // increments since the previous one, not a running total. Every
-                // count below is therefore "reports since the last assertion".
                 let reports = || counter_total(&drain_counters(&snap), NAME);
 
-                // (1) A fresh hold is the ordinary record-vs-delivery race.
                 actor.detect_stalled_seed_hold();
                 assert_eq!(
                     reports(),
@@ -11941,17 +10750,14 @@ mod tests {
                         .expect("representable");
                 };
 
-                // (2)+(3) Past the threshold: one report, however often it is asked.
                 backdate(&mut actor);
                 actor.detect_stalled_seed_hold();
                 actor.detect_stalled_seed_hold();
                 actor.detect_stalled_seed_hold();
                 assert_eq!(reports(), 1, "one stall is one event — not one per call");
 
-                // (2, again) A σ for an UNRELATED round fires the same re-attempt
-                // the notify arm makes; it MISSES and puts the block straight back.
-                // Clearing `reported` isolates the question to `since`: if the
-                // restore reset it, the detector below would find a fresh hold.
+                // An unrelated σ misses and re-holds the block; clearing `reported`
+                // isolates whether `since` survived the restore.
                 store.record(real_witness(active_round(h + 500)));
                 actor
                     .try_eager_finalized_derive(EagerTrigger::Notified)
@@ -11968,7 +10774,6 @@ mod tests {
                      unrelated seed records"
                 );
 
-                // (4) Nothing about the hold moved.
                 assert!(
                     fx.beacon.new_payload_calls.lock().unwrap().is_empty(),
                     "the detector must not derive the held block"
@@ -11979,7 +10784,6 @@ mod tests {
                 );
                 assert!(!fx.safety_halt.is_engaged(), "a detector never halts");
 
-                // ...and the only correct exit still works.
                 store.record(real_witness(active_round(h)));
                 actor
                     .try_eager_finalized_derive(EagerTrigger::Notified)
@@ -11994,9 +10798,7 @@ mod tests {
         });
     }
 
-    // The wiring: the detector runs off the EXISTING FCU heartbeat tick and
-    // nothing else. Deleting the call from that arm leaves every assertion above
-    // green — this is the only test that fails.
+    // The detector runs off the FCU heartbeat tick and nothing else.
     #[test]
     fn the_fcu_heartbeat_is_what_reports_a_stalled_seed_hold() {
         let recorder = DebuggingRecorder::new();
@@ -12012,8 +10814,8 @@ mod tests {
                     .with_fcu_heartbeat(Duration::from_millis(20));
                 let (mut actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
 
-                // Hold + back-date BEFORE the actor is spawned, so a couple of
-                // ordinary heartbeat ticks are all the timeline this needs.
+                // Hold and back-date before the actor is spawned, so a couple of
+                // heartbeat ticks are all the timeline this needs.
                 let order = OrderBlock {
                     proposal_view: h,
                     ..sample_order(Digest(B256::ZERO), h, B256::ZERO)
@@ -12047,11 +10849,10 @@ mod tests {
         });
     }
 
-    // The same backfill hole as `backfill_hole_is_fatal_at_the_backfill_site`, seen
-    // at the ROUTER: a bare `break` exits the loop WITHOUT reading the halt latch,
-    // so an already-halted node would drop every retained marshal `Exact` into
-    // Canceled (fatal to the marshal). The fault counter is the only observable
-    // that separates "routed as a Corruption" from "the loop merely exited".
+    // The backfill hole seen at the router: a bare `break` exits the loop without
+    // reading the halt latch, so an already-halted node would drop every retained
+    // marshal `Exact` into Canceled (fatal to the marshal); the hole must be
+    // routed as a Corruption.
     #[test]
     fn backfill_hole_routes_through_the_fault_router() {
         let recorder = DebuggingRecorder::new();
@@ -12081,10 +10882,9 @@ mod tests {
         );
     }
 
-    // Teardown, not a fault: every sender dropped with the latch CLEAR is the node
-    // shutting this executor down. It must exit, count itself as a clean exit
-    // (the cause label is what tells an operator a stopped executor was torn down
-    // rather than killed by a fault), and raise no fault.
+    // Teardown, not a fault: every sender dropped with the latch clear is the node
+    // shutting this executor down, so it exits with the `mailbox_closed` cause and
+    // raises no fault.
     #[test]
     fn mailbox_close_exits_cleanly_when_not_halted() {
         let recorder = DebuggingRecorder::new();
@@ -12125,11 +10925,10 @@ mod tests {
         );
     }
 
-    // The ONE case with the latch already engaged at start: `SafetyHalt::restore_marker`
-    // re-engages from the datadir marker before any actor spawns, so NO fault ever
-    // reaches the router — the router's own is-engaged check cannot fire, and without
-    // the top-of-loop gate this actor would drive reth for a chain it has already
-    // latched "I refuse".
+    // The latch can already be engaged at start: `SafetyHalt::restore_marker`
+    // re-engages from the datadir marker before any actor spawns, so no fault
+    // reaches the router's own is-engaged check; the top-of-loop gate must park the
+    // actor instead of driving reth for a chain it has already refused.
     #[test]
     fn a_marker_restored_latch_parks_the_executor_before_it_drives_reth() {
         let runtime = deterministic::Runner::default();
@@ -12140,8 +10939,8 @@ mod tests {
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // A block plus the flush child its height needs to derive at all — so a
-            // missing gate shows up as real EL traffic, not merely as a held tip.
+            // A block plus the flush child it needs to derive, so a missing gate
+            // shows up as real EL traffic rather than a held tip.
             let order = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
             let child = child_of(&order);
             let post_halt = sample_order(child.digest(), ANCHOR + 3, B256::ZERO);
@@ -12176,22 +10975,18 @@ mod tests {
         });
     }
 
-    // The arm's latch check is defence in depth, not a window anyone can point at
-    // today: the only production engage sites are the router (which parks and never
-    // returns) and the startup marker restore (covered by the top-of-loop pre-class
-    // gate). It exists because a latch engaged from outside this actor while the loop
-    // sits in `select!` would otherwise be missed. A mailbox close in that state must
-    // park HERE: the
-    // loop's `break` returns from the task, dropping the held marshal `Exact` into
-    // Canceled, which the marshal treats as fatal.
+    // The arm's latch check is defence in depth: the only production engage sites
+    // are the router (which parks and never returns) and the startup marker restore
+    // (covered by the top-of-loop gate). A latch engaged from outside this actor
+    // while the loop sits in `select!` would otherwise be missed, and a `break`
+    // here would drop the held marshal `Exact` into Canceled — fatal to the marshal.
     #[test]
     fn mailbox_close_while_halted_parks_and_retains_acks() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
-            // Beacon-ACTIVE epoch + an EMPTY store, so the block below is HELD
-            // and its ack is un-resolved and in the actor's hands when the latch
-            // trips.
+            // Beacon-active epoch with an empty store, so the block is held and its
+            // ack is un-resolved when the latch trips.
             let fx = Fixture::new(ANCHOR)
                 .with_seed_store(crate::beacon::testing::SeedStore::new())
                 .with_epocher(beacon_active_epocher());
@@ -12207,8 +11002,8 @@ mod tests {
                 "the held tip's ack is the one the park must retain"
             );
 
-            // Mid-flight, with the loop parked in `select!` and no timer due to wake
-            // it (the fixture's heartbeat is 60s): engage, then close.
+            // Engage mid-flight with the loop parked in `select!` and no timer due
+            // (the fixture's heartbeat is 60s), then close.
             fx.safety_halt.engage(SyncReason::ResultDivergence);
             drop(mailbox);
             ctx.sleep(Duration::from_millis(20)).await;
@@ -12224,19 +11019,17 @@ mod tests {
         });
     }
 
-    // bugs 6/7: while a jump is in flight (`jump_done` armed) the executor is the
-    // SINGLE EL writer — NO finalize-derive and NO speculative execute may fire
-    // (their FCUs would retarget reth's backfill, starving the jump's `Valid`
-    // terminator). A finalize + a spec delivered during the jump must NOT derive;
-    // once the jump completes (a no-op `Lagging` landing here) the queued finalize
-    // drains.
+    // While a jump is in flight (`jump_done` armed) the executor is the only EL
+    // writer: a finalize-derive or speculative execute would retarget reth's
+    // backfill and starve the jump's `Valid` terminator, so both are suppressed and
+    // the queued finalize drains once the jump completes.
     #[test]
     fn no_derive_or_spec_while_jump_in_flight_then_drains() {
         let runtime = deterministic::Runner::default();
         runtime.start(|ctx| async move {
             const ANCHOR: u64 = 100;
-            // A re-jump waiter that HANGS until `release`, then lands as a no-op
-            // (`Lagging` — no floor change, so the queued ANCHOR+1 stays derivable).
+            // The re-jump waiter hangs until `release`, then lands as a no-op
+            // `Lagging` (no floor change, so the queued ANCHOR+1 stays derivable).
             let release = Arc::new(tokio::sync::Notify::new());
             let calls: RejumpCalls = Arc::new(Mutex::new(Vec::new()));
             let calls_cl = calls.clone();
@@ -12260,14 +11053,12 @@ mod tests {
             let (actor, mailbox) = fx.build(ctx.clone(), ANCHOR, ANCHOR);
             let handle = actor.start();
 
-            // Trigger the jump (far tip) — the waiter hangs, so `jump_done` stays armed.
             mailbox
                 .send(tip_msg(ANCHOR + JUMP_THRESHOLD + 5_010))
                 .expect("send tip");
             ctx.sleep(Duration::from_millis(10)).await;
             assert_eq!(calls.lock().unwrap().len(), 1, "the jump spawned");
 
-            // Deliver a finalize + a spec WHILE the jump is in flight → neither derives.
             let order = sample_order(Digest(B256::ZERO), ANCHOR + 1, B256::ZERO);
             fx.marshal
                 .canned
@@ -12283,9 +11074,6 @@ mod tests {
                 "no finalize-derive or spec-execute may fire while a jump is in flight"
             );
 
-            // Release the jump (no-op landing) → `jump_done` clears → the queued
-            // finalize drains (ANCHOR+1 becomes the held tip) and its child's
-            // arrival derives it.
             release.notify_one();
             let (fin_child, _wc) = finalize_msg(child_of(&order));
             mailbox.send(fin_child).expect("send child");
@@ -12299,10 +11087,9 @@ mod tests {
         });
     }
 
-    // (f) STALE-SPEC: after a far re-jump, a `SpecNotarized` at landing+1 must
-    // speculate ⇒ `spec_head == landing` (raised by `reseed_forward`). Pre-fix,
-    // `spec_head` was the stale pre-jump tip, so landing+1 != spec_head+1 and the
-    // speculation was silently dropped.
+    // After a far re-jump, `reseed_forward` raises `spec_head` to the landing, so a
+    // `SpecNotarized` at landing+1 speculates; a stale pre-jump `spec_head` would
+    // drop it silently.
     #[test]
     fn re_jump_resets_stale_spec_head() {
         let runtime = deterministic::Runner::default();
@@ -12327,25 +11114,19 @@ mod tests {
                 .unwrap()
                 .insert(landing_h, landing_hash);
 
-            // Trigger the re-jump (re-seeds spec_head to the landing).
             mailbox
                 .send(tip_msg(ANCHOR + JUMP_THRESHOLD + 5_010))
                 .expect("send tip");
-            // Yield so the spawned waiter completes + its `jump_done` arm re-seeds
-            // spec_head to the landing before the speculation below.
             ctx.sleep(Duration::from_millis(10)).await;
 
-            // A notarized block at landing+1 — must speculate (height == spec_head
-            // + 1) ONLY if spec_head was raised to the landing.
             let order = sample_order(Digest(B256::ZERO), landing_h + 1, B256::ZERO);
             fx.marshal
                 .canned
                 .lock()
                 .unwrap()
                 .insert(landing_h + 1, order.clone());
-            // The node is still behind the deep tip ⇒ guard #2 fires at the
-            // finalized derive — can the attested block at landing+1+K, whose
-            // result commits the (speculated) hash at landing+1.
+            // The node is behind the deep tip, so the finalized derive needs the
+            // attested body at landing+1+K whose result commits the speculated hash.
             let spec_hash = sealed_at(landing_hash, landing_h + 1, order.digest().0).hash();
             fx.marshal.canned.lock().unwrap().insert(
                 landing_h + 1 + K,
@@ -12353,9 +11134,6 @@ mod tests {
             );
             mailbox.send(spec_msg(&order)).expect("send spec");
 
-            // Drain barrier: finalize the SAME order (+ its child, which
-            // triggers the derive) — reconciliation skips the re-derive iff the
-            // speculation landed first.
             let (msg, waiter) = finalize_msg(order.clone());
             mailbox.send(msg).expect("send finalize");
             waiter.await.expect("ack");
@@ -12376,16 +11154,8 @@ mod tests {
         });
     }
 
-    // REAL-marshal SafetyHalt liveness.
-    // The commonware marshal treats a Canceled `Exact` ack as fatal (its `run`
-    // returns), so the pre-fix halt path (executor exits, dropping the ack)
-    // killed the marshal — the component that serves blocks + certs to peers —
-    // leaving a zombie node. This harness runs the REAL `marshal::core::Actor`
-    // (real archives, real dispatch/ack pipeline) against the real executor and
-    // pins the fixed posture end-to-end: after a provoked result divergence the
-    // marshal is still polled AND still answers a block-by-height request. It
-    // also distinguishes the fix from the freeze failure mode — if holding the
-    // ack blocked the marshal's loop, `get_block` would never answer.
+    // A dropped `Exact` is fatal to the real marshal's `run`; this harness pins
+    // that a SafetyHalt keeps the marshal serving instead.
     mod real_marshal {
         use super::*;
         use crate::cert_inlet::NoopResolver;
@@ -12419,10 +11189,8 @@ mod tests {
         type StdVariant = Standard<OrderBlock>;
         type RealMailbox = CwMailbox<BlsScheme, StdVariant>;
 
-        /// Body-less [`MarshalBuffer`]: every body in this harness is made local
-        /// via `verified()` BEFORE its finalization is reported, so the buffer is
-        /// dead weight that must only satisfy the `start` bound (the follower's
-        /// production stack relies on the same verified-cache-first lookup).
+        /// Body-less [`MarshalBuffer`]: bodies are made local via `verified()`
+        /// before their finalization is reported, so every lookup here misses.
         #[derive(Clone)]
         struct NoopBuffer;
 
@@ -12440,8 +11208,8 @@ mod tests {
                 &self,
                 _digest: Digest,
             ) -> cw_oneshot::Receiver<OrderBlock> {
-                // Sender leaked: "never resolves", not "canceled" — the marshal
-                // keeps the subscription open instead of tearing it down.
+                // Leaking the sender keeps the receiver unresolved rather than
+                // canceled, so the marshal keeps the subscription open.
                 let (tx, rx) = cw_oneshot::channel();
                 std::mem::forget(tx);
                 rx
@@ -12464,9 +11232,8 @@ mod tests {
             }
         }
 
-        /// The `FluentApp` reporter seam, minus everything but the executor
-        /// forward: `Update::Block` acks travel INSIDE the command, exactly like
-        /// production (`application.rs::report`).
+        /// Forwards the real marshal's `Update`s into the executor mailbox; the
+        /// `Exact` ack rides inside the command, as in production.
         #[derive(Clone)]
         struct ForwardToExecutor(Mailbox);
 
@@ -12516,7 +11283,7 @@ mod tests {
             Committee { signers, verifier }
         }
 
-        /// A real 2f+1 finalization cert over `block`'s digest, signed by `c`.
+        /// A 2f+1 finalization certificate over `block`'s digest.
         fn certify(c: &Committee, block: &OrderBlock) -> Finalization<BlsScheme, Digest> {
             let round = Round::new(Epoch::new(0), View::new(block.height));
             let prop = Proposal::new(round, View::new(block.height - 1), block.digest());
@@ -12530,8 +11297,8 @@ mod tests {
                 .expect("quorum")
         }
 
-        /// Make `block` local + report its finalization — the marshal stores it
-        /// and (contiguously) dispatches `Update::Block` to the executor.
+        /// Make `block` local and report its finalization so the marshal stores
+        /// it and dispatches `Update::Block` to the executor.
         async fn finalize_via_marshal(
             marshal: &mut RealMailbox,
             c: &Committee,
@@ -12550,7 +11317,6 @@ mod tests {
             runtime.start(|ctx| async move {
                 let c = committee(7);
 
-                // Real marshal over real (deterministic-runtime) archives.
                 let page_cache = CacheRef::from_pooler(
                     &ctx,
                     crate::outer::PAGE_CACHE_PAGE_SIZE,
@@ -12596,7 +11362,6 @@ mod tests {
                 .await;
                 assert_eq!(last_processed.get(), 0, "fresh archives");
 
-                // Real executor (fake EL) fed by the REAL marshal dispatch.
                 let fx = Fixture::new(0);
                 let anchor_hash = fx.anchor_hash;
                 let (executor, exec_mailbox) = Actor::init(
@@ -12623,12 +11388,9 @@ mod tests {
                         safety_halt: fx.safety_halt.clone(),
                         spawn_unblocked: std::sync::Arc::new(tokio::sync::Notify::new()),
                         re_jump: None,
-                        // Deliberately the negative provider: every height here
-                        // sits in epoch 0 under the epocher below, which is
-                        // beacon-INACTIVE, so the derive resolves `None` and can
-                        // never hold. This is the only site driving a REAL
-                        // marshal, and a σ at epoch 0 would model a state
-                        // production cannot reach.
+                        // Negative provider on purpose: every height here sits in
+                        // epoch 0 under the epocher below, which is beacon-inactive,
+                        // so the derive resolves `None` and nothing can be held.
                         randomness: crate::beacon::absent_unregistered(),
                         epocher: crate::epocher::OriginEpocher::new(
                             0,
@@ -12639,7 +11401,7 @@ mod tests {
                 );
                 let _executor_handle = executor.start();
 
-                // Keep a live sender so the marshal's resolver_rx never closes.
+                // Held so the marshal's resolver channel never closes.
                 let (_resolver_tx, resolver_rx) = mpsc::channel::<handler::Message<Digest>>(8);
                 let mut marshal_handle = marshal_actor.start(
                     ForwardToExecutor(exec_mailbox),
@@ -12651,14 +11413,9 @@ mod tests {
                 );
                 let mut marshal = marshal_mailbox;
 
-                // Contiguous finalized chain: heights 1..K-1 in the pre-activation
-                // window (result MUST be ZERO), height K commits executed_hash(0) —
-                // forged, so the executor's cross-check halts at K. Each height
-                // derives at its OWN dispatch (this actor's epocher puts every
-                // height in epoch 0, which is beacon-INACTIVE, so σ is `None` and
-                // nothing is ever held), which is when K's forged cross-check
-                // fires. K+1 is dispatched below to prove its ack is RETAINED by
-                // the park rather than dropped.
+                // Contiguous finalized chain: heights 1..K-1 are pre-activation
+                // (result must be zero), height K carries a forged result so the
+                // executor's cross-check halts there.
                 let mut parent = Digest(B256::ZERO);
                 for h in 1..K {
                     let block = sample_order(parent, h, B256::ZERO);
@@ -12675,17 +11432,15 @@ mod tests {
                 })
                 .await;
 
-                // K's own dispatch engages the halt; K+1 is dispatched into the
-                // halted executor, which parks retaining both acks.
+                // K+1 is dispatched into the halted executor to show the park
+                // retains its ack instead of dropping it.
                 let post_halt = sample_order(div_digest, K + 1, B256::ZERO);
                 finalize_via_marshal(&mut marshal, &c, &post_halt).await;
                 wait_until(&ctx, "SafetyHalt engaged", || fx.safety_halt.is_engaged()).await;
                 ctx.sleep(Duration::from_millis(50)).await;
 
-                // THE LIVENESS PROOF, both failure modes: a dead marshal (pre-fix
-                // Canceled-ack exit) has a closed mailbox → `get_block` returns
-                // None; a frozen marshal (ack awaited inline) never answers →
-                // `wait_until` times out.
+                // Liveness proof: a dead marshal (closed mailbox) returns `None`
+                // from `get_block`, and a frozen one never answers at all.
                 assert!(
                     (&mut marshal_handle).now_or_never().is_none(),
                     "the marshal actor must still be running after the SafetyHalt \
@@ -12698,9 +11453,7 @@ mod tests {
                     "the halted node's marshal must still serve blocks by height"
                 );
 
-                // Progress stopped: the diverged height is never acked, so the
-                // executor never derives past it and no further ack can advance
-                // the marshal's processed height.
+                // The diverged height is never acked, so nothing derives past it.
                 assert!(
                     fx.chain.spec_executed_hash(K + 1).is_none(),
                     "no derive past the halted height"
@@ -12708,17 +11461,9 @@ mod tests {
             });
         }
 
-        /// The storage claim boundary seeding rests on: an entry stored BEFORE the
-        /// floor rises past it survives the raise and stays readable underneath it.
-        ///
-        /// Three facts have to hold together for that to be true — `SetFloor` only
-        /// advances the cursor (immutable archives keep what they hold), the by-height
-        /// read consults no floor, and the below-floor WRITE gate is evaluated when the
-        /// message is processed rather than when it is sent. The last one is what makes
-        /// ordering on the single mailbox the whole mechanism, so the negative half is
-        /// asserted too: the same store attempted AFTER the raise is dropped. If that
-        /// ever stops being true the seeding is silently a no-op, which is exactly the
-        /// failure this test exists to make loud.
+        /// The storage behavior boundary seeding relies on: an entry stored before
+        /// the floor rises stays readable below it, while a below-floor write after
+        /// the raise is dropped, so seeding must precede `set_floor`.
         #[test]
         fn injected_boundary_survives_set_floor_and_is_readable_below_floor() {
             let runtime = deterministic::Runner::default();
@@ -12767,8 +11512,8 @@ mod tests {
                     },
                 )
                 .await;
-                // A live executor mailbox + resolver sender so neither channel closes
-                // under the actor; nothing in this test reads from either.
+                // An executor mailbox and resolver sender are held so neither
+                // channel closes under the actor; nothing here reads either.
                 let fx = Fixture::new(0);
                 let (_executor, exec_mailbox) = fx.build(ctx.clone(), 0, 0);
                 let (_resolver_tx, resolver_rx) = mpsc::channel::<handler::Message<Digest>>(8);
@@ -12802,14 +11547,13 @@ mod tests {
             });
         }
 
-        /// Epoch geometry for the seeding tests: epochs are `[0,99]`, `[100,199]`, …
-        /// so a floor of 997 buries the terminal 899 and the first block 900.
+        /// Epoch geometry for the seeding tests: length-100 epochs from 0, so a
+        /// floor of 997 buries the terminal 899 and the first block 900.
         fn seeding_epocher() -> crate::epocher::OriginEpocher {
             crate::epocher::OriginEpocher::new(0, std::num::NonZeroU64::new(100).unwrap())
         }
 
-        /// A seam that serves an authenticated pair for every height in `serve`, and
-        /// nothing for any other height.
+        /// Serves an authenticated pair for every height in `serve`, and nothing else.
         fn seam(c: &Committee, serve: Vec<u64>) -> crate::cert_follow::BoundaryFetchFn {
             let certs: std::collections::BTreeMap<u64, crate::cert_follow::UpstreamFinalized> =
                 serve
@@ -12832,7 +11576,7 @@ mod tests {
             })
         }
 
-        /// Both buried heights are seeded, and both land STRICTLY before the floor
+        /// Both buried heights are seeded, and both strictly before the floor
         /// rises — the ordering the storage gate makes load-bearing.
         #[test]
         fn reseed_forward_injects_missing_boundary_pair_before_set_floor() {
@@ -12859,8 +11603,8 @@ mod tests {
             });
         }
 
-        /// Keyed on the CONDITION, not the event: a node that already holds the pair
-        /// does no fetch and no store, even though a jump just landed.
+        /// Keyed on the condition, not the event: a node that already holds the
+        /// pair does no fetch and no store, even though a jump just landed.
         #[test]
         fn reseed_forward_skips_present_boundary() {
             let runtime = deterministic::Runner::default();
@@ -12892,10 +11636,8 @@ mod tests {
             });
         }
 
-        /// Both-or-neither. Seeding only the terminal would satisfy the engine-spawn
-        /// gate while leaving the promote VALUE-gate — which reads the epoch's FIRST
-        /// block — with nothing to compare against, promoting the member at exactly
-        /// the moment that check degrades to a no-op.
+        /// Both-or-neither: seeding only the terminal would let the member promote
+        /// at exactly the moment the value gate degrades to a no-op.
         #[test]
         fn reseed_forward_injects_neither_when_one_fetch_fails() {
             let runtime = deterministic::Runner::default();
@@ -12920,9 +11662,9 @@ mod tests {
             });
         }
 
-        /// The re-jump itself enters the landing epoch. Nothing else can: the floor
-        /// raise disqualifies the predecessor terminal from ever being dispatched, and
-        /// a delivered boundary block is the only other entry edge.
+        /// The re-jump itself enters the landing epoch: the floor raise
+        /// disqualifies the predecessor terminal from ever being dispatched, and a
+        /// delivered boundary block is the only other entry edge.
         #[test]
         fn reseed_forward_enters_the_landing_epoch() {
             let runtime = deterministic::Runner::default();
@@ -12950,8 +11692,8 @@ mod tests {
             });
         }
 
-        /// Condition-keyed on the LANDING, not on whether seeding found anything to do.
-        /// A node that already holds the pair seeds nothing and must still enter.
+        /// Condition-keyed on the landing, not on whether seeding found anything:
+        /// a node that already holds the pair seeds nothing and must still enter.
         #[test]
         fn reseed_forward_enters_even_when_the_boundary_is_already_present() {
             let runtime = deterministic::Runner::default();
@@ -12990,11 +11732,9 @@ mod tests {
             });
         }
 
-        /// The read floor published to the epoch state machine is the FLOOR (result-final),
-        /// not the landing (ordering-final only) — and it is published BEFORE the entry,
-        /// which is the whole point: the entry's first committee read must already resolve
-        /// inside the window the jump left this node with. Both seams record into one sink,
-        /// so the assertion pins the value and the order together.
+        /// The read floor published before the entry is the floor (result-final),
+        /// not the landing, so the entry's first committee read resolves in the
+        /// window the jump left this node with.
         #[test]
         fn reseed_forward_publishes_the_read_floor_before_entering() {
             let runtime = deterministic::Runner::default();
@@ -13023,9 +11763,9 @@ mod tests {
             });
         }
 
-        /// The entry keys on `terminal_at_or_below(landing)`; the seed beside it keys on
-        /// `terminal_at_or_below(floor)`. At a landing within K of an epoch start the two
-        /// are a whole epoch apart, and the floor's answer names the epoch just LEFT.
+        /// The entry keys on `terminal_at_or_below(landing)`; the seed keys on
+        /// `terminal_at_or_below(floor)`. At a landing within K of an epoch start
+        /// the two differ by a whole epoch, and the floor names the epoch just left.
         #[test]
         fn reseed_forward_entry_height_is_keyed_on_the_landing_not_the_floor() {
             let runtime = deterministic::Runner::default();
@@ -13060,12 +11800,7 @@ mod tests {
         }
     }
 
-    // The wake-up arm must not spin on a dead beacon. A `broadcast` receiver whose
-    // senders are all gone answers `Closed` IMMEDIATELY and FOREVER, so an arm that
-    // treated `Closed` like any other wake-up would re-poll without awaiting for as
-    // long as a tip is HELD — a hot loop in exactly the incident where the node is
-    // already degraded. The HEAD shape parked on a `Notify` whose sender the actor
-    // itself held, so the case could not arise; `Disarm` is what replaces that park.
+    // The wake-up arm disarms on a closed beacon channel instead of spinning on it.
     #[tokio::test]
     async fn a_closed_beacon_channel_disarms_the_wake_up_arm_instead_of_spinning() {
         let (tx, mut rx) = tokio::sync::broadcast::channel(4);
@@ -13077,8 +11812,7 @@ mod tests {
         );
 
         drop(tx);
-        // The spin premise, asserted rather than assumed: with the sender gone the
-        // receiver is ready on every poll, twice in a row and without awaiting.
+        // The receiver is ready on every poll, twice in a row and without awaiting.
         let first = rx.recv().await;
         assert!(
             matches!(first, Err(tokio::sync::broadcast::error::RecvError::Closed)),
@@ -13096,8 +11830,8 @@ mod tests {
         assert_eq!(classify_seed_wake(&second), SeedWake::Disarm);
     }
 
-    // The other two classes are wake-ups for OTHER consumers of the same channel:
-    // no derive, and the arm stays armed.
+    // The other two event classes are wake-ups for other consumers of the same
+    // channel: no derive, and the arm stays armed.
     #[test]
     fn the_wake_up_arm_ignores_the_other_two_event_classes_and_derives_on_lagged() {
         assert_eq!(

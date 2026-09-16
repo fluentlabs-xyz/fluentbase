@@ -1,9 +1,4 @@
-//! EIP-2537 ↔ compressed round-trip coverage for the MinSig point encodings.
-//!
-//! The forward direction ships in `fluentbase_bls::encoding`; the inverse is a
-//! test-only helper in `tests/common`. These tests assert `reverse(forward(x))
-//! == x` over many keys plus a randomized property, so a byte-order regression
-//! in either direction is caught.
+//! `reverse(forward(x)) == x` for the EIP-2537 MinSig pubkey and signature encodings.
 
 mod common;
 

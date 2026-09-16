@@ -1,103 +1,50 @@
-//! Hardcoded protocol-wide constants — must be identical across the network.
+//! Hardcoded protocol-wide constants — every node on a network computes the same
+//! values byte-for-byte, so any change requires a coordinated release.
 //!
-//! Any change requires a coordinated software release because all
-//! validators must agree on these values byte-for-byte (the list:
-//! `namespace`, `max_message_size`, `synchrony_bound`,
-//! `max_peer_set_size`, `tracked_peer_sets`, `gossip_bit_vec_frequency`,
-//! all timeouts, all rate-limit quotas). The constants below cover
-//! every such item we control; `synchrony_bound`/`max_handshake_age`/etc
-//! are left at commonware's `Config::recommended` defaults (verified
-//! identical-across-network by virtue of the Config builder).
+//! The commonware config fields this crate builds are under the same rule:
+//! `namespace`, `max_message_size`, `synchrony_bound`, `max_peer_set_size`,
+//! `tracked_peer_sets`, `gossip_bit_vec_frequency`, every timeout and every
+//! rate-limit quota. The items not set here stay at commonware's
+//! `Config::recommended` defaults, which every node computes identically.
 
 use commonware_runtime::Quota;
 use commonware_utils::NZU32;
 
-// Channel IDs
-//
-// Three top-level Muxed channels (per-epoch demux): VOTE/CERT/RESOLVER.
-// Six top-level non-Muxed channels (global one-instance for the node):
-// BROADCAST (block-data dissemination via `buffered::Engine`),
-// MARSHAL (backfill via `marshal::resolver::p2p::init`), BEACON
-// (randomness-beacon DKG; see BEACON_CHANNEL below), BEACON_RESOLVER
-// (DKG-log recovery via `commonware_resolver::p2p`; see BEACON_RESOLVER_CHANNEL
-// below), FRONTIER (plane-native `CertUpstream` frontier/by-height pull via
-// `commonware_resolver::p2p`; see FRONTIER_CHANNEL below), and EVIDENCE
-// (equivocation-evidence gossip; see EVIDENCE_CHANNEL below). Order is arbitrary
-// but fixed: changing it without coordinated release silently misroutes consensus
-// traffic across the network.
+// Channel ids.
 pub const VOTE_CHANNEL: u64 = 0;
 pub const CERT_CHANNEL: u64 = 1;
 pub const RESOLVER_CHANNEL: u64 = 2;
 pub const BROADCAST_CHANNEL: u64 = 3;
 pub const MARSHAL_CHANNEL: u64 = 4;
-// Beacon plane (threshold randomness): carries the per-epoch self-DKG
-// ceremony traffic (`BeaconMessage::Dkg`) that establishes `PK_epoch`. The
-// recovered randomness SEED rides INSIDE the consensus cert
-// (`CombinedCertificate`) — the old sign-at-notarize seed side-channel was
-// deleted — so this channel carries DKG ONLY. A GLOBAL one-instance channel
-// like BROADCAST/MARSHAL, registered once in `FluentP2P::build` and consumed by
-// the live `DkgActor` (`dpos.rs::launch` → `beacon/actor.rs`). Per-epoch Muxing
-// (so DKG-for-E and DKG-for-E+1 never interleave) is deferred.
+// Beacon plane: the per-epoch self-DKG ceremony traffic (`BeaconMessage::Dkg`)
+// that establishes `PK_epoch`. The recovered randomness seed rides inside the
+// consensus cert (`CombinedCertificate`), so this channel carries DKG only.
 pub const BEACON_CHANNEL: u64 = 5;
-// Beacon-plane DKG-log recovery resolver (`commonware_resolver::p2p`): a
-// mid-window-restarted committee member re-fetches the public dealer logs it
-// never received, keyed by `{epoch, dealer}`, from peers that still hold them
-// (the always-on plane keeps committee[E] connected; the EpochTransition's
-// `registry ∪ committee` tracker keeps them in `latest.primary`). Replaces the
-// former best-effort `BEACON_CHANNEL` LogRequest/LogResponse gossip pull. A
-// GLOBAL one-instance channel like BROADCAST/MARSHAL, registered once in
-// `FluentP2P::build` and consumed by the beacon-plane resolver engine
-// (`node/dpos.rs::build_beacon_plane`). MUST be byte-identical across the
-// network (a new channel id all nodes agree on).
+// DKG-log recovery resolver (`commonware_resolver::p2p`): a mid-window-restarted
+// committee member re-fetches the public dealer logs it never received, keyed by
+// `{epoch, dealer}`, from peers that still hold them.
 pub const BEACON_RESOLVER_CHANNEL: u64 = 6;
 // Plane-native `CertUpstream` frontier resolver (`commonware_resolver::p2p`): a
-// plain `--dpos` validator with no WS upstream discovers the network frontier
-// (`FrontierKey::Latest`) and pulls by-height finalizations (`FrontierKey::Finalized`)
-// over the consensus plane, serving each peer THIS node's LOCAL marshal tip/archive
-// (no execution, no marshal-serving change). This is the transport the plane
-// `PlaneUpstreamHandle` (`consensus/src/plane_upstream.rs`) rides — the seam that lets
-// the cold-start/steady-state JUMP run without `--dpos.follower-upstream`. A GLOBAL
-// one-instance channel like BROADCAST/MARSHAL/BEACON_RESOLVER, registered once in
-// `FluentP2P::build` and consumed by the frontier resolver engine
-// (`node/dpos.rs::build_beacon_plane`). MUST be byte-identical across the network.
+// validator with no WS upstream discovers the network frontier
+// (`FrontierKey::Latest`) and pulls by-height finalizations
+// (`FrontierKey::Finalized`) over the consensus plane.
 pub const FRONTIER_CHANNEL: u64 = 7;
-// EVIDENCE: equivocation evidence gossip. A node publishes the signed vote it
-// personally received for a view when that view failed, or when its own vote
-// disagrees with a certificate it saw. A GLOBAL one-instance channel, registered
-// once in `FluentP2P::build` and consumed by the node's evidence task
-// (`node/dpos.rs::build_beacon_plane`), which feeds verified votes into the
-// slasher's vote store. MUST be byte-identical across the network.
+// Equivocation evidence gossip: a node republishes the signed votes it holds for
+// a decided round, so the two halves of a split-delivered equivocation can meet.
 pub const EVIDENCE_CHANNEL: u64 = 8;
 
-// Sub-channel id space
-//
-// The three Muxed top-level channels (VOTE/CERT/RESOLVER) and the broadcast /
-// marshal muxes carry sub-channels keyed by a `u64`. A per-epoch consensus
-// engine registers the EPOCH NUMBER itself as its sub-channel id
-// (`consensus::epoch_manager::spawn_engine`), and the global singletons take 0
-// (`consensus::outer`), so the epoch-key AGREEMENT instance takes a slice of the
-// id space that no epoch number can reach: `DKG_SUBCHANNEL_BASE | target_epoch`,
-// with `target_epoch < DKG_SUBCHANNEL_BASE` enforced by the caller. At one epoch
-// per day 2^32 epochs is ~11.7 million years, so the two spaces are disjoint by
-// construction — and the construction is CHECKED rather than trusted: the caller
-// range-tests the epoch, and the muxer answers `AlreadyRegistered` on a collision
-// instead of overwriting the live route.
-//
-// Reusing sub-channel ids rather than adding top-level channels rests on two
-// grounds: it avoids six mechanical edit sites (a const, a `network.register`,
-// handle/plane fields, three doc comments and a unit test) and keeps the agreement
-// traffic on quotas that already exist. A third ground — "it avoids a coordinated
-// network-wide release" — HAS EXPIRED: `OrderBlock` has since dropped
-// `beacon_outcome` and `dkg_logs`, which moved the block digest and made the
-// release coordinated anyway. Do not carry the release argument forward.
+// Sub-channel id space. The muxed channels carry sub-channels keyed by a `u64`;
+// a per-epoch consensus engine registers the epoch number itself and the global
+// singletons take 0, so the epoch-key agreement instance takes
+// `DKG_SUBCHANNEL_BASE | target_epoch`, above every epoch a real chain reaches (at
+// one epoch per day, 2^32 epochs is ~11.7 million years). The caller range-checks
+// the epoch anyway, and a collision surfaces as the muxer's `AlreadyRegistered`
+// rather than overwriting the live route.
 pub const DKG_SUBCHANNEL_BASE: u64 = 1 << 32;
 
 /// The epoch a sub-channel id denotes, or `None` when the id belongs to the
-/// agreement slice instead. The SENDING half of this contract is
-/// `dkg_subchannel` (consensus `beacon/dkg_transport.rs`); this is the receiving
-/// half. A muxer hands an unrouted frame's id back RAW, so every ingress that
-/// turns one into an epoch must come through here — an id is not an epoch until
-/// it has.
+/// agreement slice. A muxer hands an unrouted frame's id back raw, so every
+/// ingress that turns an id into an epoch must come through here.
 pub const fn epoch_from_subchannel(id: u64) -> Option<u64> {
     if id >= DKG_SUBCHANNEL_BASE {
         None
@@ -106,43 +53,32 @@ pub const fn epoch_from_subchannel(id: u64) -> Option<u64> {
     }
 }
 
-// Per-channel rate quotas
-//
-// Aligned to alto/tempo precedent (tempo `config.rs:37-43`, alto
-// `validator/main.rs:214-235`): 128/s per recipient pair for vote/cert/
-// resolver. Previous derivation (10/s based on happy-path 3/s + 3× headroom)
-// ignored view-change/nullify bursts and per-`Recipients::All` quota
-// consumption at n=51 validators (each broadcast consumes 50 pair-slots).
-// 128/s = 12.8× over Fluent's prior 10/s quota; alto/tempo use this same
-// value as a widely-deployed default with no published load-test
-// justification (cargo-cult from known-good precedent; measured trace
-// deferred until production blocks exist).
-//
-// BROADCAST/MARSHAL: untouched (block-data infrequent + backfill bursty —
-// alto/tempo also use 8/s for BROADCASTER_LIMIT).
+// Per-channel rate quotas, vote/cert/resolver aligned to the alto/tempo default of
+// 128/s per recipient pair — a deployed precedent rather than a measured trace. A
+// `Recipients::All` broadcast at n=51 consumes 50 pair-slots, so a lower quota
+// would throttle view-change and nullify bursts.
 pub const VOTE_QUOTA: Quota = Quota::per_second(NZU32!(128));
 pub const CERT_QUOTA: Quota = Quota::per_second(NZU32!(128));
 pub const RESOLVER_QUOTA: Quota = Quota::per_second(NZU32!(128));
-// BROADCAST: block-data is fat but infrequent.
-// MARSHAL:   backfill is request-bursty (catch-up).
+// Block data is fat but infrequent; marshal backfill is request-bursty during
+// catch-up.
 pub const BROADCAST_QUOTA: Quota = Quota::per_second(NZU32!(8));
 pub const MARSHAL_QUOTA: Quota = Quota::per_second(NZU32!(16));
-// BEACON: DKG is bursty for one round per epoch (dealing/ack broadcast) then
-// idle. Matched to VOTE/CERT (same n=51 fan-out for the DKG round).
+// DKG is bursty for one round per epoch (dealing/ack broadcast), with the same
+// n=51 fan-out as vote/cert.
 pub const BEACON_QUOTA: Quota = Quota::per_second(NZU32!(128));
-// BEACON_RESOLVER: DKG-log recovery fetch — request-bursty during a single
-// restarted member's catch-up (≤ n keys, one per missing dealer), then idle.
-// Matched to MARSHAL (the other resolver backfill channel).
+// DKG-log recovery is request-bursty during one restarted member's catch-up (≤ n
+// keys, one per missing dealer), then idle; matched to marshal.
 pub const BEACON_RESOLVER_QUOTA: Quota = Quota::per_second(NZU32!(16));
-// FRONTIER: a rare, cheap, per-peer tip/by-height query (one per jump attempt /
-// re-jump edge / marshal by-height backfill hole). O(1) local reads. Matched to
-// MARSHAL/BEACON_RESOLVER (the other resolver backfill channels).
+// A rare, cheap, per-peer tip/by-height query (one per jump attempt, re-jump edge
+// or marshal backfill hole), answered from O(1) local reads; matched to the other
+// resolver channels.
 pub const FRONTIER_QUOTA: Quota = Quota::per_second(NZU32!(16));
-// EVIDENCE: at most one publication per validator per failed view — bounded by
-// the view rate, not by traffic. Matched to FRONTIER.
+// At most one publication per validator per failed view, bounded by the view rate
+// rather than by traffic.
 pub const EVIDENCE_QUOTA: Quota = Quota::per_second(NZU32!(16));
 
-// Per-channel backlog (mailbox size before back-pressure)
+// Per-channel backlog: mailbox size before back-pressure.
 pub const VOTE_BACKLOG: usize = 256;
 pub const CERT_BACKLOG: usize = 256;
 pub const RESOLVER_BACKLOG: usize = 64;
@@ -153,58 +89,38 @@ pub const BEACON_RESOLVER_BACKLOG: usize = 128;
 pub const FRONTIER_BACKLOG: usize = 64;
 pub const EVIDENCE_BACKLOG: usize = 64;
 
-// Wire caps
-//
-// `MAX_MESSAGE_SIZE` covers absolute worst-case at current 50M gas
-// (50_000_000 / 16 ≈ 3.125 MB calldata-heavy block) + ~30% headroom.
-// Hardcoded (not chainspec-tunable) because all peers must agree.
+// Wire cap: the worst case at 50M gas (50_000_000 / 16 ≈ 3.125 MB of
+// calldata-heavy block) plus ~30% headroom. Hardcoded rather than
+// chainspec-tunable because all peers must agree.
 pub const MAX_MESSAGE_SIZE: u32 = 4 * 1024 * 1024;
 
-// Committee cap — bounds the COMMITTEE (the production record's
-// `leader_index: u8`, BLS scheme building), NOT the p2p tracker feed (see
-// `MAX_REGISTRY_PEER_SET` below for that).
-//
-// The staking module enforces the same cap on the way in
-// (`setActiveValidatorsLength` refuses a larger value and the selection
-// truncates to it), so there is one declaration and both sides import it. It
-// used to be two literals under two names, held together by a comment.
+// Committee cap — bounds the committee (the production record's `leader_index: u8`,
+// BLS scheme building), not the p2p tracker feed (see `MAX_REGISTRY_PEER_SET`
+// below). The staking module enforces the same cap on the way in, so both sides
+// import this one declaration.
 pub use fluentbase_types::staking_protocol::MAX_COMMITTEE_SIZE;
 
-// Tracker bit-vec guard for the tier-2 registry feed (the FULL Active
-// validator registry ∪ current committee is tracked, not just the
-// committee — every activated validator keeps consensus-plane
-// connectivity). Generous, NOT policy: the registry is bounded
-// economically (min stake) + by governance activation, and commonware's
-// recommended `max_peer_set_size` is 2^16 (gossip costs one bit per
-// peer). The staking-reader's `check_peer_set_size` rejects an oversize
-// feed as a typed `ReadError::PeerSetTooLarge` instead of letting
-// commonware's tracker panic deeper.
+// Tracker bit-vec guard for the tier-2 registry feed (the full Active validator
+// registry ∪ current committee is tracked, not just the committee). Generous, not
+// policy: the registry is bounded economically (min stake) and by governance
+// activation, and commonware's recommended `max_peer_set_size` is 2^16. The
+// staking-reader's `check_peer_set_size` rejects an oversize feed as a typed
+// `ReadError::PeerSetTooLarge` instead of letting commonware's tracker panic
+// deeper.
 pub const MAX_REGISTRY_PEER_SET: u64 = 4096;
 
-// Network policy
+// Network policy: accept DNS-hostname ingress (`Ingress::Dns`) in both the locally
+// advertised Info record and gossiped peer Info. DNS is not a trust anchor —
+// identity is on-chain Ed25519 + handshake, and the resolved IP is re-checked
+// against `allow_private_ips` after resolution.
 //
-// `ALLOW_DNS: true` — accept DNS-hostname ingress (`Ingress::Dns`) in both the
-// locally-advertised Info record and gossiped peer Info. The DNS provider is
-// NOT a trust anchor: identity is still on-chain Ed25519 + handshake, and the
-// hostname resolves to an IP that is re-checked against `allow_private_ips`
-// AFTER resolution (commonware `Ingress::resolve_filtered`).
-//
-// NETWORK-WIDE-SYNCHRONIZED INVARIANT: `Ingress::is_valid(_, allow_dns)`
-// rejects any DNS-form Info when `allow_dns == false`, so a node with this
-// `false` DROPS the peer records of a node advertising a hostname. A mixed
-// old(false)/new(true) network therefore cannot exchange DNS-form Info — the
-// two halves partition on the hostname records. A deployment MUST upgrade all
-// validators together before any node advertises a `--dpos.dialable` /
-// bootstrappers hostname. IP-only Info stays interoperable across the flip.
-//
-// Production still rejects RFC-1918 ingress: `allow_private_ips` is
-// network-derived in `FluentP2PConfig::into_commonware_config` (deployed
-// networks → false), and applies to resolved DNS IPs too.
+// `Ingress::is_valid` rejects DNS-form Info when `allow_dns` is false, so a
+// network split between the two values partitions on hostname records: all
+// validators must upgrade together before any node advertises a hostname.
+// IP-only Info stays interoperable either way.
 pub const ALLOW_DNS: bool = true;
 
-// Listen port
-//
-// Default 9000; runtime override via env var `FLUENT_DPOS_P2P_PORT`.
-// Must NOT collide with reth devp2p :30303 or any reth RPC port.
+// Default listen port; runtime override via `LISTEN_PORT_ENV_VAR`. Must not
+// collide with reth devp2p :30303 or any reth RPC port.
 pub const DEFAULT_LISTEN_PORT: u16 = 9000;
 pub const LISTEN_PORT_ENV_VAR: &str = "FLUENT_DPOS_P2P_PORT";

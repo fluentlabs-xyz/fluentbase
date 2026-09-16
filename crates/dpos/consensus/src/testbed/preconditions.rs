@@ -1,10 +1,9 @@
-//! Stand measurements behind the Э4 preconditions pass
-//! (`.dpos-study/history/E4-PRECONDITIONS.md`): what the marshal archives
-//! still serve after re-jumps and floor raises (Д3), the
-//! `best − ordering_finalized` band (Д4), and the DKG body count per peer (Д5).
+//! Stand measurements over the production stand: what the marshal archives
+//! still serve after re-jumps and floor raises, the `best − ordering_finalized`
+//! band, and the DKG body count per peer.
 //!
-//! Every test here asserts its PREMISE first — the node did jump, the floor did
-//! rise, the epochs did pass — and only then the observation; a measurement
+//! Every test here asserts its premise first (the node did jump, the floor did
+//! rise, the epochs did pass) and only then the observation; a measurement
 //! prints its numbers and asserts nothing about them.
 
 use super::stand::{ArchiveEntry, Committees, Outcome, Stand, StandConfig};
@@ -13,27 +12,24 @@ use fluentbase_p2p::constants::DKG_SUBCHANNEL_BASE;
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 const EPOCH_LEN: u64 = 32;
-/// The marshal's `last_processed_height` gauge (CW `marshal/core/actor.rs:326-332`)
-/// under the stand's label chain — the floor `SetFloor` raises and every ack
-/// advances.
+/// The marshal's processed-height gauge under the stand's label chain, the floor
+/// `SetFloor` raises and every ack advances.
 const MARSHAL_FLOOR: &str = "outer_marshal_processed_height";
 
 /// The height the network reaches before the consensus-plane cut heals.
 ///
-/// It has to be above `park + gate` for the isolated node to land any re-jump at
-/// all (the gate is `min(JUMP_THRESHOLD, 32)` and the park is `last(2) = 95`), and
-/// it has to leave the run enough room for the node to CATCH UP afterwards: the Д3
-/// premises include a marshal floor at or above the node's last landing, and a
-/// node that is still cut sits at `landing − K` for good — the floor advances
-/// again only once it is processing the chain instead of jumping over it (measured
-/// on a never-healed cut: `floor=182` against a last landing of 185).
+/// It has to be above `park + gate` for the isolated node to land any re-jump
+/// (the gate is `min(JUMP_THRESHOLD, 32)` and the park is `last(2) = 95`), and
+/// it has to leave the run enough room for the node to catch up: a node that is
+/// still cut sits at `landing − K` for good, because its floor advances again
+/// only once it processes the chain instead of jumping over it.
 const HEAL_ABOVE: u64 = 4 * EPOCH_LEN + 12;
 
 fn last(epoch: u64) -> u64 {
     (epoch + 1) * EPOCH_LEN - 1
 }
 
-/// The (B2)/(C9) schedule: 4 → 3 → 4, node 3 out for epochs 3 and 4.
+/// The 4 → 3 → 4 rotation, node 3 out for epochs 3 and 4.
 fn rotate_four_three_four() -> Committees {
     Committees::Schedule(Arc::new(|epoch, n| {
         Some(match epoch {
@@ -119,42 +115,19 @@ fn gap_line(hist: &BTreeMap<u64, u64>) -> String {
     format!("{hist:?}")
 }
 
-/// (Д3, gate at the production value) The (C9) fixture with the archive scan on:
-/// node 3 leaves the committee at epoch 3, parks, re-jumps twice on the
-/// production gate and comes back. After five full epochs EVERY node — the
-/// jumper included — holds the `(finalization, block)` pair at every epoch
-/// terminal `last(E)`, read through the two marshal-mailbox reads
-/// `handle_produce` serves a peer's `Finalized{h}` from (CW
-/// `marshal/core/actor.rs:808-818`; `plane_upstream::serve`).
+/// With the archive scan on, node 3 leaves the committee at epoch 3, parks,
+/// re-jumps twice on the production gate and comes back. After five full epochs
+/// every node, the jumper included, holds the `(finalization, block)` pair at
+/// every epoch terminal `last(E)`, read through the marshal-mailbox reads
+/// `handle_produce` serves a peer's `Finalized{h}` from (`plane_upstream::serve`).
 ///
-/// By the code the result is what it has to be: fluentbase's finalized archives
-/// are `immutable::Archive` (`outer.rs:422-423`), whose `prune` is a no-op (CW
-/// `marshal/store.rs:223-226`, `:261-264`), so the `SetFloor` a re-jump issues
-/// (`executor.rs:2570`) reclaims nothing, and the by-height reads consult no
-/// floor (`actor.rs:1369-1393`). What the run adds is the premise the code alone
-/// cannot give — that the jumper's floor really rose above earlier terminals —
-/// and the answer to (б): every height, terminal or not, carries its OWN
-/// certificate (no block-only entries), so `Finalized{last(E)}` is answerable
-/// from an explicit finalization rather than a descendant's.
-///
-/// WHAT HOLDS NODE 3 BACK (5.1). Not the rotation. Since П-3 the epoch key is an
-/// artifact any node may ASK a member for over `BEACON_RESOLVER_CHANNEL`
-/// (R-121/R-122), and the tracked peer set is
-/// `committee[E-1] ∪ committee[E] ∪ committee[E+1]`, so a node rotated out at
-/// epoch 3 keeps its consensus links through epoch 3, fetches `PK_3` and never
-/// falls behind at all (measured: every node at the same height,
-/// `jump_calls[3] = []`). The lag is therefore taken from a CONSENSUS-PLANE cut
-/// ([`super::stand::CutPlanes::ConsensusOnly`]) of node 3 inside epoch 2 — after
-/// it has dealt and holds every key up to `PK_2`, before the epoch-3 mint — and
-/// the cut never heals. That is the SAME state the rotation used to produce, node
-/// for node: no consensus plane means no vote, no ceremony and no artifact to ask
-/// for, while the frontier probe keeps feeding its marshal, which is what carries
-/// its tip to the two-epoch ceiling and what its re-jumps then climb.
-///
-/// Falsifier: node 3 not jumping (`jump_calls[3]` empty — the fixture changed);
-/// its floor gauge below its first landing (the floor did not rise); a node
-/// short of five epochs; a terminal without its pair on a member of the NEXT
-/// epoch's committee; a block-only entry anywhere.
+/// The finalized archives are `immutable::Archive`, so the `SetFloor` a re-jump
+/// issues reclaims nothing and the by-height reads consult no floor. What the run
+/// adds is the premise the code alone cannot give, that the jumper's floor really
+/// rose above earlier terminals, and that every height carries its own
+/// certificate rather than a descendant's. The lag comes from a consensus-plane
+/// cut of node 3 inside epoch 2, because since the epoch key became a fetchable
+/// artifact the rotation alone leaves a node following the chain.
 #[test]
 fn every_node_serves_the_terminal_pair_of_every_passed_epoch_after_re_jumps() {
     let mut cfg = StandConfig::live(4, 1);
@@ -203,8 +176,6 @@ fn every_node_serves_the_terminal_pair_of_every_passed_epoch_after_re_jumps() {
     assert!(out.halted.is_empty(), "{:?}", out.halted);
     assert!(out.errors().is_empty(), "{:?}", out.errors());
 
-    // PREMISE: the jumper jumped, its floor rose above earlier terminals, and
-    // every node went at least two epochs past every terminal it is asked for.
     let landings: Vec<u64> = out.jump_calls[3]
         .iter()
         .filter(|c| c.outcome == "Landed")
@@ -226,8 +197,7 @@ fn every_node_serves_the_terminal_pair_of_every_passed_epoch_after_re_jumps() {
         floor > last(3) as f64,
         "node 3's floor {floor} never passed the terminal of epoch 3"
     );
-    // Two epochs past `last(E)` means `start(E + 2)`; that holds for E ≤ 3 at
-    // the stop height (epoch 5 + 8), and epoch 4's terminal is one epoch back.
+    // Two epochs past `last(E)` means `start(E + 2)`.
     for i in 0..4 {
         assert!(
             out.heights[i] >= (epochs_passed + 1) * EPOCH_LEN,
@@ -238,8 +208,6 @@ fn every_node_serves_the_terminal_pair_of_every_passed_epoch_after_re_jumps() {
         );
     }
 
-    // OBSERVATION (а): every member of `committee(E+1)` — and here every node —
-    // serves the pair at `last(E)` for every passed epoch.
     for e in 0..=epochs_passed {
         for i in 0..4 {
             let a = entry(&out, i, last(e));
@@ -253,7 +221,6 @@ fn every_node_serves_the_terminal_pair_of_every_passed_epoch_after_re_jumps() {
             );
         }
     }
-    // OBSERVATION (б): every height a node holds carries its own certificate.
     for i in 0..4 {
         let (missing, block_only) = holes(&out, i);
         assert!(
@@ -264,87 +231,30 @@ fn every_node_serves_the_terminal_pair_of_every_passed_epoch_after_re_jumps() {
     }
 }
 
-/// (Д3, the deep-lag shape) The same rotation over EIGHT epochs: node 3 leaves
-/// the committee at epoch 3, its EXECUTION stalls at `last(2) = 95`, and its
-/// marshal therefore cannot store above the ordering plane's two-epoch ceiling
-/// `last(epoch(95) + 2) = 159` (`.dpos-study` memory: `dpos ordering plane 2-epoch
-/// ceiling`). It climbs out by RE-JUMPING, repeatedly, and this test reads that
-/// climb off the run.
+/// The same rotation over eight epochs: node 3 leaves the committee at epoch 3,
+/// its execution stalls at `last(2) = 95`, and its marshal therefore cannot store
+/// above the ordering plane's two-epoch ceiling `last(epoch(95) + 2) = 159`. It
+/// climbs out by re-jumping repeatedly, and this test reads that climb off the
+/// run.
 ///
-/// WHAT THIS TEST PROVED BEFORE, AND WHAT IT PROVES NOW (4.2 Б1.2). It was
-/// `…_freezes_its_marshal_at_the_ceiling_and_jumps_over_a_hole`, run at a WIDENED
-/// gate of 80 blocks so the node stayed parked at 95 until the network was more
-/// than two epochs ahead; it then jumped from 95 to 180 — a height ABOVE its own
-/// frozen tip, taken from an upstream `get_latest` — and left a HOLE in its
-/// archive at 160..=182, which the test asserted the shape of.
+/// A gate at or above `2·interval` wedges an execution-stalled node permanently:
+/// the reachable gap is bounded by the ceiling, `tip − fin < 3·interval`, and is
+/// only `2·interval` when `fin` sits at an epoch terminal as it does here, so the
+/// jump never arms. Production computes `JUMP_THRESHOLD.min(interval)`, which is
+/// `≤ interval` for every interval, so it cannot configure such a gate.
 ///
-/// Both halves are gone FROM THIS RUN, for the same reason: §5.2 takes the jump
-/// TARGET out of the node's own marshal archive at its own tip instead of out of
-/// an unauthenticated `Latest`. Only one of the two is gone as a CLASS (the gate;
-/// production cannot configure 80) — the hole is not, see directly below.
+/// The landing is `target.height − K` and the target is a pair this node already
+/// holds, so a jump cannot skip a range it has archived; but the jump also raises
+/// the floor to `landing − K = target − 2K`, and a rung served far above the
+/// contiguous edge can make the tip non-contiguous, in which case anything
+/// `try_repair_gaps` has not pulled by the time the floor moves goes under it for
+/// good. `seed_boundary_below_floor` therefore stays necessary. In this fixture
+/// both jump targets are contiguous tips reached by the node's own climb, so
+/// nothing is skipped.
 ///
-///   * NO HOLE IN THIS RUN — and that is an OBSERVATION about this fixture, not a
-///     property of the jump (review B1-02). The landing is `target.height − K`
-///     and the target is a pair this node already holds, so a jump cannot skip a
-///     range it has archived; but the jump ALSO raises the floor to
-///     `landing − K = target − 2K`, and "the node holds the target" does not mean
-///     "the node holds everything below it". A rung served far above the
-///     contiguous edge — `last(T+1)` is up to two epochs above `fin`, and
-///     `hint_finalization(frontier)` can be higher still — makes the tip
-///     non-contiguous by design, and whatever `try_repair_gaps` has not pulled by
-///     the time the floor moves goes under it for good (the marshal never
-///     re-fetches below its floor). `seed_boundary_below_floor` therefore stays
-///     necessary, and the code rightly still calls it (`executor.rs`).
-///     What THIS run shows is the narrower fact its own numbers support: both of
-///     node 3's jump targets (128 and 160) were contiguous tips reached by its own
-///     climb, so nothing was skipped here — the assertion below says that, and the
-///     pre-4.2 version of this test asserted the shape of a hole because the target
-///     then came from an upstream `Latest` far above anything the node held.
-///   * THE 80-BLOCK GATE IS NOW A WEDGE, so the gate moves to the PRODUCTION value
-///     `min(JUMP_THRESHOLD, interval)` (`consensus/dpos.rs`, both launch paths).
-///     Measured at 80 on this very fixture: `heights=[264, 264, 264, 95]`,
-///     `marshal_fin=[268, 268, 268, 159]`, `jumps=[]` — node 3 never left 95. The
-///     mechanism is arithmetic, not luck: the reachable gap is bounded by the
-///     ceiling, `tip − fin ≤ last(epoch(fin) + 2) − fin < 3·interval`, and is only
-///     `2·interval = 64` when `fin` sits at an epoch terminal as it does here —
-///     below the 80-block gate, so the jump never arms and the ladder step, which
-///     names `last(T+1) = 159`, names a height the node already holds. A gate at
-///     or above `2·interval` therefore wedges an execution-stalled node
-///     PERMANENTLY after §5.2. Production cannot configure one: it computes
-///     `JUMP_THRESHOLD.min(interval)`, which is `≤ interval < 2·interval` for every
-///     interval.
-///
-/// The Д3 premises are kept: the jumper DID jump, its floor DID rise above earlier
-/// terminals, every node went at least two epochs past every terminal it is asked
-/// for, and every terminal pair is served by every node.
-///
-/// WHAT HOLDS NODE 3 BACK (5.1). Not the rotation. Since П-3 the epoch key is an
-/// artifact any node may ASK a member for over `BEACON_RESOLVER_CHANNEL`
-/// (R-121/R-122), and the tracked peer set is
-/// `committee[E-1] ∪ committee[E] ∪ committee[E+1]`, so a node rotated out at
-/// epoch 3 keeps its consensus links through epoch 3, fetches `PK_3` and never
-/// falls behind at all (measured: every node at the same height,
-/// `jump_calls[3] = []`). The lag is therefore taken from a CONSENSUS-PLANE cut
-/// ([`super::stand::CutPlanes::ConsensusOnly`]) of node 3 inside epoch 2 — after
-/// it has dealt and holds every key up to `PK_2`, before the epoch-3 mint — and
-/// the cut never heals. That is the SAME state the rotation used to produce, node
-/// for node: no consensus plane means no vote, no ceremony and no artifact to ask
-/// for, while the frontier probe keeps feeding its marshal, which is what carries
-/// its tip to the two-epoch ceiling and what its re-jumps then climb.
-///
-/// Falsifier: node 3 not jumping (the fixture stopped exercising the climb); a
-/// jump whose consumed target is not a height node 3's own marshal reached (the
-/// target came from somewhere else); a landing that is not `target − K`; any hole
-/// or block-only entry in node 3's archive (in THIS fixture that means a target
-/// that was not the archived pair at the triggering tip); a first target above the
-/// two-epoch ceiling of the park height (the marshal stored past the ceiling, so
-/// the ceiling is not what the memory says); a terminal missing on any node; node 3
-/// not recovering.
-///
-/// RENAMED in the third pass (review B1-13): the old
-/// `…_and_jumps_over_a_hole` named the half of the property that is gone from
-/// this run, and `PLAN.md` / `history/E4-PRECONDITIONS.md` still pointed at it for
-/// a hole shape it no longer asserts.
+/// The lag comes from a consensus-plane cut of node 3 inside epoch 2, because
+/// since the epoch key became a fetchable artifact the rotation alone leaves a
+/// node following the chain.
 #[test]
 fn a_node_more_than_two_epochs_behind_freezes_its_marshal_at_the_ceiling_and_climbs_it_by_jumps_to_its_own_tip(
 ) {
@@ -404,8 +314,6 @@ fn a_node_more_than_two_epochs_behind_freezes_its_marshal_at_the_ceiling_and_cli
     assert!(out.halted.is_empty(), "{:?}", out.halted);
     assert!(out.errors().is_empty(), "{:?}", out.errors());
 
-    // PREMISE: node 3 parked at the rotation boundary and climbed out by jumping,
-    // more than once (the ladder, not one lucky landing).
     let calls = &out.jump_calls[3];
     let landed: Vec<_> = calls.iter().filter(|c| c.outcome == "Landed").collect();
     assert!(
@@ -420,11 +328,6 @@ fn a_node_more_than_two_epochs_behind_freezes_its_marshal_at_the_ceiling_and_cli
     );
     let ceiling = last(2 + 2);
 
-    // OBSERVATION (a) THE TARGET IS THIS NODE'S OWN ARCHIVE. Every landing
-    // consumed a height at or below the ceiling its own execution cursor allowed,
-    // and landed exactly `K` below it. Nothing above the ceiling was ever the
-    // target — which is the ceiling premise, stated in the one place the run can
-    // still witness it.
     let tips = &out.marshal_tip_series[3];
     assert!(
         !tips.is_empty(),
@@ -439,7 +342,7 @@ fn a_node_more_than_two_epochs_behind_freezes_its_marshal_at_the_ceiling_and_cli
     for c in &landed {
         let (target, _) = c.consumed.expect("a landing consumed a target");
         let (landing, _) = c.landed.expect("asserted Landed");
-        // The ceiling is a function of the cursor the jump STARTED from, and
+        // The ceiling is a function of the cursor the jump started from, and
         // `JumpCall::from` is exactly that cursor — so every landing, not only
         // the first, is checkable against its own two-epoch ceiling.
         let own_ceiling = last(c.from / EPOCH_LEN + 2);
@@ -477,15 +380,8 @@ fn a_node_more_than_two_epochs_behind_freezes_its_marshal_at_the_ceiling_and_cli
         "node 3's floor {floor} never passed the terminal of epoch 3"
     );
 
-    // OBSERVATION (b) NO HOLE IN THIS RUN. Every target above was a height node 3's
-    // OWN marshal tip had reached and the landing was `target − K`, so this climb
-    // skipped nothing and the archive came out contiguous with its own certificate
-    // at every height. NOT a general property of the jump (review B1-02): the floor
-    // goes to `target − 2K`, so a tip made non-contiguous by a far rung, plus a
-    // repair that has not caught up when the floor moves, still leaves a permanent
-    // hole — which is why `seed_boundary_below_floor` is still called. The
-    // assertion is kept because it is the falsifier for THIS fixture: a hole here
-    // would mean a target that was not the archived pair at the triggering tip.
+    // A hole here would mean a target that was not the archived pair at the
+    // triggering tip.
     assert!(
         missing.is_empty(),
         "node 3 has holes — in this fixture every jump target was a contiguous tip, so a \
@@ -496,8 +392,6 @@ fn a_node_more_than_two_epochs_behind_freezes_its_marshal_at_the_ceiling_and_cli
         "node 3 holds blocks without their own finalization: {block_only:?}"
     );
 
-    // OBSERVATION (c) every terminal is still served by every node, and the three
-    // members never had a hole to begin with.
     for e in 0..=epochs_passed {
         for i in 0..4 {
             let a = entry(&out, i, last(e));
@@ -518,10 +412,10 @@ fn a_node_more_than_two_epochs_behind_freezes_its_marshal_at_the_ceiling_and_cli
     out.assert_lockstep_except(&[]);
 }
 
-/// (Д4, measurement) `best − ordering_finalized` on an honest static stand, at
-/// the default link and under a slow, lossy one. Prints the event-driven
-/// histograms; asserts only that speculation happened at all (the FCU histogram
-/// is non-empty on every node), which is the premise of the number.
+/// `best − ordering_finalized` on an honest static stand, at the default link
+/// and under a slow, lossy one. Prints the event-driven histograms; asserts only
+/// that speculation happened at all (the FCU histogram is non-empty on every
+/// node), which is the premise of the number.
 #[test]
 fn the_head_gap_band_is_measured_on_fcu_events() {
     let run = |label: &str, latency_ms: u64, loss: f64| {
@@ -553,11 +447,11 @@ fn the_head_gap_band_is_measured_on_fcu_events() {
     run("slow-lossy", 250, 0.05);
 }
 
-/// (Д5, measurement) Distinct agreement bodies per `(epoch, sender)` when the
-/// consensus plane is cut for six views in the middle of epoch 1's ceremony
-/// (dealing ends at `32 + 12`, the agreement runs after it). Prints the count;
-/// asserts the premise — the cut happened inside epoch 1 and the key for epoch
-/// 2 was still minted — and nothing about the number.
+/// Distinct agreement bodies per `(epoch, sender)` when the consensus plane is
+/// cut for six views in the middle of epoch 1's ceremony (dealing ends at
+/// `32 + 12`, the agreement runs after it). Prints the count; asserts the
+/// premise — the cut happened inside epoch 1 and the key for epoch 2 was still
+/// minted — and nothing about the number.
 #[test]
 fn dkg_bodies_per_peer_are_measured_under_a_partition_in_the_agreement_window() {
     let mut stand = Stand::new(StandConfig::live(4, 1));
@@ -602,17 +496,14 @@ fn dkg_bodies_per_peer_are_measured_under_a_partition_in_the_agreement_window() 
     }
 }
 
-/// (Д8) A peer tracked as SECONDARY on the real authenticated transport
+/// A peer tracked as secondary on the real authenticated transport
 /// (`commonware_p2p::authenticated::discovery`, run on the deterministic
 /// runtime's in-memory sockets): three peers, every one tracking the same
 /// `TrackedPeers { primary: {A, B}, secondary: {C} }` at index 0, B and C
-/// bootstrapping to A. What is measured, each as its own fact: whether C's
-/// inbound connection is accepted (A's `Recipients::One(C)` send reports C);
-/// whether C receives a `Recipients::All` frame from A and from B; whether A
-/// hears a frame C sends it. The doc block records the run's answer; the
-/// asserts pin it.
-///
-/// Falsifier: any of the four facts flipping.
+/// bootstrapping to A. Each fact is measured separately: whether C's inbound
+/// connection is accepted (A's `Recipients::One(C)` send reports C), whether C
+/// receives a `Recipients::All` frame from A and from B, and whether A hears a
+/// frame C sends it.
 #[test]
 fn a_secondary_peer_on_the_authenticated_transport_is_accepted_and_heard() {
     use commonware_cryptography::{ed25519::PrivateKey, Signer as _};

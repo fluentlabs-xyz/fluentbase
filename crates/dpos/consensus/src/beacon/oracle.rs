@@ -1,30 +1,14 @@
 //! The beacon's synchronous face for the consensus scheme: the one place the
 //! per-epoch threshold material is read on the vote path.
 //!
-//! The scheme holds no key material and asks this type instead, so the share and
-//! the public polynomial never leave the beacon. Every answer is derived from
-//! live shared state — the ceremony store the `DkgActor` writes and the group-key
-//! store — rather than from a snapshot taken when the scheme was built, which is
-//! what lets a scheme built before its epoch's ceremony finished start answering
-//! the moment the entry lands.
+//! The scheme holds no key material and asks this type instead, so the share and the
+//! public polynomial never leave the beacon. Every answer is derived from live
+//! shared state — the ceremony store the `DkgActor` writes and the group-key store —
+//! rather than a snapshot taken when the scheme was built, which lets a scheme built
+//! before its epoch's ceremony finished start answering the moment the entry lands.
 //!
-//! This type ANSWERS; it never decides participation. The demote decision belongs
-//! to `share_probe`, which runs per reconcile.
-//!
-//! # There is no divergence gate here any more (П-3)
-//!
-//! It used to compare the polynomial it was about to judge with against the key a
-//! `committee[minted_at]` quorum had attested, because the two came from DIFFERENT
-//! objects: the polynomial from this node's own `CeremonyStore` entry, the attested
-//! key from `BeaconKeys`. They can no longer differ — [`KeyIndex`] reads BOTH out of
-//! the one artifact the mint's quorum certified, so "my polynomial disagrees with
-//! the network's key" is not a state this type can be in. The gate, its
-//! `dpos_seed_material_refused_divergent_total` counter and the soak-v39 class they
-//! watched for are gone with the second owner that created them.
-//!
-//! The families this type still owns are read as edges and rates:
-//! `dpos_seed_verify_{ok,no_key}_total`, whose split is what makes the keyless
-//! window visible.
+//! This type answers; it never decides participation. The demote decision belongs to
+//! `share_probe`, which runs per reconcile.
 
 use std::{
     fmt,
@@ -63,11 +47,9 @@ pub(crate) struct BeaconOracle {
     /// the round's epoch binding before delegating, so nothing here re-derives it
     /// from a `Round`.
     pub(crate) epoch: u64,
-    /// This node's own share per MINTING epoch. The polynomial it pairs with comes
-    /// from [`Self::keys`], keyed by the same minting epoch — one object, so the
-    /// pair cannot disagree.
+    /// This node's own share per minting epoch. The polynomial it pairs with comes from
+    /// [`Self::keys`], keyed by the same minting epoch, so the pair cannot disagree.
     pub(crate) ceremony: CeremonyStore,
-    /// The OWNER of `PK_epoch` and the public polynomial (П-3).
     pub(crate) keys: KeyIndex,
     /// The chain's beacon seed-signing namespace.
     pub(crate) namespace: Vec<u8>,
@@ -76,43 +58,28 @@ pub(crate) struct BeaconOracle {
     /// partial is mis-attributed and recovers to nothing.
     pub(crate) me: Option<Participant>,
     /// First-refusal latch for the vote-quorum/seed-threshold mismatch in
-    /// [`SeedOracle::recover`]. Construct it holding `false`. Separate from the
-    /// seat latch below because the two conditions are independent and either
-    /// alone must still be able to speak.
+    /// [`SeedOracle::recover`]. Construct it holding `false`. Separate from the seat
+    /// latch because the two conditions are independent.
     pub(crate) warned_threshold_mismatch: Arc<AtomicBool>,
     /// First-refusal latch for the seat/share-index mismatch in
-    /// [`SeedOracle::sign_partial`]. Construct it holding `false`.
-    ///
-    /// The condition is PERMANENT for the epoch — a share's index and this
-    /// node's seat are both frozen at the boundary — but the check sits on the
-    /// per-vote path, where the `assert_eq!` it replaced sat once per scheme
-    /// construction. Without the latch one misconfigured epoch emits a warn per
-    /// subject per view for the epoch's life, which is the shape this module's
-    /// docs forbid for the resolver's counter and forbid here for the same
-    /// reason.
+    /// [`SeedOracle::sign_partial`]. Construct it holding `false`. The condition is
+    /// frozen for the epoch while the check runs on the per-vote path, so without the
+    /// latch one misconfigured epoch warns per subject per view.
     pub(crate) warned_seat_mismatch: Arc<AtomicBool>,
-    /// The beacon's counters. Restored here by FLU-1202's Phase 3 together with
-    /// the three families it bumps — Phase 2 dropped the field deliberately
-    /// rather than carry one with nothing to increment.
+    /// The beacon's counters.
     pub(crate) metrics: BeaconMetrics,
 }
 
 impl BeaconOracle {
     /// The polynomial and share this node may judge [`Self::epoch`] with.
     ///
-    /// A stable committee writes no new `CeremonyStore` entry, so the material for
-    /// `epoch` is keyed at the last CHANGE epoch and an exact `get(&epoch)` misses
-    /// on every carried epoch — the mint lookup IS the lookup, not an enrichment of
-    /// it, and [`KeyIndex`] is what does it (memoised, durable, one step).
+    /// A stable committee writes no new ceremony-store entry, so the material is keyed
+    /// at the last change epoch and an exact `get(&epoch)` misses on every carried
+    /// epoch; [`KeyIndex`] is what performs the mint lookup.
     ///
-    /// The polynomial comes from the ARTIFACT and the share from this node's own
-    /// store, both keyed by the SAME minting epoch. That is the whole of what used
-    /// to need a divergence gate: a share that does not lie on the artifact's
-    /// polynomial is refused where it is ADOPTED (`DkgActor::adopt_share`'s
-    /// `validate_share_on_poly`, П-3), so nothing that reaches here can disagree
-    /// with itself.
-    ///
-    /// A poisoned lock degrades to a miss rather than propagating a panic onto the
+    /// The polynomial comes from the artifact and the share from this node's own store,
+    /// both keyed by the same minting epoch, so nothing that reaches here can disagree
+    /// with itself. A poisoned lock degrades to a miss rather than panicking on the
     /// vote path.
     fn with_material<T>(&self, f: impl FnOnce(&Sharing<MinSig>, &Share) -> T) -> Option<T> {
         let (minted_at, sharing) = self.keys.sharing_at(self.epoch)?;
@@ -170,14 +137,11 @@ impl SeedOracle for BeaconOracle {
             match beacon::recover_seed_with_threshold(sharing, &partials, threshold) {
                 Ok(sig) => Some(sig),
                 Err(e) => {
-                    // THE LOG `recover_seed_with_threshold` CANNOT WRITE ITSELF —
-                    // see its docs. A threshold mismatch is frozen for the epoch
-                    // (the fault model, or `committee.len()` vs the sharing's
-                    // total) while `assemble` re-runs on every attestation past
-                    // quorum, so unlatched this is ~n identical lines per subject
-                    // per view. Latched here rather than in a `static`, because
-                    // this oracle is per-epoch and the next epoch's occurrence is
-                    // genuinely new.
+                    // A threshold mismatch is frozen for the epoch while `assemble`
+                    // re-runs on every attestation past quorum, so unlatched this is
+                    // many identical lines per subject per view. Latched here rather
+                    // than in a static, because this oracle is per-epoch and the next
+                    // epoch's occurrence is genuinely new.
                     if !self.warned_threshold_mismatch.swap(true, Ordering::Relaxed) {
                         error!(
                             epoch = self.epoch,
@@ -201,22 +165,12 @@ impl SeedOracle for BeaconOracle {
     }
 
     fn verify_seed(&self, round: Round, seed: &BlsSignature) -> SeedCheck {
-        // Keyed at the epoch the CHAIN says minted the key in force here, out of
-        // the artifact that mint's quorum certified — see [`KeyIndex`]. It used to
-        // read a key store at the LIVE epoch, which answered only because W1
-        // published this node's own reconstruction under every epoch it entered.
+        // Keyed at the epoch the chain says minted the key in force, out of the artifact
+        // that mint's quorum certified. Synchronous only: "not resolvable" is this method's
+        // answer, not a reason to resolve, which would put an await on the vote path.
         //
-        // SYNCHRONOUS only. "Not resolvable" IS this method's answer, not a reason
-        // to go resolve: resolving would put an await on the vote path, and the
-        // caller already knows what to do with `NoKey`.
-        //
-        // ALL THREE ARMS ARE COUNTED. `Invalid` used to be left out, on the
-        // argument that a wrong seed under a known key already has loud,
-        // attributable handling at every call site. Row 5.2 latched that line per
-        // epoch (and `--cert-follow` never had the data-fault half at all), so the
-        // line no longer scales with the attack and the count has to — see
-        // `BeaconMetrics::seed_verify_invalid`. What the other two make readable
-        // is the keyed/keyless SPLIT, which had no witness at all.
+        // All three arms are counted: the split between keyed and keyless is what the
+        // callers read.
         match self.keys.key_at(self.epoch) {
             Some(pk) if beacon::verify_seed(&pk, &self.namespace, round, seed) => {
                 self.metrics.seed_verify_ok.inc();
@@ -271,7 +225,7 @@ mod tests {
     };
 
     const EPOCH: u64 = 9;
-    /// The last epoch whose committee CHANGED, six epochs below the live one:
+    /// The last epoch whose committee changed, six epochs below the live one:
     /// every epoch in between carried, so nothing is keyed at [`EPOCH`].
     const CHANGE: u64 = 5;
     const N: usize = 4;
@@ -360,10 +314,9 @@ mod tests {
         assert_eq!(members[0].verify_seed(r, &seed), SeedCheck::Valid);
     }
 
-    /// The carry: a committee stable since `CHANGE` holds its material keyed at
-    /// `CHANGE` and nothing at `EPOCH`, and must sign and judge `EPOCH` normally.
-    /// An exact-epoch lookup answers nothing here, and a network of such nodes
-    /// stops.
+    /// The carry: a committee stable since `CHANGE` holds its material keyed at `CHANGE`
+    /// and nothing at `EPOCH`, and must sign and judge `EPOCH` normally. An exact-epoch
+    /// lookup answers nothing here, and a network of such nodes stops.
     #[test]
     fn a_stable_committee_serves_the_mint_keyed_at_its_last_change_epoch() {
         let (outcome, shares) = ceremony(0xA2);
@@ -388,30 +341,18 @@ mod tests {
             .recover(&partials, quorum)
             .expect("a carried mint recovers");
 
-        // AND IT RESOLVES WITH NOTHING FILED UNDER THE LIVE EPOCH. This used to need
-        // a W1 publication under `EPOCH` to pass; now the chain's `changed` record
-        // names `CHANGE` and that mint's artifact answers. Reds if the lookup goes
-        // back to the live epoch — which is a whole network stopping at its first
-        // carry epoch, not a degradation.
+        // It resolves with nothing filed under the live epoch, because the chain's `changed`
+        // record names `CHANGE` and that mint's artifact answers.
         assert_eq!(members[0].verify_seed(r, &seed), SeedCheck::Valid);
     }
 
-    /// THE DIVERGENCE CLASS IS UNREACHABLE, and this is what replaced the two tests
-    /// that pinned its handling.
+    /// The divergence class is unreachable. The polynomial and the attested key are the
+    /// same field of the same artifact, so the gate that compared them is deleted rather
+    /// than left unreachable.
     ///
-    /// They were `a_carried_mint_diverging_from_the_key_attested_at_its_mint_is_refused`
-    /// and `a_fresh_mint_diverging_from_the_attested_key_judges_nothing`. Both staged a
-    /// `CeremonyStore` holding one polynomial and a `BeaconKeys` attesting a DIFFERENT
-    /// one for the same minting epoch, and asserted the gate refused to sign, verify
-    /// or recover with it. That state cannot be staged any more: the polynomial and
-    /// the attested key are the SAME field of the SAME artifact (`KeyIndex`), so the
-    /// gate, its `dpos_seed_material_refused_divergent_total` counter and the soak-v39
-    /// class are deleted rather than left unreachable.
-    ///
-    /// What is assertable, and what this asserts, is the pairing the gate existed to
-    /// protect: material is served only where the share and the artifact agree on the
-    /// MINTING epoch, and a share filed at the wrong epoch serves nothing — which is
-    /// the one way the two halves can still fail to line up.
+    /// What is assertable is the pairing the gate protected: material is served only
+    /// where the share and the artifact agree on the minting epoch, and a share filed at
+    /// the wrong epoch serves nothing.
     #[test]
     fn material_is_served_only_where_the_share_and_the_artifact_share_a_mint() {
         let (outcome, shares) = ceremony(0xA3);
@@ -429,9 +370,6 @@ mod tests {
             .expect("a share at the chain's mint epoch is served");
         assert!(matched.verify_partial(r, shares[0].index, &partial));
 
-        // The SAME share filed at a different epoch: the artifact's mint is `CHANGE`,
-        // the share is not there, so nothing is served. No gate, no metric — the
-        // lookup simply misses.
         let misfiled = oracle(
             store(EPOCH, &shares[0]),
             keys.clone(),
@@ -443,8 +381,6 @@ mod tests {
             .recover(&[(shares[0].index, partial)], N3f1::quorum(N as u32))
             .is_none());
 
-        // And with no artifact at all the same store serves nothing either: the
-        // polynomial has one owner, so its absence is the whole refusal.
         let keyless = oracle(
             store(CHANGE, &shares[0]),
             keyless_at(&[CHANGE]),
@@ -453,9 +389,8 @@ mod tests {
         assert!(keyless.sign_partial(r).is_none());
     }
 
-    /// The relocated share-index binding: the share's index IS the consensus
-    /// participant index (both commonware-sorted), and a partial signed under a
-    /// mismatched one recovers to nothing.
+    /// The share's index is the consensus participant index, and a partial signed under
+    /// a mismatched one recovers to nothing.
     #[test]
     fn a_share_that_is_not_this_nodes_participant_index_signs_nothing() {
         let (outcome, shares) = ceremony(0xA5);
@@ -490,8 +425,6 @@ mod tests {
         assert!(!judge.verify_partial(round(6), shares[0].index, &partial));
     }
 
-    /// The chain names a mint this node never attended: no usable material, and
-    /// the carry walk must not reach past it to an older stored one.
     #[test]
     fn a_mint_this_node_never_attended_signs_nothing_and_judges_nothing() {
         let (outcome, shares) = ceremony(0xA7);
@@ -517,15 +450,11 @@ mod tests {
             .is_none());
     }
 
-    /// An undecided `dkgQual` bit — the boundary window, where the epoch's
-    /// committee is not committed at this node's finalized hash — must be a retry,
-    /// never a verdict this oracle caches. Caching it wedges the epoch for the
-    /// life of the process.
+    /// An undecided `dkgQual` bit must be a retry, never a verdict this oracle caches;
+    /// caching it would wedge the epoch for the life of the process.
     #[test]
     fn an_undecided_dkg_qual_bit_is_retried_on_the_next_call() {
         let (outcome, shares) = ceremony(0xA8);
-        // Undecided until the epoch's committee is committed at this node's
-        // finalized hash, frozen at CHANGE from then on.
         let committed = Arc::new(AtomicBool::new(false));
         let seen = committed.clone();
         let changed: crate::beacon::artifact::ChangedAt =
@@ -549,18 +478,11 @@ mod tests {
         assert!(node.sign_partial(r).is_some());
     }
 
-    /// `verify_seed` answers `NoKey` until the MINT's artifact is held, and the lookup
-    /// is at the mint rather than at the live epoch.
-    ///
-    /// It used to say "until the key STORE holds the epoch key", and what put it there
-    /// was W1 — a per-entered-epoch publication of this node's own reconstruction.
-    /// With W1 gone (П-3) the source is the artifact of the epoch the chain's `changed`
-    /// record names, and `EPOCH` here is a CARRY epoch whose mint is `CHANGE`.
+    /// `verify_seed` answers `NoKey` until the mint's artifact is held, and the lookup is
+    /// at the mint rather than at the live epoch.
     #[test]
     fn verify_seed_answers_no_key_until_the_mints_artifact_is_held() {
         let (outcome, shares) = ceremony(0xA9);
-        // The share is held but the artifact is NOT: signing needs the polynomial, so
-        // the fixture mints into a store it keeps a handle on and lands it later.
         let mints = MintFixture::new();
         mints.mint(CHANGE, outcome.clone());
         let keys = mints.keys.clone();
@@ -578,13 +500,9 @@ mod tests {
             .collect();
         let seed = members[0].recover(&partials, quorum).expect("recover");
 
-        // The mint IS held here, so the key resolves at the CARRY epoch with nothing
-        // filed under it — which is the property W1's removal turns on.
         assert_eq!(members[0].verify_seed(r, &seed), SeedCheck::Valid);
         assert_eq!(members[0].verify_seed(round(5), &seed), SeedCheck::Invalid);
 
-        // And the keyless window, with the same chain record and no artifact: `NoKey`,
-        // never `Invalid` — a node that cannot resolve the key accuses nobody.
         let keyless = oracle(
             store(CHANGE, &shares[0]),
             keyless_at(&[CHANGE]),
@@ -593,16 +511,10 @@ mod tests {
         assert_eq!(keyless.verify_seed(r, &seed), SeedCheck::NoKey);
     }
 
-    /// THE POSITIVE EDGE THAT REPLACED A DELETED LOG LINE, pinned in both
-    /// directions.
-    ///
-    /// `smoke-vrf-dkg-live-heal` used to witness "this epoch left vote-only
-    /// admission" by grepping `epoch scheme upgraded to PINNED` out of
-    /// `EpochSchemeProvider::register`. FLU-1202 deleted the pin, so that line has
-    /// no emitter and the case's leg had no witness at all. `seed_verify_ok` is
-    /// the replacement, and it is only a replacement if it moves EXACTLY on the
-    /// keyed transition — so this asserts the whole shape: flat while keyless,
-    /// climbing once the key lands, and never moved by a seed that failed.
+    /// The positive edge that replaced a deleted log line. `seed_verify_ok` is the
+    /// replacement witness, and it is only a replacement if it moves exactly on the
+    /// keyed transition, so this asserts the whole shape: flat while keyless, climbing
+    /// once the key lands, and never moved by a failed seed.
     #[test]
     fn the_seed_verify_counters_split_the_keyless_window_from_the_keyed_one() {
         let (outcome, shares) = ceremony(0xAB);
@@ -621,7 +533,6 @@ mod tests {
             .collect();
         let seed = members[0].recover(&partials, quorum).expect("recover");
 
-        // The KEYLESS window, on a node with the same chain record and no artifact.
         let keyless = oracle(
             store(CHANGE, &shares[0]),
             keyless_at(&[CHANGE]),
@@ -636,7 +547,6 @@ mod tests {
             "every certificate of the keyless window is counted, not just the first"
         );
 
-        // The KEYED one, on the node that holds the mint's artifact.
         let m = &members[0].metrics;
         assert_eq!(members[0].verify_seed(r, &seed), SeedCheck::Valid);
         assert_eq!(
@@ -645,21 +555,15 @@ mod tests {
             "the ok counter's 0 -> non-zero edge IS the witness the smoke leg reads"
         );
 
-        // `Invalid` moves NEITHER. A wrong seed under a known key already has loud
-        // attributable handling at every call site; folding it into either family
-        // would make the keyed/keyless split unreadable, which is the only thing
-        // these two exist to say.
         assert_eq!(members[0].verify_seed(round(5), &seed), SeedCheck::Invalid);
         assert_eq!((m.seed_verify_no_key.get(), m.seed_verify_ok.get()), (0, 1));
     }
 
-    /// The bootstrap epoch mints unconditionally, so an all-clear bit history
-    /// bottoms out there rather than answering "no mint".
+    /// The bootstrap epoch mints unconditionally, so an all-clear bit history bottoms
+    /// out there rather than answering "no mint".
     #[test]
     fn an_all_clear_bit_history_serves_the_bootstrap_mint() {
         let (outcome, shares) = ceremony(0xAA);
-        // The bootstrap epoch's own artifact, and NO bit set anywhere above it: the
-        // walk bottoms out at the bootstrap mint rather than answering "no mint".
         let node = oracle(
             store(DETERMINISTIC_BOOTSTRAP_EPOCH, &shares[0]),
             keys_at(&outcome, &[DETERMINISTIC_BOOTSTRAP_EPOCH]),

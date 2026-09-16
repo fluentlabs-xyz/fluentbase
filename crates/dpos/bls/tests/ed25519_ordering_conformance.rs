@@ -1,36 +1,17 @@
-//! Cross-language ed25519 committee-ordering conformance pin.
+//! Cross-language committee-ordering pin. Simplex assigns a validator's
+//! `Participant` index by its ed25519 peer pubkey's position in commonware's
+//! byte-ordered committee; the on-chain committee freeze (`commitEpochCommittee`)
+//! sorts by the same pubkey bytes into the index space `signerIdx` resolves
+//! against. The two MUST agree byte-for-byte, or a slash resolves to the wrong
+//! validator.
 //!
-//! Simplex assigns a `Participant` index = position of a validator's
-//! ed25519 peer public key in its ordered committee container (the byte
-//! ordering is the Commonware codec, `commonware_utils::ordered`). On-chain
-//! signer-index resolution
-//! (`Staking.sol` `commitEpochCommittee` / `resolveSigner`) reproduces that
-//! order with a Solidity `bytes32` ascending sort. The two MUST agree
-//! byte-for-byte or `signerIdx` resolves to the WRONG validator (slash an
-//! innocent).
+//! They agree only because `ed25519::PublicKey`'s hand-written `Ord` is
+//! incidentally unsigned lexicographic, one upstream refactor away from silent
+//! divergence; this test builds the real ordered container and asserts it equals a
+//! plain ascending byte sort.
 //!
-//! Today they agree only because `ed25519::PublicKey`'s `Ord` is a
-//! hand-written `cmp` over the 32-byte compressed key (`A_bytes`), which is
-//! lexicographic / unsigned-big-endian — identical to Solidity `bytes32 <`.
-//! This is one upstream refactor (e.g. `#[derive(Ord)]`, field reorder) away
-//! from silent divergence. This test pins it: it builds the REAL Commonware
-//! ordered container and asserts the order equals a plain ascending byte
-//! sort. A Commonware bump that changes that `Ord` fails this test LOUDLY.
-//!
-//! This file is the SINGLE SOURCE and is self-documenting (no companion
-//! markdown — same convention as `eip2537_conformance_vectors.rs`). The
-//! `PEER_PUBKEYS_HEX` corpus + `EXPECTED_SORTED_INDICES` order below are
-//! mirrored by-hand into `solidity-contracts`
-//! `test/staking/StakingEpochCommittee.t.sol`
-//! (`test_resolveSigner_matchesSimplexConformanceVectors`) — update both
-//! in the SAME PR. Recipe: 10 ed25519 keys from
-//! `PrivateKey::random(StdRng::seed_from_u64(seed))` for the fixed `SEEDS`
-//! below (deliberately unsorted; corpus spans a `0x00…` and a `0xff…`
-//! prefix to prove unsigned compare).
-//!
-//! Regenerate after a deliberate Commonware bump:
-//!   cargo test -p fluentbase-bls --test ed25519_ordering_conformance \
-//!       -- --ignored print_corpus --nocapture
+//! `PEER_PUBKEYS_HEX` and `EXPECTED_SORTED_INDICES` are mirrored by hand into the
+//! Solidity staking conformance test; keep both in sync.
 
 use commonware_cryptography::ed25519::{PrivateKey, PublicKey};
 use commonware_cryptography::Signer;
@@ -39,8 +20,8 @@ use commonware_utils::ordered::Set;
 use rand_08::rngs::StdRng;
 use rand_08::SeedableRng;
 
-/// Fixed seeds → deterministic, valid, distinct ed25519 keys. Order here is
-/// deliberately NOT the sorted order, so the test proves sorting happened.
+/// Fixed seeds for deterministic, distinct keys, listed unsorted so the test
+/// exercises a real reordering.
 const SEEDS: &[u64] = &[7, 3, 9, 1, 5, 8, 2, 6, 4, 0];
 
 fn peer_pubkey(seed: u64) -> [u8; 32] {
@@ -53,8 +34,7 @@ fn public_key(seed: u64) -> PublicKey {
     PrivateKey::random(&mut StdRng::seed_from_u64(seed)).public_key()
 }
 
-/// The committee fed to Simplex consensus, in SEED order (unsorted), lowercase hex.
-/// Mirrored verbatim into the Solidity test.
+/// Committee in `SEEDS` order, lowercase hex; mirrored verbatim into the Solidity test.
 const PEER_PUBKEYS_HEX: &[&str] = &[
     "478243aed376da313d7cf3a60637c264cb36acc936efb341ff8d3d712092d244",
     "c5bbbb60e412879bbec7bb769804fa8e36e68af10d5477280b63deeaca931bed",
@@ -68,15 +48,12 @@ const PEER_PUBKEYS_HEX: &[&str] = &[
     "ee1aa49a4459dfe813a3cf6eb882041230c7b2558469de81f87c9bf23bf10a03",
 ];
 
-/// Expected Simplex committee order AFTER sorting (= ascending byte lex,
-/// Commonware codec).
-/// Each entry is the index into `PEER_PUBKEYS_HEX` / `SEEDS`. Mirrored into
-/// the Solidity test as the expected `getEpochCommittee` order.
+/// Expected committee order, as indices into `SEEDS` / `PEER_PUBKEYS_HEX`, mirrored
+/// into the Solidity test.
 const EXPECTED_SORTED_INDICES: &[usize] = &[2, 7, 6, 0, 8, 5, 1, 4, 9, 3];
 
 #[test]
 fn commonware_orders_ed25519_committee_by_raw_byte_lex() {
-    // Build the REAL Commonware ordered container from the committee.
     let keys: Vec<PublicKey> = SEEDS.iter().map(|&s| public_key(s)).collect();
     let set: Set<PublicKey> = Set::try_from(keys).expect("distinct keys");
     let commonware_order: Vec<[u8; 32]> = set
@@ -84,7 +61,7 @@ fn commonware_orders_ed25519_committee_by_raw_byte_lex() {
         .map(|k| <[u8; 32]>::try_from(k.as_ref()).unwrap())
         .collect();
 
-    // Independent reference: plain ascending byte sort (== Solidity bytes32 <).
+    // Independent reference: ascending byte sort, as the on-chain committee freeze does.
     let mut byte_lex: Vec<[u8; 32]> = SEEDS.iter().map(|&s| peer_pubkey(s)).collect();
     byte_lex.sort();
 
@@ -94,8 +71,6 @@ fn commonware_orders_ed25519_committee_by_raw_byte_lex() {
          order — Solidity bytes32 resolution would now slash the wrong validator"
     );
 
-    // Sanity: the corpus is actually permuted by sorting (test would be vacuous
-    // if the seed order already equaled the sorted order).
     let seed_order: Vec<[u8; 32]> = SEEDS.iter().map(|&s| peer_pubkey(s)).collect();
     assert_ne!(
         seed_order, commonware_order,
@@ -103,7 +78,6 @@ fn commonware_orders_ed25519_committee_by_raw_byte_lex() {
          test exercises a real reordering"
     );
 
-    // Pin against the committed cross-language corpus (mirrored into Solidity).
     if !PEER_PUBKEYS_HEX.is_empty() {
         let seed_hex: Vec<String> = SEEDS.iter().map(|&s| hex::encode(peer_pubkey(s))).collect();
         let committed: Vec<String> = PEER_PUBKEYS_HEX.iter().map(|h| h.to_string()).collect();

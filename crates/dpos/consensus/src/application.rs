@@ -1,18 +1,8 @@
-//! Fluent Application: bridges commonware consensus ⇄ the deferred-execution
-//! pipeline.
-//!
-//! `propose` assembles an ordering artifact — no EL work on the critical
-//! path; `verify` is a pure function of agreed state + the local derived
-//! chain (bounded wait on the execution gate); `report` feeds finalized
-//! artifacts to [`crate::executor`] for derive + import.
-//!
-//! Trait implementations:
-//!   - [`Application<E>`]: high-level, with `AncestorStream` ancestry.
-//!   - [`VerifyingApplication<E>`]: same shape, returns `bool`.
-//!   - [`Reporter<Activity = Update<OrderBlock>>`]: fed by `marshal::core::Actor`.
-//!
-//! NOT implemented: `Relay`. The `marshal::standard::Inline` wrapper
-//! provides `Relay` (inline.rs:471); `FluentApp` does not.
+//! Fluent Application: bridges commonware consensus to the deferred-execution
+//! pipeline. `propose` assembles an ordering artifact with no EL work on the
+//! critical path; `verify` is a pure function of agreed state and the local
+//! derived chain; `report` feeds finalized artifacts to [`crate::executor`]
+//! for derive and import.
 
 use crate::{
     beacon::Seed,
@@ -40,7 +30,6 @@ use commonware_consensus::{
 use commonware_cryptography::ed25519::PublicKey;
 use commonware_runtime::{Clock, Metrics, Spawner};
 use commonware_utils::ordered::BiMap;
-/// The signing scheme bound for this Application.
 pub use fluentbase_bls::Scheme as BlsScheme;
 use fluentbase_bls::{BlsPubkey, PeerPubkey};
 use futures::StreamExt as _;
@@ -55,109 +44,73 @@ use std::{
     time::Duration,
 };
 
-/// Bounded wait in `verify` for local execution to reach `N − K`: the
-/// exec-gate budget = worst-case derive+execute of one block (~500ms today,
-/// growth headroom to 1s). Sits inside the certification window: the
-/// proposal arrives ≤ `leader` (1750ms) from view entry and
-/// `certification = 3200ms` (`ConsensusTimeouts::fluent_1s`) leaves
-/// ~1450ms ≥ this budget. Liveness-tuning, not a safety param
-/// (timeout ⇒ vote false) — still keep uniform across nodes.
+/// Bounded wait in `verify` for local execution to reach `N − K`. Sized to
+/// the worst-case derive+execute of one block and to sit inside the
+/// certification window. Liveness tuning, not a safety parameter, but keep it
+/// uniform across nodes.
 pub const VERIFY_EXEC_BUDGET: Duration = Duration::from_millis(1000);
 const VERIFY_EXEC_POLL: Duration = Duration::from_millis(25);
 
 /// Target ordering cadence: one block per second. The proposer holds its
-/// proposal until wall clock reaches `parent.timestamp + BLOCK_INTERVAL`,
-/// so timestamps advance as consecutive integer seconds ≈ wall clock
-/// (Clique-family parent+period pacing). Slow/nullified views self-correct:
-/// a late proposer is already past the target and does not sleep.
-/// Honest-proposer discipline only — the verify-side future bound
-/// ([`TIMESTAMP_FUTURE_TOLERANCE_SECS`]) is the enforcement half.
+/// proposal until wall clock reaches `parent.timestamp + BLOCK_INTERVAL`, so
+/// timestamps advance as consecutive integer seconds. Honest-proposer
+/// discipline only; [`TIMESTAMP_FUTURE_TOLERANCE_SECS`] is the verify-side
+/// enforcement.
 pub const BLOCK_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Verify-side future bound: reject `block.timestamp > now + tolerance`.
-/// 1s covers second-granularity truncation + honest NTP skew. Load-bearing
-/// with pacing: without it, ONE far-future timestamp both poisons
-/// block.timestamp permanently (strict-monotonicity ratchet) and makes
-/// every honest proposer sleep_until(fake_time) — a single-block chain
-/// halt. With it, such a proposal fails verify at the honest quorum and
-/// the view nullifies. Deliberately == `BLOCK_INTERVAL` (1s): do NOT widen it
-/// (e.g. to 2s for sloppy NTP) — that would let chain-time run up to ~1 block
-/// ahead of real time and weaken the hard "1 block ≈ 1 real second"
-/// requirement. Clock sync is an operator duty, not a reason to loosen this
-/// (decision 2026-06-24). Consensus rule — MUST be uniform across nodes.
+/// Verify-side future bound: reject `block.timestamp > now + tolerance`. One
+/// second covers second-granularity truncation and honest NTP skew. Without it
+/// a single far-future timestamp ratchets `block.timestamp` forward and makes
+/// every honest proposer sleep until it, halting the chain. Deliberately equal
+/// to `BLOCK_INTERVAL`; a consensus rule, so it must be uniform across nodes.
 pub const TIMESTAMP_FUTURE_TOLERANCE_SECS: u64 = 1;
 
 /// Read-side view of the local derived chain, shared by propose/verify and
-/// the executor. Implemented in the node crate over reth's provider — hash
-/// strictly by NUMBER, never `best_number` (its semantics flip between
+/// the executor. The node crate implements it over reth's provider; hash
+/// strictly by number, never `best_number` (its semantics flip between
 /// tree-sync and pipeline backfill).
 pub trait ExecutedChain: Clone + Send + Sync + 'static {
     /// Highest derived + canonicalized height.
     fn executed_tip(&self) -> u64;
 
-    /// Tier-S (SPECULATIVE): canonical EVM hash of the derived block at `height`
-    /// on the provider HEAD chain — advanced at notarization latency by
-    /// `spec_execute`, NOT yet beyond reorg. The head can carry a sibling the
-    /// finalization will replace, so this tier is read ONLY by the executor's
-    /// own parent-linkage / backward cross-checks — NEVER by the result gate
-    /// (that would re-open the whole-committee SafetyHalt divergence below).
+    /// Tier-S (speculative): canonical EVM hash of the derived block at `height`
+    /// on the provider head chain, advanced at notarization latency but not yet
+    /// beyond reorg. Read only by the executor's parent-linkage and backward
+    /// cross-checks, never by the result gate.
     fn spec_executed_hash(&self, height: u64) -> Option<B256>;
 
-    /// Tier-F (FINALIZED): the finalized-execution result at `height`, or `None`
+    /// Tier-F (finalized): the finalized-execution result at `height`, or `None`
     /// if this node has not finalized-derived `height` yet. The result gate
-    /// (propose + verify) samples THIS tier so a still-speculative sibling A at
-    /// h−K can never be committed as an OrderBlock `result` and then re-finalize
-    /// as sibling B — the honest-run whole-committee SafetyHalt.
-    ///
-    /// Tier-F IS reth's canonical chain below the monotone finalized-execution
-    /// cursor ([`FinalizedCursor`]): past the `try_derive` canonical
-    /// postcondition the canonical hash at every advanced height is the
-    /// finalized result, durably persisted by reth (content-immutable on
-    /// finalization; the executor is reth's sole writer and never rolls the head
-    /// below safe), so there is no separate hash store to keep. NO default — a
-    /// speculative read wearing a finalized name is the exact bug class the tier
-    /// split closes, so every consumer chooses its tier explicitly (an unwired
-    /// path is a compile error, not a silent downgrade).
+    /// (propose and verify) samples this tier so a still-speculative sibling at
+    /// `h−K` can never be committed as a result and then re-finalize as another
+    /// sibling. Tier-F is reth's canonical chain below the monotone finalized
+    /// cursor ([`FinalizedCursor`]), so there is no separate hash store. No
+    /// default: every consumer chooses its tier explicitly.
     fn finalized_executed_hash(&self, height: u64) -> Option<B256>;
 
     /// Advance the monotone finalized-execution cursor to `height` — executor
-    /// only, called past the `try_derive` canonical postcondition (the eager
-    /// finalized derive) and at the BLS-authenticated re-jump landing. Every
-    /// height ≤ the cursor is finalized-without-a-possible-sibling, so
-    /// `finalized_executed_hash` there resolves through reth's canonical chain.
-    /// Seeded at `Actor::init` from the marshal's durable acked cursor (each
-    /// acked height passed the canonical postcondition before its ack persisted,
-    /// so a fresh process's provider content at ≤ cursor is beyond reorg —
-    /// WITHOUT the seed a coordinated restart of ≥ f+1 propose-skips/false-votes
-    /// for K blocks and wedges). Monotone (`fetch_max`); a lower value is a
-    /// no-op. Default no-op (readers / non-writers). Replaces the former
-    /// `record_finalized_executed` + `raise_finalized_floor` — reth is the store,
-    /// so only the cursor moves.
+    /// only, called past the `try_derive` canonical postcondition and at the
+    /// BLS-authenticated re-jump landing. Seeded at `Actor::init` from the
+    /// marshal's durable acked cursor. Monotone (`fetch_max`); a lower value is a
+    /// no-op. Default no-op for readers and non-writers.
     fn advance_finalized(&self, _height: u64) {}
 }
 
-/// The monotone finalized-execution cursor: one `AtomicU64` naming the highest
-/// height known finalized-without-a-possible-sibling. Tier-F
-/// ([`ExecutedChain::finalized_executed_hash`]) IS reth's canonical chain BELOW
-/// this cursor — the cursor stores NO hashes because reth already persists them
-/// durably (content-immutable on finalization; the executor is reth's sole
-/// writer), collapsing the former bounded map + retain-window + finality-floor
-/// into a single generalized cursor. Advanced by the executor past the
-/// `try_derive` canonical postcondition (the eager finalized derive) and at a
-/// BLS-authenticated re-jump landing; seeded at `Actor::init` from the marshal's
-/// durable acked cursor. Shared (the executor advances, the gate reads a clone),
-/// so it survives per-epoch engine restarts within the process.
+/// The monotone finalized-execution cursor: the highest height known
+/// finalized-without-a-possible-sibling. Tier-F
+/// ([`ExecutedChain::finalized_executed_hash`]) is reth's canonical chain
+/// below this cursor, which stores no hashes because reth already persists
+/// them. Shared, so it survives per-epoch engine restarts within the process.
 #[derive(Clone, Debug, Default)]
 pub struct FinalizedCursor {
     cursor: Arc<AtomicU64>,
 }
 
 impl FinalizedCursor {
-    /// Tier-F lookup: the provider's canonical hash at `height` IS the finalized
-    /// hash iff `height ≤ cursor` (no sibling can exist there); above the cursor
-    /// the height is not-yet-finalized-reconciled ⇒ `None`. A provider miss
-    /// at-or-below the cursor (deep-pruned history, or a crash lost the reth tail
-    /// above the durable ack) also returns `None` — never a wrong hash.
+    /// Tier-F lookup: the provider's canonical hash at `height` is the finalized
+    /// hash iff `height <= cursor`; above the cursor the height is not yet
+    /// reconciled, so `None`. A provider miss at or below the cursor also returns
+    /// `None`, never a wrong hash.
     pub fn resolve(&self, height: u64, canonical: impl Fn(u64) -> Option<B256>) -> Option<B256> {
         (height <= self.cursor.load(Ordering::Acquire))
             .then(|| canonical(height))
@@ -172,51 +125,36 @@ impl FinalizedCursor {
     /// The cursor itself — the highest height known
     /// finalized-without-a-possible-sibling.
     ///
-    /// Added for [`crate::committee`], which takes this height as its read
-    /// ANCHOR rather than keeping a second ordering-finalized cursor of its own.
-    /// The two are the same number: every site that raises the executor's
-    /// `ordering_finalized` raises this cursor with the SAME value in the same
-    /// arm — the `init` seed (`executor.rs:1085` / `:1149`, both
-    /// `last_consensus_finalized_height`), the re-jump landing (`:2441` /
-    /// `:2451`, both `landing_h`) and the finalized derive (`:3291` / `:3566`,
-    /// both `height` inside one `try_derive`). Where the two can differ is
-    /// strictly inside that last body: `ordering_finalized` is raised at `:3291`
-    /// and the cursor only at `:3566`, so between them — and on the fault arms
-    /// that return in between, all of which take the executor down — this cursor
-    /// LAGS by at most one derive. Lagging is the safe direction for an anchor:
-    /// it reads a committee at a strictly older finalized height, never at a
-    /// height the node has not finalized.
+    /// [`crate::committee`] takes this height as its read anchor. It lags the
+    /// executor's `ordering_finalized` by at most one derive, which is the safe
+    /// direction for an anchor.
     pub fn height(&self) -> u64 {
         self.cursor.load(Ordering::Acquire)
     }
 }
 
-/// Ordering-assembly: pick txs for height N against executed state plus the
-/// in-flight ordered-but-unexecuted suffix overlay. No execution.
+/// Ordering assembly: picks txs for a height against executed state plus the
+/// in-flight ordered-but-unexecuted suffix overlay, without executing.
 pub trait OrderingAssembler: Send + Sync + 'static {
     fn assemble(&self, height: u64, gas_limit: u64, byte_budget: usize) -> Vec<TransactionSigned>;
 
-    /// Every ordering-finalized artifact, in order — keeps the in-flight
-    /// suffix (nonces/hashes of ordered-but-unexecuted txs) authoritative so
-    /// `assemble` does not re-propose what the pool still thinks is pending
-    /// (the pool tracks the EXECUTED head, which lags ordering by ≤ K).
+    /// Record every ordering-finalized artifact, in order, so the in-flight
+    /// suffix stays authoritative and `assemble` does not re-propose what the
+    /// pool still thinks is pending (the pool tracks the executed head, which
+    /// lags ordering by up to `K`).
     fn observe_finalized(&self, block: &OrderBlock);
 }
 
 /// EIP-1559 header rule: `|limit − parent| < parent/1024` and
-/// `limit ≥ MIN_GAS_LIMIT`. The gas limit is agreed data (an [`OrderBlock`]
-/// field), so verify bounds it against the parent exactly like Ethereum
-/// header validation does.
+/// `limit ≥ MIN_GAS_LIMIT`. The gas limit is agreed data, so verify bounds it
+/// against the parent as Ethereum header validation does.
 pub fn gas_limit_within_1_1024(parent: u64, limit: u64) -> bool {
     limit >= MIN_GAS_LIMIT && limit.abs_diff(parent) < (parent / 1024).max(1)
 }
 
-/// Why [`FluentApp::expected_leader_index`] refused. Both variants are a VOTE
-/// REJECT, never a skip — they are named separately only so the log line says
-/// which one, because they mean very different things: the first is a leader
-/// outside the committee this node agreed on, the second is a committee that
-/// outgrew the 1-byte wire format (which `OuterBuilder::build`'s startup assert
-/// exists to make unreachable).
+/// Why [`FluentApp::expected_leader_index`] refused. Both variants are a vote
+/// reject, never a skip; they are named separately so the log says which. The
+/// second is made unreachable by `OuterBuilder::build`'s startup assert.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum LeaderIndexError {
     #[error("round leader is not a member of this epoch's committee")]
@@ -225,26 +163,17 @@ pub enum LeaderIndexError {
     IndexExceedsWireFormat { index: usize, committee_size: usize },
 }
 
-/// Vote-time rule for the production record in `extra_data`: the block must
-/// carry EXACTLY the [`extra_data::PRODUCTION_RECORD_LEN`]-byte record naming its
-/// own leader. The record's accusation half is gated separately, against the
-/// evidence, by [`equivocation_gate_decision`].
-///
-/// `expected_leader_index` is `None` only for an instance with no committee map
-/// (a follower, a verify-only scheme, a test) — it casts no vote, so the rule is
-/// skipped rather than failed. `Some(i)` demands all three of: exact length,
+/// Vote-time rule for the production record in `extra_data`: a voting block
+/// must carry exactly the [`extra_data::PRODUCTION_RECORD_LEN`]-byte record
+/// naming its own leader. `None` means this instance has no committee map and
+/// casts no vote, so the rule is skipped; `Some(i)` demands exact length, a
 /// known version, and `carried == i`.
 ///
-/// Empty `extra_data` REJECTS under `Some`. That asymmetry is load-bearing: the
-/// EXECUTOR must tolerate an empty field (its gate keys on height, and a
-/// migration-window block legitimately carries none), while VERIFY must not —
-/// and it is verify's refusal that makes the executor's empty arm unreachable
-/// through consensus. `Ok(None)` from the decoder is the empty case, hence the
-/// match on `Ok(Some(_))` rather than on `is_ok()`.
-///
-/// Exact length is also what keeps a 4 KiB-tolerant OrderBlock codec from
-/// finalizing a block whose `extra_data` no reth header
-/// (`FLUENT_MAXIMUM_EXTRA_DATA_SIZE`) can hold.
+/// Empty `extra_data` rejects under `Some` even though the executor must
+/// tolerate it (a migration-window block may carry none), and verify's
+/// refusal is what keeps the executor's empty arm unreachable through
+/// consensus. The exact length also keeps the 4 KiB-tolerant OrderBlock codec
+/// from finalizing a block whose `extra_data` no reth header can hold.
 fn production_record_ok(extra_data: &[u8], expected_leader_index: Option<u8>) -> bool {
     let Some(expected) = expected_leader_index else {
         return true;
@@ -267,118 +196,75 @@ pub fn step_gas_limit(parent: u64, target: u64) -> u64 {
     stepped.max(MIN_GAS_LIMIT)
 }
 
-/// The Fluent consensus application.
-///
-/// Generic over `XC` (local derived-chain view) and `A` (tx assembler).
 pub struct FluentApp<XC, A> {
-    /// Per-epoch beacon-DKG verify/propose context (see [`BeaconVerify`]).
     genesis: Arc<OrderBlock>,
     executor: executor::Mailbox,
-    /// Observer for `Update::Block` finalizations — NOT a state-advancing
-    /// path. Wired to the staking reader's epoch-boundary detection.
+    /// Observer for `Update::Block` finalizations; not a state-advancing path.
+    /// Wired to the staking reader's epoch-boundary detection.
     boundary_hook: Arc<dyn Fn(OrderBlock) + Send + Sync>,
-    /// Rate-limiter cursor for the result-gate slow-wait INFO line: the last
-    /// height for which "verify result-gate waiting" was emitted, so a height
-    /// re-verified across views logs at most once. Observability-only; created
-    /// internally (not a `new` argument) and shared across clones like a node's
-    /// other per-instance atomics.
+    /// Rate-limiter cursor for the result-gate slow-wait log line: the last height
+    /// for which it was emitted, so a height re-verified across views logs once.
+    /// Observability only; created internally, not a `new` argument.
     verify_gate_last_logged_height: Arc<AtomicU64>,
     executed: XC,
     assembler: Arc<A>,
-    /// Proposer-local field — it shapes only this node's OWN proposals
-    /// (agreed data once embedded); verify never reads it.
+    /// Proposer-local: shapes only this node's own proposals (agreed data once
+    /// embedded); verify never reads it.
     target_gas_limit: u64,
-    /// Chain-wide sequencer→DPoS activation block — origin of the `result_target`
-    /// pre-activation window (`height < activation + K` ⇒ `result` is ZERO). A
-    /// CHAIN constant, NOT this node's cold-start anchor (`genesis.height`): a
-    /// deep-catch-up node seeds its ordering-chain genesis at the live frontier
-    /// yet still proposes/verifies the K-below-anchor blocks, which are
-    /// post-activation and carry real (non-zero) results. Mirrors the executor's
-    /// `dpos_activation_block` so both the BFT and finalized cross-checks key the
-    /// window identically.
+    /// Chain-wide sequencer→DPoS activation block — origin of the
+    /// `result_target` pre-activation window (`height < activation + K`). A chain
+    /// constant, not this node's cold-start anchor (`genesis.height`): a
+    /// deep-catch-up node still proposes and verifies the K-below-anchor blocks,
+    /// which are post-activation and carry real results.
     dpos_activation_block: u64,
-    /// The epoch committee's pubkey→index BiMap, injected by
-    /// [`Self::with_committee_index`] from `EpochEngine::new` — the SAME map the
+    /// The epoch committee's pubkey→index map, injected by
+    /// [`Self::with_committee_index`] from `EpochEngine::new` — the same map the
     /// engine builds its scheme from, so the index this app computes and the
-    /// committee the engine votes with are one agreed snapshot by construction.
+    /// committee the engine votes with are one agreed snapshot.
     ///
-    /// `None` means this instance holds no committee: a verify-only scheme, a
-    /// follower, or a test. Such an instance casts no vote, so the leader index
-    /// it cannot compute is not a vote condition — which is the only reason a
-    /// `None` here is allowed to be permissive rather than a reject. When the map
-    /// IS present and the lookup misses, that is a REJECT; see
-    /// [`Self::expected_leader_index`], which keeps the two cases apart on
-    /// purpose.
-    ///
-    /// Deliberately NOT an epoch-keyed registry shared across epochs: a registry
-    /// miss would make a vote depend on node-local lookup state at zero quorum
-    /// slack, the class this codebase prohibits by name (see the byte-compare
-    /// prohibition in `verify_block`).
+    /// `None` means this instance holds no committee (a verify-only scheme, a
+    /// follower, a test): it casts no vote, so a missing index is not a vote
+    /// condition and is permissive. A present map with a miss is a reject; see
+    /// [`Self::expected_leader_index`]. Deliberately not an epoch-keyed registry:
+    /// a registry miss would make a vote depend on node-local lookup state.
     committee_index: Option<Arc<BiMap<PeerPubkey, BlsPubkey>>>,
     /// L2 chain id — the domain separator of the vote signatures a block-carried
-    /// equivocation charge is verified under (`fluent_namespace`). A chain
-    /// constant, so it belongs on the cross-epoch app rather than on the
-    /// per-epoch committee injection.
+    /// equivocation charge is verified under. A chain constant, so it lives on the
+    /// cross-epoch app rather than the per-epoch committee injection.
     chain_id: u64,
-    /// Read handle on the slasher's verified-charge queue, drained one charge
-    /// per block by [`Self::build_proposal`]. `None` for an instance with no
-    /// slasher (a follower, a test) — it proposes nothing, so it charges nobody.
+    /// Read handle on the slasher's verified-charge queue, drained at most one
+    /// charge per block by [`Self::build_proposal`]. `None` for an instance with
+    /// no slasher.
     charges: Option<ChargeStore>,
     /// Committee members observed slashed for equivocation. Read at verify to
-    /// refuse binding their proposals, and at propose to drop a charge whose
-    /// verdict has already landed. Empty is the honest "nothing observed" state,
-    /// which is also what a test and a node whose watcher has not run yet hold —
-    /// so the default is permissive, like the absent committee map.
+    /// refuse their proposals and at propose to drop a charge whose verdict has
+    /// landed. Empty is the honest "nothing observed" state, so the default is
+    /// permissive.
     tombstones: TombstoneSet,
-    /// Ordering half of the clock pair, written in [`Reporter::report`]. This
-    /// app is the right writer precisely because it is built ONCE per process
-    /// and holds no execution state: it keeps reporting through a `SafetyHalt`
-    /// park, an executor death and every per-epoch engine abort, so a frozen
-    /// `dpos_dkg_clock_height` against a climbing `dpos_ordering_finalized_height`
-    /// is readable from outside instead of being two silences.
+    /// Ordering half of the clock pair, written in [`Reporter::report`]. The app
+    /// is the right writer because it is built once per process and holds no
+    /// execution state, so it keeps reporting through a `SafetyHalt` park and an
+    /// executor death.
     plane_clock: crate::sync_metrics::PlaneClock,
     /// The marshal's ordering tip — the height of the highest finalization this
-    /// node has VERIFIED and stored — published from the `Update::Tip` arm of
-    /// [`Reporter::report`], the one place the tip is delivered to this process.
+    /// node has verified and stored — published from the `Update::Tip` arm of
+    /// [`Reporter::report`].
     ///
-    /// THE clock of the process, one writer and one PARKED consumer per channel:
-    /// the epoch manager ([`crate::epoch_manager::Actor`], whose live epoch IS
-    /// `epoch_of(tip)`) subscribes through [`Self::ordering_tip`] and parks on
-    /// this one; the beacon's `DkgActor` (`beacon::ValidatorInputs::clock`)
-    /// parks on [`Self::beacon_tip`], a second channel written in the same
-    /// statement below. A watch, so a consumer can both READ the tip at a
-    /// decision point and be WOKEN by it, and nothing is ever dropped.
+    /// One writer and one parked consumer per channel: the epoch manager
+    /// subscribes through [`Self::ordering_tip`], the beacon's `DkgActor` parks on
+    /// [`Self::beacon_tip`], written in the same statement. A watch, so a consumer
+    /// can read the tip at a decision point and be woken by it. The separate
+    /// channel for the beacon is load-bearing: two receivers parked on one
+    /// `tokio::sync::watch` are woken in a process-random order, which reorders a
+    /// seeded deterministic run.
     ///
-    /// ONE PARKED RECEIVER PER CHANNEL IS LOAD-BEARING, and it is the whole
-    /// reason the beacon's channel is separate rather than a second
-    /// subscription to this one. `tokio::sync::watch` wakes its receivers
-    /// through a `big_notify` of EIGHT `Notify` shards; a receiver picks its
-    /// shard on every `changed()` call with the per-process thread-local RNG
-    /// (`tokio-1.52.3/src/sync/watch.rs:422` → `runtime/context.rs:125` →
-    /// `FastRand::new` ← `RandomState`), while `notify_waiters` walks the shards
-    /// in index order. Two receivers parked on ONE channel are therefore woken
-    /// in an order drawn from process-random state — which reorders the tasks in
-    /// the ready queue of a seeded, otherwise fully deterministic run. Two
-    /// channels, each with one parked receiver, are woken in the order this app
-    /// writes them, and that order is code.
-    ///
-    /// `0` until the first tip: the marshal reports one at startup from its
-    /// highest stored finalization (CW `marshal/core/actor.rs:397-402`), and a
-    /// node with no stored finalization at all is genuinely at genesis, where
-    /// `epoch_of(0)` — the pre-activation clamp — is the right answer.
-    ///
-    /// An `Arc<Sender>` rather than a `Sender` because this app is CLONED (the
-    /// marshal's reporter half and the epoch manager's copy are the same app),
-    /// and a `watch::Sender` is not `Clone`; every clone must publish into the
-    /// one channel the consumers subscribed to.
+    /// `0` until the first tip, which is the right answer at genesis.
     ordering_tip: Arc<tokio::sync::watch::Sender<u64>>,
-    /// The beacon plane's own tip channel, when this node runs one: the plane
-    /// builds it before the app exists, keeps the receiver for its `DkgActor`
-    /// and hands the sender in ([`Self::with_beacon_tip`]). Written from the
-    /// same `Update::Tip` arm as [`Self::ordering_tip`], immediately after it,
-    /// so both consumers see every tip and neither can be woken ahead of the
-    /// other by anything but this order. `None` on a node with no beacon plane
-    /// (a follower, a test).
+    /// The beacon plane's own tip channel, built before the app, which keeps the
+    /// receiver for its `DkgActor` and hands the sender in
+    /// ([`Self::with_beacon_tip`]). Written from the same `Update::Tip` arm as
+    /// [`Self::ordering_tip`] immediately after it. `None` on a node with no
+    /// beacon plane.
     beacon_tip: Option<Arc<tokio::sync::watch::Sender<u64>>>,
 }
 
@@ -419,11 +305,11 @@ where
         target_gas_limit: u64,
         dpos_activation_block: u64,
         chain_id: u64,
-        // Same reasoning as `group_keys`: the same handle must also reach
-        // `slasher::Config`, and a second store would be a queue nothing fills.
+        // The same handle must also reach `slasher::Config`; a second store would be
+        // a queue nothing fills.
         charges: Option<ChargeStore>,
-        // Same reasoning again: the writer is the node's tombstone watcher, in
-        // another crate entirely, so a default here would be a set nothing fills.
+        // The writer is the node's tombstone watcher in another crate, so a default
+        // here would be a set nothing fills.
         tombstones: TombstoneSet,
     ) -> Self {
         Self {
@@ -431,22 +317,18 @@ where
             chain_id,
             charges,
             tombstones,
-            // Observability-only, so a setter rather than a 15th constructor
-            // argument: an instance that never receives one publishes nothing,
-            // which is what a follower and every test should publish.
+            // Observability only, so a setter rather than another constructor argument;
+            // an instance that never receives one publishes nothing.
             plane_clock: crate::sync_metrics::PlaneClock::default(),
-            // A channel of its own, so every app in a process — the marshal's
-            // reporter half and the epoch manager's copy are clones of one
-            // `FluentApp` — shares one by construction. This one is never
-            // replaced: a node with a beacon plane ADDS the plane's channel
-            // beside it (`with_beacon_tip`).
+            // A channel of its own so every clone of one `FluentApp` shares it by
+            // construction. A node with a beacon plane adds the plane's channel beside it
+            // (`with_beacon_tip`).
             ordering_tip: Arc::new(tokio::sync::watch::Sender::new(0)),
-            // Set only on a node that runs a beacon plane.
             beacon_tip: None,
             genesis: Arc::new(genesis),
             executor,
             boundary_hook,
-            // u64::MAX sentinel: no height has logged yet (0 is a valid height).
+            // u64::MAX sentinel: 0 is a valid height, so it cannot mean "not yet logged".
             verify_gate_last_logged_height: Arc::new(AtomicU64::new(u64::MAX)),
             executed,
             assembler,
@@ -462,67 +344,50 @@ where
         self
     }
 
-    /// Publish the ordering tip on THIS watch as well as the app's own. The
-    /// beacon plane is built before the app (`node/dpos.rs`,
-    /// `testbed/stand.rs`) and its `DkgActor` holds a receiver of this very
-    /// sender, so handing it in is what makes the actor's clock a channel this
-    /// app writes rather than one nothing ever writes. Call it before the app is
-    /// cloned — the builders do — or the reporter half keeps a `None` here and
-    /// the actor's `changed()` never fires: no deal, no seal.
+    /// Publish the ordering tip on this watch as well as the app's own. The beacon
+    /// plane is built before the app and its `DkgActor` holds a receiver of this
+    /// sender. Call it before the app is cloned — the builders do — or the reporter
+    /// half keeps `None` and the actor's `changed()` never fires.
     ///
-    /// A SECOND CHANNEL, not a second subscription to the app's own, and
-    /// `Self::beacon_tip` says why: two receivers parked on one
-    /// `tokio::sync::watch` are woken in a process-random order.
+    /// A second channel, not a second subscription to the app's own: two receivers
+    /// parked on one `tokio::sync::watch` are woken in a process-random order.
     pub fn with_beacon_tip(mut self, beacon_tip: Arc<tokio::sync::watch::Sender<u64>>) -> Self {
         self.beacon_tip = Some(beacon_tip);
         self
     }
 
-    /// Subscribe to the marshal's ordering tip as this app publishes it.
-    ///
-    /// The receiver holds the LAST value, so a consumer built after a tip has
-    /// already been reported reads that tip rather than the `0` seed — which is
-    /// what makes this safe for a consumer (the epoch manager) that is started
-    /// per promotion, long after the marshal's startup tip.
+    /// Subscribe to the marshal's ordering tip. The receiver holds the last value,
+    /// so a consumer built after a tip was already reported reads that tip rather
+    /// than the `0` seed.
     pub fn ordering_tip(&self) -> tokio::sync::watch::Receiver<u64> {
         self.ordering_tip.subscribe()
     }
 
     /// Attach the epoch committee's pubkey→index map. Called from
-    /// `EpochEngine::new`, which holds both the map and this app before moving
-    /// the app into `Inline` — that adjacency is what makes the two the same
-    /// agreed snapshot. Followers, verify-only schemes and tests leave it unset.
+    /// `EpochEngine::new`, which holds both the map and this app before moving the
+    /// app into `Inline`. Followers, verify-only schemes and tests leave it unset.
     pub fn with_committee_index(mut self, bimap: Arc<BiMap<PeerPubkey, BlsPubkey>>) -> Self {
         self.committee_index = Some(bimap);
         self
     }
 
     /// Install the tombstone view a running node's watcher fills. Test-only: in
-    /// production the handle is a constructor argument precisely so an instance
-    /// cannot be built without the writer's own, and a second entry point would
-    /// re-open that hole.
+    /// production the handle is a constructor argument so an instance cannot be
+    /// built without the writer's own.
     #[cfg(test)]
     fn with_tombstones(mut self, tombstones: TombstoneSet) -> Self {
         self.tombstones = tombstones;
         self
     }
 
-    /// The committee index of `leader`, for the production record carried in
+    /// The committee index of `leader` for the production record carried in
     /// `extra_data`.
     ///
-    /// THREE states, and collapsing any two of them is the bug this signature
-    /// exists to prevent:
-    /// - `Ok(None)` — no committee map. Not a voter; the caller skips the index
-    ///   rule and lets the other structural rules decide.
-    /// - `Ok(Some(i))` — the index to compare the carried byte against.
-    /// - `Err(())` — the map is present and the leader is NOT in it. This is a
-    ///   REJECT, never a skip. Writing this as
-    ///   `self.committee_index.as_ref().and_then(|m| m.position(k))` would fold
-    ///   it into the permissive `None` arm and silently invert the rule.
-    ///
-    /// An index above `u8::MAX` is also `Err`: the wire format is one byte, and
-    /// `OuterBuilder::build`'s startup assert exists to make that unreachable —
-    /// if it is ever reached anyway, refusing to vote is the safe direction.
+    /// `Ok(None)` means no committee map (not a voter, so the caller skips the
+    /// index rule); `Ok(Some(i))` is the index to compare the carried byte
+    /// against; `Err` means the map is present and the leader is not in it, or the
+    /// index exceeds `u8::MAX`. `Err` is a reject, never a skip: folding it into
+    /// the permissive `None` arm would silently invert the rule.
     pub fn expected_leader_index(
         &self,
         leader: &PeerPubkey,
@@ -541,23 +406,14 @@ where
             })
     }
 
-    /// Pure structural validity of `block` against its parent — everything
-    /// verify checks WITHOUT touching the local derived chain (`now_secs` is
-    /// the verifier's clock, sampled by the caller). Parent linkage +
-    /// contiguous height are already enforced by Inline's `validate_block`
-    /// before app verify runs — not re-checked here.
+    /// Pure structural validity of `block` against its parent — everything verify
+    /// checks without touching the local derived chain. Parent linkage and
+    /// contiguous height are already enforced by Inline's `validate_block`.
     ///
-    /// Rule SA (self-attestation): `block.proposal_view` must equal the
-    /// verifier's OWN `ctx.round.view()` — a consensus input, not local state.
-    /// For every CERTIFIED block, `proposal_view` is therefore the TRUE view it
-    /// was proposed in, attested by that epoch's 2f+1 multisig and sealed in
-    /// `digest()`; a lying proposer is voted false by every honest voter of
-    /// that view and never notarizes. SA is a VOTE-TIME-ONLY obligation: no
-    /// ingress path (cert-follower / backfill / cold-start / recovery) may
-    /// re-check it — they have no `ctx`, and a re-check against local cert
-    /// state would reject the legitimately re-proposed boundary block (F4).
-    /// The boundary RE-PROPOSE never reaches here: marshal short-circuits on
-    /// `digest == context.parent.1` BEFORE app-verify.
+    /// Rule SA: `block.proposal_view` must equal the verifier's own
+    /// `ctx.round.view()`, a consensus input rather than local state. SA is a
+    /// vote-time-only obligation: no ingress path (cert-follower, backfill,
+    /// cold-start, recovery) may re-check it against local cert state.
     fn structural_checks(
         block: &OrderBlock,
         parent: &OrderBlock,
@@ -573,10 +429,9 @@ where
             && total_tx_gas(&block.txs).is_some_and(|gas| gas <= block.gas_limit)
     }
 
-    /// Paced proposal body, factored out of `Application::propose` so the
-    /// pacing/timestamp behavior is unit-testable (`AncestorStream` has no
-    /// public constructor). `context` is the proposer's simplex context: it
-    /// supplies `proposal_view = ctx.round.view()` (rule SA).
+    /// Paced proposal body, factored out of `Application::propose` so pacing and
+    /// timestamp behavior is unit-testable (`AncestorStream` has no public
+    /// constructor). `context` supplies `proposal_view = ctx.round.view()`.
     async fn build_proposal<E: Clock>(
         &self,
         clock: &E,
@@ -585,36 +440,26 @@ where
     ) -> Option<OrderBlock> {
         let height = parent.height + 1;
 
-        // The pace cap's origin, read at view entry rather than after the
-        // sleep: `leader_timeout` is one block interval plus a 750 ms margin
-        // (`timeouts.rs`), so anything this call spends before pacing must come
-        // out of the leader's OWN interval, not be added to it.
+        // Read the pace cap's origin at view entry rather than after the sleep: the
+        // leader timeout budgets one block interval, so time spent before pacing must
+        // come out of it, not be added to it.
         let view_entered = clock.current();
 
-        // Pace to 1 blk/s: hold until wall clock reaches parent + 1s.
-        // Cancellation-safe: Inline selects this future against
-        // tx.closed(), so a moved-on view aborts the sleep.
+        // Pace to one block per second: hold until wall clock reaches parent + 1s.
+        // Cancellation-safe (Inline selects this future against `tx.closed()`).
         //
-        // Capped at one interval from NOW: verify tolerates parents up to
-        // TIMESTAMP_FUTURE_TOLERANCE_SECS ahead of our clock, and an uncapped
-        // sleep on such a parent would overrun the peers' leader deadline
-        // (its derivation assumes the pace component ≤ BLOCK_INTERVAL) —
-        // a proposer with a lagging clock would be nullified on every view it
-        // leads. The produced timestamp stays parent+1 (content, not wall
-        // time), so chain-time monotonicity is unaffected.
+        // Capped at one interval from now: an uncapped sleep on a future-dated parent
+        // would overrun the peers' leader deadline. The produced timestamp is still
+        // parent + 1, so chain-time monotonicity is unaffected.
         let pace_target =
             std::time::UNIX_EPOCH + Duration::from_secs(parent.timestamp) + BLOCK_INTERVAL;
         let pace_cap = view_entered + BLOCK_INTERVAL;
         clock.sleep_until(pace_target.min(pace_cap)).await;
 
-        // Execution gate (proposer-≤K-behind): the result commitment needs the
-        // FINALIZED-tier derived hash at height − K — NOT the speculative head
-        // (a still-speculative sibling A at h−K could re-finalize as sibling B,
-        // committing a hash the network will diverge from).
-        // K guarantees h−K is finalized-reconciled before h commits its result;
-        // a proposer whose local finalize reconcile has not caught up skips the
-        // view rather than guessing. Sampled after the pace sleep — the EL gets
-        // the full inter-block interval to reach height − K.
+        // Execution gate: the result commitment needs the finalized-tier derived hash
+        // at height − K, never the speculative head. A proposer whose local finalize
+        // reconcile has not caught up skips the view rather than guessing. Sampled
+        // after the pace sleep so the EL gets the full inter-block interval.
         let result = match result_target(height, self.dpos_activation_block) {
             ResultTarget::PreActivation => B256::ZERO,
             ResultTarget::Height(h) => match self.executed.finalized_executed_hash(h) {
@@ -641,17 +486,11 @@ where
             .max(parent.timestamp + 1);
         let txs = self.assembler.assemble(height, gas_limit, TX_BYTE_BUDGET);
 
-        // Stamp the production record naming THIS node. commonware invokes
-        // `propose` only on the elected leader, so `context.leader` is us — and
-        // resolving the index through the same call verify uses is what makes the
-        // proposer and its voters agree by construction rather than by convention.
-        //
-        // Both non-`Some` arms decline the view instead of proposing: a block
-        // whose record this node cannot compute is a block its own verifier would
-        // reject, and skipping the view costs one nullification while proposing it
-        // costs a guaranteed one plus a wasted leader deadline. `Ok(None)` (no
-        // committee map) is unreachable for a real proposer — `EpochEngine::new`
-        // injects the map before the app can be asked to propose.
+        // Stamp the production record naming this node: commonware invokes `propose`
+        // only on the elected leader, so `context.leader` is us. Both non-`Some` arms
+        // decline the view rather than propose a block our own verifier would reject;
+        // `Ok(None)` is unreachable for a real proposer because `EpochEngine::new`
+        // injects the map first.
         let leader_index = match self.expected_leader_index(&context.leader) {
             Ok(Some(idx)) => idx,
             Ok(None) => {
@@ -671,27 +510,16 @@ where
                 return None;
             }
         };
-        // At most ONE charge per block: each costs every voter two BLS verifies
-        // that run OUTSIDE `VERIFY_EXEC_BUDGET`, out of the ~450 ms vote margin.
-        //
-        // The charge is drawn from THIS block's epoch and no other. Only that
-        // epoch's committee can verify it (`committee_index` maps exactly one
-        // epoch), so an older charge would produce a block every voter rejects
-        // and `BTreeMap` ordering would keep re-offering that same key. A charge
-        // that outlives its epoch leaves by the transaction fallback instead.
-        //
-        // The epoch is the ROUND's, not `epoch_of(height)`: the round is what
-        // every voter's `committee_index` was built for, and it is agreed data
-        // both sides of the vote read identically.
-        //
-        // If the block fails to gather a quorum nothing special happens — the
-        // charge stays in the queue and the next proposer holding it offers it
-        // again. No backoff, no retry counter, no timer.
-        // A charge names a committee index; the tombstone is recorded against a
-        // peer key. The round's own `committee_index` is the mapping between
-        // them, and it is the right one by construction — `next_charge` is asked
-        // only for this round's epoch. Without a map nothing is filtered, the
-        // same permissive direction the leader-index rule takes.
+        // At most one charge per block: each costs every voter two BLS verifies
+        // outside `VERIFY_EXEC_BUDGET`. The charge is drawn from this block's epoch
+        // (the round's, not `epoch_of(height)`) because only that epoch's committee
+        // can verify it; a charge that outlives its epoch leaves by the transaction
+        // fallback. If the block fails to gather a quorum the charge stays queued and
+        // the next proposer offers it again.
+        // A charge names a committee index while a tombstone is recorded against a
+        // peer key, so the round's `committee_index` maps between them. Without a map
+        // nothing is filtered, the same permissive direction the leader-index rule
+        // takes.
         let charge = self.charges.as_ref().and_then(|store| {
             store.next_charge(context.round.epoch().get(), |accused| {
                 self.committee_index
@@ -719,10 +547,9 @@ where
         Some(OrderBlock {
             parent: parent.digest(),
             height,
-            // Rule SA: self-attest the view this block is proposed in. It is
-            // what makes `Round(epoch(h), proposal_view)` — the round every node
-            // resolves this block's σ at — agreed data rather than a per-node
-            // guess, and it is checked at THIS block's own vote below.
+            // Rule SA: self-attest the view this block is proposed in, making
+            // `Round(epoch(h), proposal_view)` — the round this block's σ resolves at —
+            // agreed data rather than a per-node guess.
             proposal_view: context.round.view().get(),
             timestamp,
             gas_limit,
@@ -734,36 +561,25 @@ where
     }
 }
 
-/// Σ tx.gas_limit with overflow as None — the one stateless tx bound verify
-/// enforces: it caps the execution work an agreed artifact can demand.
-/// Signature/chain-id/nonce validity are NOT checked here: the deterministic
-/// skip rule in derivation handles them identically on every node, and
-/// checking them in verify would add per-tx ECDSA work to the vote path
-/// without bounding anything the gas cap doesn't already bound.
+/// Σ tx.gas_limit with overflow as `None` — the one stateless tx bound verify
+/// enforces. Signature, chain-id and nonce validity are not checked: the
+/// deterministic skip rule in derivation handles them identically on every
+/// node, and checking them would add per-tx ECDSA work without bounding
+/// anything the gas cap does not already bound.
 fn total_tx_gas(txs: &[TransactionSigned]) -> Option<u64> {
     txs.iter()
         .try_fold(0u64, |acc, tx| acc.checked_add(tx.gas_limit()))
 }
 
-/// Equivocation gate (returns `false` ⇒ vote against the block): the accusation
-/// in `extra_data` and the evidence in `OrderBlock::equivocation` must be present
-/// together or absent together, and when present the evidence must convict
-/// exactly the accused member of exactly this block's epoch.
+/// Equivocation gate (returns `false` to vote against): the accusation in
+/// `extra_data` and the evidence in `OrderBlock::equivocation` must be present
+/// together, and when present the evidence must convict exactly the accused
+/// member of this block's epoch. Presence is exact in both directions: an
+/// accusation without evidence is uncheckable, evidence without an accusation
+/// is unagreed payload under the digest.
 ///
-/// Presence is exact in BOTH directions on purpose. An accusation without
-/// evidence is a slash nobody could check; evidence without an accusation is
-/// unagreed payload riding under the digest, and both would let one Byzantine
-/// proposer put something in a block that the committee did not attest to.
-///
-/// Every voter runs this against the block in front of it, so a charge is valid
-/// or not on its own bytes — block validity never depends on whether the evidence
-/// gossip reached this node in time. A false charge cannot pass, because honest
-/// nodes hold no valid evidence for an innocent validator.
-///
-/// `committee_index == None` (a follower, a verify-only scheme, a test) skips
-/// only the CRYPTOGRAPHIC arm — such an instance casts no vote, so a signature it
-/// cannot check is not a vote condition, exactly as for the leader-index rule.
-/// The presence rule needs no committee and is enforced regardless.
+/// `committee_index == None` skips only the cryptographic arm; the presence
+/// rule needs no committee and is enforced regardless.
 fn equivocation_gate_decision(
     block: &OrderBlock,
     epoch: u64,
@@ -771,7 +587,7 @@ fn equivocation_gate_decision(
     chain_id: u64,
 ) -> bool {
     // An absent or undecodable record names nobody, so no evidence may ride with
-    // it. `structural_checks` already rejected both for any instance that votes.
+    // it; `structural_checks` already rejected both for any instance that votes.
     let accused = match extra_data::decode_production_record(&block.extra_data) {
         Ok(Some(record)) => record.accused,
         Ok(None) | Err(_) => None,
@@ -834,10 +650,8 @@ where
         let parent = ancestry.next().await?;
         let block = self.build_proposal(&ctx.0, &ctx.1, parent).await;
         if let Some(b) = &block {
-            // commonware invokes `propose` ONLY on the elected leader, so this
-            // fires exactly once per block this node proposes — the per-validator
-            // proposer signal the weighted-VRF smoke tallies (`log_count`) and the
-            // D2 proposer-share monitoring seam consumes (Prometheus counter).
+            // commonware invokes `propose` only on the elected leader, so this fires once
+            // per block this node proposes.
             tracing::info!(height = b.height, "dpos: proposing order block");
             metrics::counter!("dpos_proposed_total").increment(1);
         }
@@ -856,10 +670,9 @@ where
         ctx: (E, Self::Context),
         mut ancestry: AncestorStream<P, OrderBlock>,
     ) -> bool {
-        // Inline seeds the stream [block, parent] (validation.rs:186) — both
-        // next() calls return buffered, no marshal fetch. At the boundary the
-        // parent IS the previous epoch's terminal block `L` — every node
-        // running the `E+1` engine already holds its body (Inline::genesis).
+        // Inline seeds the stream `[block, parent]`, so both `next()` calls return
+        // buffered. At the boundary the parent is the previous epoch's terminal
+        // block, whose body every node running the `E+1` engine already holds.
         let Some(block) = ancestry.next().await else {
             return false;
         };
@@ -875,9 +688,9 @@ where
     XC: ExecutedChain,
     A: OrderingAssembler,
 {
-    /// The whole vote decision over a `(block, parent)` pair, factored out of
-    /// the trait `verify` so the gate is unit-testable (`AncestorStream` has
-    /// no public constructor).
+    /// The whole vote decision over a `(block, parent)` pair, factored out of the
+    /// trait `verify` so the gate is unit-testable (`AncestorStream` has no public
+    /// constructor).
     async fn verify_block<E: Clock>(
         &self,
         clock: &E,
@@ -886,21 +699,14 @@ where
         parent: &OrderBlock,
     ) -> bool {
         // A slashed member keeps its seat and its leader slots until the committee
-        // turns over, and simplex clears the round's leader deadline the moment
-        // its proposal binds (`voter/round.rs` `set_proposal` / `verified`). That
-        // is what makes an equivocator's slot cost the full certification
-        // deadline instead of the leader timeout: equivocating disarms the timer.
-        // Refusing here is the node's one seam before certification — a `false`
-        // verify sets both deadlines to now (`voter/state.rs::trigger_timeout` →
-        // `set_deadlines(now, now)`), so the view ends at once instead of paying
-        // out the certification window.
+        // turns over, and binding its proposal clears the round's leader deadline, so
+        // equivocating costs the full certification deadline. Refusing here is the
+        // node's one seam before certification: a `false` verify times the view out at
+        // once.
         //
-        // This is a vote decision read from a NON-hash-invariant field, and that
-        // is deliberate rather than overlooked: a node that has not yet seen the
-        // verdict simply votes as before, so the two populations disagree only on
-        // whether this view nullifies — never on which block is final. The flag
-        // is monotone, so the disagreement resolves in one direction and within
-        // the few blocks it takes the verdict to reach everyone.
+        // This vote decision reads a non-hash-invariant field deliberately: a node
+        // that has not yet seen the verdict votes as before, so the populations
+        // disagree only on nullification, never on which block is final.
         if self.tombstones.contains(&ctx.leader) {
             tracing::warn!(
                 height = block.height,
@@ -916,14 +722,10 @@ where
             .duration_since(std::time::UNIX_EPOCH)
             .expect("system clock before UNIX_EPOCH")
             .as_secs();
-        // The production record names its own producer, so unlike the bitmap it
-        // replaced it IS checkable at vote time — against `ctx.leader`, which is
-        // consensus-supplied agreed data, never local state. The two-step form is
-        // mandatory: `Err` is a REJECT, never a skip, and folding it into the
-        // permissive `Ok(None)` arm (`as_ref().and_then(..)`) silently inverts the
-        // rule. `Ok(None)` means this instance holds no committee map (a
-        // verify-only scheme, a follower, a test) — it casts no vote, so the index
-        // it cannot compute is not a vote condition.
+        // The production record names its own producer, so it is checkable at vote
+        // time against `ctx.leader`, which is consensus-supplied agreed data. `Err` is
+        // a reject, never a skip; folding it into the permissive `Ok(None)` arm would
+        // invert the rule.
         let expected_leader_index = match self.expected_leader_index(&ctx.leader) {
             Ok(v) => v,
             Err(e) => {
@@ -943,22 +745,16 @@ where
             return false;
         }
 
-        // WHY THE RECORD IS CHECKED AGAINST `ctx.leader` AND NOTHING ELSE, carried
-        // forward from the retired bitmap's prohibition because the hazard it names
-        // is unchanged: a verify-time byte-compare against this node's OWN
-        // marshal-archived finalization is UNSOUND. The archive holds each node's
-        // first-observed, locally-assembled cert — commonware `assemble` keeps any
-        // ≥quorum attestation set and `verify_certificate` accepts any ≥quorum
-        // bitmap, so honest nodes legitimately hold byte-DIFFERENT certs for the
-        // same round → a byte-exact compare false-rejects honest proposals →
-        // nullify storm / liveness stall (same class as the verify-gate
-        // non-deterministic-cert-freeze hazard). DO NOT re-introduce a verify-time
-        // compare against local cert or lookup state; `ctx.leader` is agreed, a
-        // local archive is not.
+        // The record is checked against `ctx.leader` and nothing else. A verify-time
+        // byte-compare against this node's own marshal-archived finalization would be
+        // unsound: `assemble` keeps any ≥quorum attestation set and
+        // `verify_certificate` accepts any ≥quorum bitmap, so honest nodes hold
+        // byte-different certs for the same round and a byte-exact compare would
+        // false-reject honest proposals. `ctx.leader` is agreed; a local archive is
+        // not.
 
-        // Equivocation gate: accusation and evidence bound to each other, and the
-        // charge verified against THIS round's committee — the only one whose
-        // `signer_idx → BLS key` mapping a running node can reconstruct.
+        // The charge is verified against this round's committee — the only one whose
+        // signer-index to BLS-key mapping a running node can reconstruct.
         if !equivocation_gate_decision(
             block,
             ctx.round.epoch().get(),
@@ -968,29 +764,19 @@ where
             return false;
         }
 
-        // P4 tripwire: on a same-epoch link `parent.proposal_view` and
-        // `ctx.parent.0` are provably equal, but they come from DIFFERENT
-        // SOURCES (block body vs simplex context) — a mismatch is a block
-        // certified at a view it did not claim. It outlived the witness pin it
-        // was a second source for: `proposal_view` is still the key the
-        // executor resolves σ at, so a block lying about it still misroutes a
-        // derive.
+        // On a same-epoch link `parent.proposal_view` and `ctx.parent.0` are provably
+        // equal but come from different sources (block body vs simplex context), so a
+        // mismatch is a block certified at a view it did not claim. `proposal_view` is
+        // still the key the executor resolves σ at.
         if ctx.parent.0 != View::zero() && parent.proposal_view != ctx.parent.0.get() {
             metrics::counter!("dpos_parent_view_mismatch_total").increment(1);
             return false;
         }
 
-        // The result-gate poll loop. It used to INTERLEAVE two conditions, the
-        // witness-signature arm and this one, over one shared 40-tick budget;
-        // with the witness gone the budget has a single claimant and the
-        // starvation question it answered no longer exists. Common path:
-        // resolves on tick 0, no sleep. A definitive `false` returns at once;
-        // an unresolved result at the deadline votes false (EL backpressure).
-        // The result gate samples the FINALIZED tier (see
-        // `ExecutedChain::finalized_executed_hash`): the honest semantics are
-        // "wait for h−K to be finalized-reconciled locally", not "match the
-        // speculative head" — the speculative head can carry a sibling that the
-        // finalization will replace.
+        // The result-gate poll loop. The common path resolves on tick 0 with no sleep;
+        // a definitive `false` returns at once, and an unresolved result at the
+        // deadline votes false. The gate samples the finalized tier — "wait for h−K to
+        // be finalized-reconciled locally", not "match the speculative head".
         let check = |this: &Self| {
             result_matches(
                 block.result,
@@ -1000,12 +786,9 @@ where
             )
         };
         let mut result_done = false;
-        // Result-gate observability: total wall time this verify spends waiting on
-        // `executed_hash(h-K)` — 0 on the common tick-0 resolve. A wait past one
-        // poll tick means the local EL has fallen >K behind the consensus tip
-        // (deferred-executor backlog), the mechanism behind late votes / nullify
-        // under heavy blocks. Recorded exactly once per verify at the result arm's
-        // terminal (resolve / definitive-false / budget-exhausted).
+        // Wall time this verify spends waiting on the finalized hash at h−K; zero on
+        // the common tick-0 resolve. Recorded once per verify at the result arm's
+        // terminal.
         let gate_started = std::time::Instant::now();
         let mut gate_slow_logged = false;
         let polls = (VERIFY_EXEC_BUDGET.as_micros() / VERIFY_EXEC_POLL.as_micros()) as u32;
@@ -1026,10 +809,8 @@ where
                         result_done = true;
                     }
                     None => {
-                        // Slow path: still no finalized `executed_hash(h-K)` after ≥1 tick.
-                        // Log once per verify, and — via the shared cursor — at
-                        // most once per height (a height is re-verified across
-                        // views; the saturation signal is per-height).
+                        // Log once per verify and, via the shared cursor, at most once per height: a
+                        // height is re-verified across views and the saturation signal is per-height.
                         if tick > 0 && !gate_slow_logged {
                             gate_slow_logged = true;
                             let prev = self
@@ -1058,8 +839,7 @@ where
             }
         }
         if !result_done {
-            // Budget exhausted with no finalized h−K locally: finalization is
-            // lagging into the gate.
+            // Budget exhausted with no finalized h−K: finalization is lagging the gate.
             metrics::counter!("dpos_result_gate_finalized_miss_total").increment(1);
             metrics::histogram!("dpos_verify_result_gate_wait_seconds")
                 .record(gate_started.elapsed().as_secs_f64());
@@ -1082,38 +862,30 @@ where
     type Activity = Update<OrderBlock>;
 
     async fn report(&mut self, activity: Update<OrderBlock>) {
-        // Boundary hook fires for `Update::Block` only — the epoch-boundary
-        // detection integration point. The assembler observes the same block
-        // so its in-flight suffix tracks ordered-but-unexecuted txs.
+        // The boundary hook and the assembler observe `Update::Block` only.
         if let Update::Block(ref block, _) = activity {
             self.assembler.observe_finalized(block);
             (self.boundary_hook)(block.clone());
         }
-        // The gauge is observability only, but the watch is not: it is the
-        // process's clock — the epoch manager's live-epoch input and the beacon
-        // actor's deal/seal clock — and the only one that keeps moving once this
-        // node's execution stalls. The tip still travels to the executor
-        // untouched below either way.
+        // The gauge is observability only, but the watch is not: it is the process's
+        // clock and the only one that keeps moving once this node's execution stalls.
+        // The tip still travels to the executor untouched below either way.
         if let Update::Tip(_, height, _) = &activity {
             self.plane_clock.record_ordering_tip(height.get());
-            // The value and the wake-up in one `send_replace`: unconditional
-            // (the marshal reports a tip only when it rises, `store_finalization`
-            // guards `height > self.tip`, so there is nothing to filter here) and
-            // lossless — the live epoch is a FUNCTION of the current tip, and a
-            // consumer that missed the last publish would hold a stale epoch
-            // until the next one.
+            // `send_replace` publishes value and wake-up in one call, unconditionally: the
+            // marshal reports a tip only when it rises, and the live epoch is a function
+            // of the current tip, so a consumer that missed the last publish would hold a
+            // stale epoch until the next one.
             self.ordering_tip.send_replace(height.get());
-            // The beacon plane's channel, written immediately after and from the
-            // same statement: one writer, two channels, a fixed order. See
-            // `beacon_tip` for why this is not a second subscription above.
+            // The beacon plane's channel, written immediately after in the same statement:
+            // one writer, two channels, a fixed order.
             if let Some(beacon_tip) = &self.beacon_tip {
                 beacon_tip.send_replace(height.get());
             }
         }
-        // Ack flow: the `Exact` ack inside Update::Block travels INSIDE this
-        // command and is fired by the executor after derive + import. Marshal
-        // awaits the ack via PendingAcks; if the executor task crashes
-        // mid-flight, the dropped ack trips marshal's supervisor cascade.
+        // The `Exact` ack inside `Update::Block` travels inside this command and is
+        // fired by the executor after derive and import; a dropped ack trips marshal's
+        // supervisor cascade.
         if let Err(e) = self.executor.send(executor::Message {
             cause: tracing::Span::current(),
             command: executor::Command::Finalize(Box::new(activity)),
@@ -1130,32 +902,24 @@ pub trait BeaconEngineLike: Send + Sync + 'static {
     /// Full derivation output accepted by [`Self::import_derived`].
     type ExecutionData: Send + 'static;
 
-    /// Drive the fork-choice. The VERDICT (incl. a semantic
-    /// `PayloadStatusEnum::Invalid`) rides in `Ok(..)`; a failure that produced
-    /// NO verdict is the typed [`EngineError`] in `Err`. This split is
-    /// TYPE-LEVEL (family 5): a verdict can never be folded into the error, so
-    /// the executor's fork-safety rule ("retry ⇔ transport `Err`; SafetyHalt ⇔
-    /// `Ok(Invalid)`") is a property of the return type, not a comment at each
-    /// call site.
+    /// Drive the fork choice. The verdict (including a semantic
+    /// `PayloadStatusEnum::Invalid`) rides in `Ok`; a failure that produced no
+    /// verdict is the typed [`EngineError`] in `Err`. The split is type-level, so
+    /// the executor's fork-safety rule is a property of the return type.
     ///
-    /// The `Err` half is NOT uniformly transient: [`EngineError`] carries its
-    /// own [`crate::fault::FaultClass`] so an implementation can distinguish
-    /// "reth never processed this" (retry forever) from "reth processed it and
-    /// rejected the forkchoice STATE" (a permanent local inconsistency).
+    /// `EngineError` carries its own [`crate::fault::FaultClass`] so an
+    /// implementation can distinguish "reth never processed this" (retry) from
+    /// "reth rejected the forkchoice state" (permanent local inconsistency).
     fn fork_choice_updated(
         &self,
         state: ForkchoiceState,
     ) -> impl std::future::Future<Output = Result<ForkchoiceUpdated, EngineError>> + Send;
 
-    /// Import one derived block into the EL. Implementations either hand
-    /// reth the pre-executed artifacts (`InsertExecutedBlock` — single
-    /// execution) or fall back to `new_payload` (reth re-executes; the
-    /// conformance/escape-hatch mode). Same no-verdict-vs-verdict split as
-    /// [`Self::fork_choice_updated`]: this shared return type is what makes the
-    /// two engine entry points get the IDENTICAL transport class
-    /// ([`crate::fault::FaultClass::TransientExternal`]`(EngineRetry)`), closing the historic
-    /// asymmetry where an import transport error was actor-death while its FCU
-    /// sibling retried.
+    /// Import one derived block into the EL. Implementations either hand reth the
+    /// pre-executed artifacts (`InsertExecutedBlock`, single execution) or fall
+    /// back to `new_payload` (reth re-executes). Same no-verdict-vs-verdict split
+    /// as [`Self::fork_choice_updated`], so both engine entry points get the same
+    /// transport fault class.
     fn import_derived(
         &self,
         data: Self::ExecutionData,
@@ -1172,10 +936,8 @@ pub trait DerivedBlock: Send + Sync + 'static {
     fn number(&self) -> u64;
     /// Beacon observation for this block, surfaced to the executor's
     /// `BeaconMetrics`: `Some(true)` = `prev_randao` was the verified threshold
-    /// seed; `Some(false)` = a beacon-active block fell back to `order.digest()`
-    /// (seed absent/unverified — the certify hook Nullifies such a boundary, so
-    /// this is the local pre-Nullify observation); `None` = pre-beacon / no seed
-    /// (not a beacon-active observation). Defaults to `None`.
+    /// seed; `Some(false)` = a beacon-active block fell back to `order.digest()`;
+    /// `None` = pre-beacon / no seed. Defaults to `None`.
     fn beacon_active(&self) -> Option<bool> {
         None
     }
@@ -1190,22 +952,20 @@ impl DerivedBlock for SealedBlock<RethBlock> {
     }
 }
 
-/// Typed "parent header not readable yet" derivation failure. reth-2.2
-/// canonicalizes imports eagerly on the engine-tree thread, so a block can be
-/// "added to canonical chain" milliseconds before provider reads see its
-/// header; a recovery path that derives against a parent imported
-/// concurrently (devp2p live-sync or its own previous iteration's import)
-/// must be able to tell this transient visibility race from a real failure.
+/// Typed "parent header not readable yet" derivation failure. reth
+/// canonicalizes imports on the engine-tree thread, so a block can be added to
+/// the canonical chain milliseconds before provider reads see its header; a
+/// recovery path deriving against such a parent must tell this transient race
+/// from a real failure.
 #[derive(Debug, thiserror::Error)]
 #[error("derive: parent header {0} not found")]
 pub struct ParentHeaderMissing(pub B256);
 
 /// Typed "a gap-walk prefix element on a beacon-active round has no σ yet"
-/// derivation failure. The walk owns neither `cause` nor the ack, so it cannot
-/// park; its CALLER can, and does — `try_derive` classifies this leaf exactly
-/// as it classifies [`ParentHeaderMissing`]. Deriving with the `order.digest()`
-/// fallback instead would re-roll `prev_randao` against the round the rest of
-/// the network used, so the block waits rather than forks.
+/// derivation failure. The walk owns neither the cause nor the ack, so it
+/// cannot park; its caller classifies this leaf as it does
+/// [`ParentHeaderMissing`]. Deriving with the `order.digest()` fallback
+/// instead would re-roll `prev_randao` against the round the network used.
 #[derive(Debug, thiserror::Error)]
 #[error(
     "derive gap: no seed recorded for beacon-active height {height} (round view {proposal_view})"
@@ -1215,20 +975,12 @@ pub struct PrefixSeedMissing {
     pub proposal_view: u64,
 }
 
-/// Derivation with a bounded retry on the parent-visibility race above.
-///
-/// Any path that derives against a parent imported WITHOUT an awaited
-/// canonicalization in between must make the parent visible first — that is a
-/// property of the code path, not of the component. Both walks do it: the
-/// crash-recovery walk (`dpos.rs`) and the executor's gap-walk
-/// (`derive_finalized_with_gap_fill`). Classifying "the executor" as immune
-/// wholesale is what left the gap-walk unprotected.
-///
-/// This retry absorbs the narrower race where the parent is imported
-/// CONCURRENTLY by someone else (the follower's first derive after an EL-sync
-/// jump, where devp2p canonicalized the parent). It is not a substitute for
-/// sending the canonicalization FCU. Any other derivation error stays
-/// immediately fatal.
+/// Derivation with a bounded retry on the parent-visibility race above. Any
+/// path that derives against a parent imported without an awaited
+/// canonicalization in between must make the parent visible first; both walks
+/// do it. This absorbs the narrower race where the parent is imported
+/// concurrently by someone else, and is not a substitute for sending the
+/// canonicalization FCU. Any other derivation error stays immediately fatal.
 pub(crate) async fn derive_with_visibility_retry<C, D>(
     ctx: &C,
     deriver: &D,
@@ -1259,12 +1011,10 @@ where
     }
 }
 
-/// Deterministic OrderBlock → derived-EVM-block execution: every node must
-/// compute a byte-identical derived block for the same `(order, parent)` —
-/// this is the function whose output the committee's `result` agreement
-/// attests. Implemented in the node crate over reth-evm's `BlockBuilder`
-/// (same execution code path as the stock payload builder, so semantics are
-/// identical to a built block).
+/// Deterministic `OrderBlock` → derived-EVM-block execution: every node must
+/// compute a byte-identical derived block for the same `(order, parent)` — the
+/// function whose output the committee's `result` agreement attests. The node
+/// crate implements it over reth-evm's `BlockBuilder`.
 pub trait DerivedBlockBuilder: Send + Sync + 'static {
     /// Full derivation output (block + execution artifacts).
     type Derived: DerivedBlock;
@@ -1294,15 +1044,10 @@ mod tests {
     /// The domain separator every test signature is produced and verified under.
     const TEST_CHAIN_ID: u64 = 20_994;
 
-    // The monotone finalized-execution cursor: tier-F resolves reth's canonical
-    // hash at-or-below the cursor (no sibling can exist there) and `None` above
-    // it (still speculative-tier); `advance` is monotone; a provider miss
-    // at-or-below the cursor returns `None`, never a wrong hash; and the cursor
-    // is visible across clones (the executor advances, the gate reads a clone).
-    // (Migrated from the deleted map's `finalized_results_prunes_below_the_window`
-    // + `finalized_results_floor_falls_back_to_canonical_below_it` — the map,
-    // its retain window, and the separate floor collapsed into this cursor:
-    // reth IS the store, so there is nothing to prune and no hashes to retain.)
+    // Tier-F resolves reth's canonical hash at or below the cursor and `None`
+    // above it; `advance` is monotone; a provider miss at or below the cursor
+    // returns `None`, never a wrong hash; and the cursor is visible across
+    // clones.
     #[test]
     fn finalized_cursor_resolves_canonical_at_or_below_and_none_above() {
         let cursor = FinalizedCursor::default();
@@ -1310,25 +1055,18 @@ mod tests {
         let canonical = |h: u64| (h <= 20).then(|| B256::repeat_byte(h as u8));
         cursor.advance(10);
 
-        // At and below the cursor: the provider hash IS the finalized hash.
         assert_eq!(reader.resolve(10, canonical), Some(B256::repeat_byte(10)));
         assert_eq!(reader.resolve(3, canonical), Some(B256::repeat_byte(3)));
-        // Above the cursor: `None` even though canonical HAS the height (that
-        // hash is still speculative-tier there — a sibling can still finalize).
         assert_eq!(reader.resolve(11, canonical), None);
-        // Advancing the cursor exposes the next height through the provider.
         cursor.advance(12);
         assert_eq!(reader.resolve(12, canonical), Some(B256::repeat_byte(12)));
         assert_eq!(reader.resolve(13, canonical), None);
-        // Monotone: a lower advance is a no-op.
         cursor.advance(5);
         assert_eq!(
             reader.resolve(13, canonical),
             None,
             "cursor did not regress"
         );
-        // A provider miss at-or-below the cursor ⇒ None, never a wrong hash
-        // (deep-pruned history / a crash that lost the reth tail above the ack).
         assert_eq!(
             reader.resolve(9, |_| None),
             None,
@@ -1381,10 +1119,9 @@ mod tests {
         }
     }
 
-    /// A committee BiMap in the SAME shape production builds
-    /// (`epoch_committee_from_snapshot` → `EpochCommittee::from_pairs`), so the
-    /// index these tests assert against is commonware's sorted order, not
-    /// insertion order.
+    /// A committee BiMap in the same shape production builds, so the index
+    /// these tests assert against is commonware's sorted order, not insertion
+    /// order.
     fn test_committee(
         n: usize,
         seed: u64,
@@ -1396,9 +1133,9 @@ mod tests {
         (keys, bimap)
     }
 
-    /// The BLS keypairs [`committee_bimap`] puts in the map, in the same order —
-    /// so a test that must SIGN as a committee member holds the secrets behind
-    /// the very pubkeys the map was built from.
+    /// The BLS keypairs [`committee_bimap`] puts in the map, in the same order,
+    /// so a test that signs as a committee member holds the secrets behind the
+    /// very pubkeys the map was built from.
     fn committee_bls_keys(n: usize, seed: u64) -> Vec<ValidatorBlsKeypair> {
         use rand_08::{rngs::StdRng, SeedableRng as _};
 
@@ -1424,12 +1161,10 @@ mod tests {
             .expect("unique participants")
     }
 
-    /// A committee containing the leader EVERY propose fixture elects
-    /// (`sample_context` / `propose_ctx` both name `from_seed(7)`), so a
-    /// proposing app can resolve its own index and stamp a production record.
-    /// Without it `build_proposal` declines the view — which is the production
-    /// behaviour, not a test artifact: `EpochEngine::new` always injects the map
-    /// before an app can be asked to propose.
+    /// A committee containing the leader every propose fixture elects
+    /// (`from_seed(7)`), so a proposing app can resolve its own index and
+    /// stamp a production record; without it `build_proposal` declines the
+    /// view, as it would in production when no map is injected.
     fn propose_committee() -> Arc<BiMap<PeerPubkey, BlsPubkey>> {
         let keys: Vec<Ed25519PrivateKey> = [7u64, 8, 9]
             .into_iter()
@@ -1445,11 +1180,9 @@ mod tests {
             .expect("fixture leader is a member") as u8
     }
 
-    /// The three states must stay distinct. Folding "the leader is not in the
-    /// map" into the permissive "there is no map" is a one-token mistake
-    /// (`as_ref().and_then(..)`) that silently turns a reject into a skip on the
-    /// vote path — which is why the return type is `Result<Option<_>, _>` and
-    /// not an `Option`.
+    /// The three states must stay distinct: folding "the leader is not in the
+    /// map" into "there is no map" silently turns a reject into a skip on the
+    /// vote path, which is why the return type is `Result<Option<_>, _>`.
     #[test]
     fn expected_leader_index_keeps_its_three_states_apart() {
         let (executor, _rx) = fresh_mailbox();
@@ -1457,17 +1190,14 @@ mod tests {
         let (keys, committee) = test_committee(5, 7);
         let leader = keys[0].public_key();
 
-        // No map ⇒ not a voter ⇒ skip, not fail.
         let bare = build_app(executor.clone(), hook.clone());
         assert_eq!(bare.expected_leader_index(&leader), Ok(None));
 
-        // Map present and the leader is in it ⇒ commonware's sorted position.
         let bimap = Arc::new(committee);
         let seated = build_app(executor.clone(), hook.clone()).with_committee_index(bimap.clone());
         let expected = bimap.position(&leader).expect("leader is a member") as u8;
         assert_eq!(seated.expected_leader_index(&leader), Ok(Some(expected)));
 
-        // Map present and the leader is NOT in it ⇒ REJECT, never a skip.
         let (outsiders, _) = test_committee(1, 99);
         let stranger = outsiders[0].public_key();
         assert!(
@@ -1480,22 +1210,17 @@ mod tests {
         );
     }
 
-    /// The `None` arm is permissive by design (a non-voter's value is not a vote
-    /// condition), so it is pinned by test rather than by comment — and the
-    /// `Some` arm must reject the empty field the EXECUTOR is required to
-    /// tolerate.
+    /// The `None` arm is permissive by design, and the `Some` arm must reject
+    /// the empty field the executor is required to tolerate.
     #[test]
     fn production_record_rule_arms() {
         let good = extra_data::encode_production_record(3, None);
 
-        // No expectation ⇒ every input passes, including one that is not a
-        // record at all. This arm is why a stale `None` would be dangerous.
         assert!(production_record_ok(&good, None));
         assert!(production_record_ok(&[], None));
         assert!(production_record_ok(&[0xAB; 24], None));
 
         assert!(production_record_ok(&good, Some(3)));
-        // Naming an accused member does not change who produced the block.
         assert!(production_record_ok(
             &extra_data::encode_production_record(3, Some(0)),
             Some(3)
@@ -1508,11 +1233,6 @@ mod tests {
             !production_record_ok(&[], Some(3)),
             "empty must REJECT at verify even though the executor tolerates it"
         );
-        // Exact length is what keeps a 4 KiB-tolerant OrderBlock codec from
-        // finalizing a block whose extra_data no reth header
-        // (FLUENT_MAXIMUM_EXTRA_DATA_SIZE) can hold, so it is pinned on BOTH
-        // sides of the record's own width — the near miss below is the 2-byte
-        // record this format replaced.
         assert!(!production_record_ok(&[1u8, 3], Some(3)), "short must fail");
         assert!(
             !production_record_ok(&[1u8, 3, extra_data::NO_CHARGE, 0], Some(3)),
@@ -1535,8 +1255,8 @@ mod tests {
             NoChain,
             Arc::new(NoTxs),
             30_000_000,
-            // Tests anchor at activation (genesis.height == activation == 0),
-            // so the pre-activation window is unchanged by the anchor/activation split.
+            // Tests anchor at activation, so the pre-activation window is
+            // unchanged by the anchor/activation split.
             0,
             TEST_CHAIN_ID,
             None,
@@ -1576,10 +1296,6 @@ mod tests {
     }
 
     /// A verify-side app over the given executed chain.
-    ///
-    /// It takes no randomness handle any more: `FluentApp` holds none. The seed
-    /// the verify path needs rides the certificate the executor resolves, and
-    /// the field this app used to carry had no reader at all.
     fn witness_app<XC: ExecutedChain>(executed: XC) -> FluentApp<XC, NoTxs> {
         let (mailbox, _rx) = fresh_mailbox();
         FluentApp::new(
@@ -1656,8 +1372,8 @@ mod tests {
         })
     }
 
-    // The honest common path — and it must burn ZERO budget (the result gate
-    // resolves on tick 0, no sleep).
+    // The honest common path burns no budget: the result gate resolves on
+    // tick 0 with no sleep.
     #[test]
     fn the_honest_common_path_verifies_true_with_zero_budget() {
         let (parent, block) = witness_pair(4, 9);
@@ -1682,11 +1398,10 @@ mod tests {
         (Arc::new(bimap), idx)
     }
 
-    // The production-record rule threaded through the REAL `verify_block`
-    // wiring, not the two helpers in isolation. Every other gate test builds an
-    // app with NO committee map, so `expected_leader_index` returns `Ok(None)`
-    // and the rule short-circuits `true` before it can reject anything — the
-    // wiring that carries `ctx.leader` into the rule is what these three pin.
+    // The production-record rule through the real `verify_block` wiring: every
+    // other gate test builds an app with no committee map, so the rule
+    // short-circuits before it can reject anything, and this pins the wiring
+    // that carries `ctx.leader` into it.
     #[test]
     fn armed_voter_accepts_a_record_naming_the_round_leader() {
         let (parent, mut block) = witness_pair(4, 9);
@@ -1724,15 +1439,8 @@ mod tests {
     }
 
     /// A slashed member keeps its seat and its leader slots, and equivocating
-    /// disarms the leader timer — binding its proposal clears the round's leader
-    /// deadline, so the view then runs to the certification deadline instead.
-    /// Refusing is the node's one seam before certification: a `false` verify
-    /// makes simplex time the view out immediately.
-    ///
-    /// NOT expressible here: that the view then ends at the leader timeout rather
-    /// than the certification deadline. Both deadlines live in commonware's voter
-    /// round, which this crate drives only through the `verify` verdict; the
-    /// timing claim belongs to the live byzantine smoke.
+    /// disarms the leader timer. Refusing is the node's one seam before
+    /// certification: a `false` verify times the view out immediately.
     #[test]
     fn a_proposal_from_a_tombstoned_leader_is_refused_and_only_from_that_leader() {
         let leader = Ed25519PrivateKey::from_seed(7).public_key();
@@ -1761,11 +1469,9 @@ mod tests {
         }
     }
 
-    /// The reaction is driven from chain state and not from the evidence a node
-    /// happened to hold, and this is the property that makes it survive a
-    /// restart: everything below is built fresh — a new tombstone set, a new app,
-    /// no charge store, no vote store, no gossip — and the refusal still arms
-    /// from the committee snapshot alone.
+    /// The refusal is driven from chain state, not from evidence a node
+    /// happened to hold, so it survives a restart: everything below is built
+    /// fresh and it still arms from the committee snapshot alone.
     #[test]
     fn the_refusal_rearms_from_chain_state_alone_after_a_restart() {
         let leader = Ed25519PrivateKey::from_seed(7).public_key();
@@ -1812,8 +1518,8 @@ mod tests {
         );
     }
 
-    /// Both halves of the `Some(i)` arm at the gate: a record naming SOMEONE
-    /// ELSE, and the empty field the executor is separately required to
+    /// Both halves of the `Some(i)` arm at the gate: a record naming another
+    /// member, and the empty field the executor is separately required to
     /// tolerate at the activation height. A voter must reject both.
     #[test]
     fn armed_voter_rejects_a_record_that_does_not_name_the_round_leader() {
@@ -1836,9 +1542,9 @@ mod tests {
         }
     }
 
-    /// The `Err` arm is a REJECT, never a skip: an armed voter whose map does
-    /// not seat the round leader votes false and says why, rather than falling
-    /// through to the permissive no-map path.
+    /// The `Err` arm is a reject, never a skip: an armed voter whose map does
+    /// not seat the round leader votes false rather than falling through to
+    /// the permissive no-map path.
     #[test]
     fn armed_voter_rejects_a_round_leader_outside_its_committee() {
         let recorder = DebuggingRecorder::new();
@@ -1863,9 +1569,8 @@ mod tests {
         );
     }
 
-    // §9 gate test 8 / (N1-c): rule SA — a block lying about its own proposal
-    // view is rejected (with everything else valid). Without SA, PIN pins
-    // nothing.
+    // Rule SA: a block lying about its own proposal view is rejected with
+    // everything else valid.
     #[test]
     fn a_block_lying_about_its_own_proposal_view_is_rejected() {
         let (parent, block) = witness_pair(4, 8 /* lies: certified view is 9 */);
@@ -1876,9 +1581,7 @@ mod tests {
 
     /// An executed chain whose hash becomes available only after N
     /// `finalized_executed_hash` polls — models "execution reaches h − K
-    /// mid-verify". Kept when the witness arm was deleted: the result gate is
-    /// still a POLL loop, and nothing else in this module makes it take more
-    /// than tick 0.
+    /// mid-verify".
     #[derive(Clone)]
     struct TickChain {
         calls: Arc<std::sync::atomic::AtomicU32>,
@@ -1917,9 +1620,8 @@ mod tests {
         (parent, block)
     }
 
-    /// The result gate RE-READS across ticks: a chain that only answers on the
-    /// 5th poll still verifies true, and the verify spends real budget doing it.
-    /// Reds if the loop resolves the gate once instead of polling.
+    /// The result gate re-reads across ticks: a chain that only answers on the
+    /// 5th poll still verifies true, spending real budget to do it.
     #[test]
     fn the_result_gate_polls_until_the_el_catches_up() {
         let exec_hash = B256::repeat_byte(0x5E);
@@ -1941,8 +1643,7 @@ mod tests {
     }
 
     /// The other end of the same loop: an EL that never reaches h − K spends the
-    /// whole budget and votes FALSE (backpressure), rather than accepting an
-    /// unchecked result.
+    /// whole budget and votes false rather than accepting an unchecked result.
     #[test]
     fn the_result_gate_votes_false_when_the_budget_runs_out() {
         let recorder = DebuggingRecorder::new();
@@ -1965,9 +1666,8 @@ mod tests {
         );
     }
 
-    // The anchor link — Ec == 0 with the GENESIS_VIEW parent sentinel is the
-    // chain anchor (never proposed, proposal_view == 0), and the first
-    // post-activation block verifies over it.
+    // The anchor link: `Ec == 0` with the genesis-view parent sentinel is the
+    // chain anchor, and the first post-activation block verifies over it.
     #[test]
     fn anchor_link_verifies_over_it() {
         let (parent, block) = witness_pair(0, 1);
@@ -1976,10 +1676,9 @@ mod tests {
         assert!(run_gate(app, ctx, block, parent).0);
     }
 
-    // (P4) the second-source tripwire: on a same-epoch link the parent's
-    // self-attested view must agree with the simplex context's parent view —
-    // a mismatch is a block certified at a view it did not claim, which would
-    // misroute the round every node resolves that block's σ at.
+    // On a same-epoch link the parent's self-attested view must agree with the
+    // simplex context's parent view; a mismatch is a block certified at a view
+    // it did not claim.
     #[test]
     fn parent_proposal_view_disagreeing_with_ctx_parent_view_is_rejected() {
         let recorder = DebuggingRecorder::new();
@@ -1997,8 +1696,6 @@ mod tests {
             1
         );
     }
-
-    // propose side (§3)
 
     fn propose_app(charges: Option<ChargeStore>) -> FluentApp<NoChain, NoTxs> {
         let (mailbox, _rx) = fresh_mailbox();
@@ -2046,11 +1743,10 @@ mod tests {
         }
     }
 
-    /// The wire flip's propose half: a proposal carries EXACTLY the 3-byte record
-    /// naming its own proposer, and that record is what its voters recompute from
-    /// `ctx.leader`. Asserting the bytes (not just "some extra_data") is the point
-    /// — the executor feeds `leader_index` straight to `recordProduction`, so a
-    /// silently wrong index mis-credits production with no other symptom.
+    /// A proposal carries exactly the 3-byte record naming its own proposer,
+    /// which its voters recompute from `ctx.leader`. Asserting the bytes
+    /// matters because the executor feeds `leader_index` straight to
+    /// `recordProduction`, so a wrong index mis-credits production silently.
     #[test]
     fn proposal_stamps_the_production_record_naming_its_proposer() {
         let runtime = commonware_runtime::deterministic::Runner::default();
@@ -2075,9 +1771,8 @@ mod tests {
     }
 
     /// A real charge signed by the member `propose_committee()` seats behind
-    /// ed25519 seed 8 — deliberately NOT the fixture leader, so the accused and
-    /// the producer are different members and a test cannot pass by conflating
-    /// the two record bytes.
+    /// ed25519 seed 8, deliberately not the fixture leader, so the accused and
+    /// the producer are different members.
     fn sample_charge(epoch: u64, view: u64) -> (u8, Message) {
         use commonware_consensus::simplex::types::{
             Activity, Attributable as _, ConflictingNotarize, Notarize, Proposal,
@@ -2109,10 +1804,9 @@ mod tests {
         )
     }
 
-    /// The block path's whole point: a proposer that holds a charge stamps the
-    /// verdict into `extra_data` AND the evidence into the block, and its own
-    /// vote-time gate accepts what it just built. Asserting both halves together
-    /// is the test — either alone would pass on a block no voter would take.
+    /// A proposer that holds a charge stamps the verdict into `extra_data` and
+    /// the evidence into the block, and its own vote-time gate accepts what it
+    /// just built; asserting both halves together is the test.
     #[test]
     fn a_proposer_holding_a_charge_stamps_the_verdict_and_its_evidence() {
         let (accused, charge) = sample_charge(5, 9);
@@ -2139,8 +1833,8 @@ mod tests {
                 equivocation_gate_decision(&block, 5, Some(&propose_committee()), TEST_CHAIN_ID),
                 "a proposer must never build a block its own verify rule rejects"
             );
-            // A charge the proposer does not hold for THIS epoch is not offered:
-            // only the epoch's own committee could verify it.
+            // A charge the proposer does not hold for this epoch is not
+            // offered: only the epoch's own committee could verify it.
             assert_eq!(
                 app.charges
                     .as_ref()
@@ -2152,10 +1846,8 @@ mod tests {
     }
 
     /// Once the verdict has landed the charge has nothing left to achieve, and
-    /// leaving it queued is worse than useless: it is the lowest key for its
-    /// epoch, so it would occupy the one-charge-per-block slot ahead of every
-    /// later charge for the same epoch, forever. So the proposer drops it and
-    /// offers the next one instead.
+    /// leaving it queued would occupy the one-charge-per-block slot ahead of
+    /// every later charge for the same epoch, so the proposer drops it.
     #[test]
     fn a_charge_whose_verdict_already_landed_is_dropped_rather_than_re_offered() {
         let (accused, charge) = sample_charge(5, 9);
@@ -2164,8 +1856,8 @@ mod tests {
             .get(accused as usize)
             .expect("the accused is seated")
             .clone();
-        // A second charge for the same epoch, seated ABOVE the settled one so the
-        // walk has to get past it rather than stopping at the first key.
+        // A second charge for the same epoch, seated above the settled one so
+        // the walk has to get past it rather than stopping at the first key.
         let later = accused
             .checked_add(1)
             .filter(|idx| (*idx as usize) < committee.len())
@@ -2248,7 +1940,7 @@ mod tests {
         }
 
         // An instance with no committee map casts no vote, so it skips only the
-        // CRYPTOGRAPHIC arm — the presence rule needs no committee and still holds.
+        // cryptographic arm — the presence rule needs no committee and still holds.
         assert!(equivocation_gate_decision(
             &charged(Some(accused), Some(evidence.clone())),
             5,
@@ -2271,7 +1963,6 @@ mod tests {
             Some(&committee),
             TEST_CHAIN_ID
         ));
-        // Real evidence, innocent victim.
         assert!(!equivocation_gate_decision(
             &charged(Some(accused + 1), Some(evidence)),
             5,
@@ -2280,15 +1971,14 @@ mod tests {
         ));
     }
 
-    /// A leader that cannot name itself in its committee SKIPS the view instead of
-    /// proposing a block every honest voter would reject. Cheaper by one wasted
-    /// leader deadline, and it keeps "every consensus block carries a valid record"
-    /// true by construction rather than by convention.
+    /// A leader that cannot name itself in its committee skips the view instead
+    /// of proposing a block every honest voter would reject.
     #[test]
     fn a_leader_outside_its_own_committee_declines_to_propose() {
         let runtime = commonware_runtime::deterministic::Runner::default();
         runtime.start(|rt| async move {
-            // A committee that does NOT contain the fixture leader (`from_seed(7)`).
+            // A committee that does not contain the fixture leader
+            // (`from_seed(7)`).
             let (_outsiders, disjoint) = test_committee(3, 99);
             let app = propose_app(None).with_committee_index(Arc::new(disjoint));
             let parent = tiny_parent(4);
@@ -2297,10 +1987,7 @@ mod tests {
         });
     }
 
-    // §9 propose: every proposal self-attests its view (rule SA), and on a
-    // beacon-active same-epoch link it proposes only once
-    // `Round::new(Ec, parent.proposal_view)` is held — the seed no longer rides
-    // the block, so the store hit is observable as the view PROCEEDING.
+    // Rule SA: every proposal self-attests its view.
     #[test]
     fn proposal_self_attests_its_view_over_a_held_witness_round() {
         let runtime = commonware_runtime::deterministic::Runner::default();
@@ -2342,8 +2029,8 @@ mod tests {
     }
 
     // Pacing tests use single-digit timestamps: the deterministic runtime
-    // advances virtual time in 1ms cycles (deterministic.rs `Config::cycle`),
-    // so a sleep to a realistic unix-seconds target never completes.
+    // advances virtual time in 1 ms cycles, so a sleep to a realistic
+    // unix-seconds target never completes.
     fn tiny_ts_parent() -> OrderBlock {
         OrderBlock {
             timestamp: 5,
@@ -2360,9 +2047,8 @@ mod tests {
                 .with_committee_index(propose_committee());
             let parent = tiny_ts_parent();
 
-            // Clock at the parent's timestamp (synchronized proposer): the
-            // pace sleep must carry it to parent+1 and the timestamp lands
-            // exactly there.
+            // Clock at the parent's timestamp: the pace sleep must carry it to
+            // parent+1, and the timestamp lands exactly there.
             ctx.sleep_until(std::time::UNIX_EPOCH + Duration::from_secs(parent.timestamp))
                 .await;
             let block = app
@@ -2388,10 +2074,9 @@ mod tests {
                 .with_committee_index(propose_committee());
             let parent = tiny_ts_parent();
 
-            // Proposer clock lags the parent's timestamp (skew within the
-            // verify tolerance): the sleep must cap at one BLOCK_INTERVAL
-            // from now — never parent+1 — or the peers' leader deadline
-            // (which budgets pace ≤ BLOCK_INTERVAL) would expire first.
+            // Proposer clock lags the parent's timestamp: the sleep must cap at
+            // one `BLOCK_INTERVAL` from now, not parent+1, or the peers' leader
+            // deadline would expire first.
             let start = ctx.current();
             let block = app
                 .build_proposal(&ctx, &sample_context(1), parent.clone())
@@ -2402,7 +2087,7 @@ mod tests {
                 slept <= BLOCK_INTERVAL,
                 "pace sleep must be capped at BLOCK_INTERVAL under clock skew, slept {slept:?}"
             );
-            // The CONTENT timestamp still extends the parent chain.
+            // The content timestamp still extends the parent chain.
             assert_eq!(block.timestamp, parent.timestamp + 1);
         });
     }
@@ -2416,8 +2101,8 @@ mod tests {
                 .with_committee_index(propose_committee());
             let parent = tiny_ts_parent();
 
-            // A late proposer (slow/nullified prior views) is already past
-            // parent+1: no extra sleep, timestamp = now.
+            // A late proposer is already past parent+1: no extra sleep,
+            // timestamp = now.
             let late = parent.timestamp + 10;
             ctx.sleep_until(std::time::UNIX_EPOCH + Duration::from_secs(late))
                 .await;
@@ -2429,9 +2114,9 @@ mod tests {
         });
     }
 
-    /// Every leg runs with the record rule ARMED (`Some`), which is what a voter
-    /// always passes: `expected_leader_index` returns `Ok(None)` only for an
-    /// instance that casts no vote.
+    /// Every leg runs with the record rule armed (`Some`), which is what a
+    /// voter always passes: `expected_leader_index` returns `Ok(None)` only for
+    /// an instance that casts no vote.
     #[test]
     fn structural_checks_reject_each_violation() {
         const LEADER: u8 = 3;
@@ -2463,8 +2148,8 @@ mod tests {
             ..good.clone()
         }));
 
-        // Wrong length, and — the leg the bitmap format could never carry — a
-        // well-formed record naming SOMEONE ELSE as the producer.
+        // A wrong length, and a well-formed record naming another member as
+        // the producer.
         assert!(!check(&OrderBlock {
             extra_data: Bytes::from(vec![0xFF; 3]),
             ..good.clone()
@@ -2498,7 +2183,6 @@ mod tests {
             None
         ));
 
-        // One second past the boundary: rejected.
         assert!(!FluentApp::<NoChain, NoTxs>::structural_checks(
             &good,
             &parent,
@@ -2592,23 +2276,11 @@ mod tests {
         });
     }
 
-    /// The epoch manager's live-epoch input has ONE writer and it is the
-    /// marshal's BFT-attested tip — R-003 closed by construction.
-    ///
-    /// The incident was that the live frontier was inferred from epoch tags on
-    /// the unauthenticated vote backup channel, so a peer naming `u64::MAX` (or
-    /// f+1 of them naming anything) pinned an honest node into permanent
-    /// verify-only. The replacement is `epoch_of(marshal tip)`, and this is the
-    /// only door the tip comes through: a height reported here has been
-    /// BLS-verified and stored by the marshal (CW `marshal/core/actor.rs`
-    /// `verify_delivered` → `store_finalization` → `Update::Tip`), and no peer
-    /// can put a number in it that the committee did not certify.
-    ///
-    /// What the test can show locally is the door: a delivered BLOCK — the only
-    /// other activity this reporter sees — moves nothing, and a `Tip` publishes
-    /// exactly its own height. A second writer anywhere would break the first
-    /// half; taking the tip from anything but `Update::Tip` would break the
-    /// second.
+    /// The epoch manager's live-epoch input has one writer, the marshal's
+    /// BFT-attested tip: a height reported here has been verified and stored by
+    /// the marshal, so no peer can supply a number the committee did not
+    /// certify. The test shows the door locally — a delivered block moves
+    /// nothing and a `Tip` publishes exactly its own height.
     #[test]
     fn the_ordering_tip_watch_is_written_only_by_a_verified_tip() {
         use commonware_consensus::types::{Epoch, Height, View};
@@ -2621,9 +2293,8 @@ mod tests {
             let mut tip = app.ordering_tip();
             assert_eq!(*tip.borrow(), 0, "no tip reported yet");
 
-            // A finalized BLOCK at a height is not a tip: the block stream is
-            // ack-gated on the executor and lags the attested frontier, and the
-            // live epoch is a function of the frontier.
+            // A finalized block at a height is not a tip: the block stream is
+            // ack-gated on the executor and lags the attested frontier.
             let (ack, _waiter) = Exact::handle();
             <FluentApp<NoChain, NoTxs> as Reporter>::report(
                 &mut app,
@@ -2651,10 +2322,9 @@ mod tests {
                 "the tip published is the attested height itself"
             );
 
-            // A CLONE of the app publishes into the SAME channel: the marshal's
-            // reporter half and the epoch manager's copy are clones of one
-            // `FluentApp`, and a per-clone channel would leave the manager
-            // subscribed to a writer nothing drives.
+            // A clone of the app publishes into the same channel: a per-clone
+            // channel would leave the manager subscribed to a writer nothing
+            // drives.
             let mut clone = app.clone();
             <FluentApp<NoChain, NoTxs> as Reporter>::report(
                 &mut clone,
@@ -2665,9 +2335,9 @@ mod tests {
         });
     }
 
-    // The ordering clock must ride marshal's BFT-attested TIP, never block
-    // DELIVERY: delivery is ack-gated on the executor, so a gauge fed from
-    // `Update::Block` would freeze with the very pipeline it exists to expose.
+    // The ordering clock rides the BFT-attested tip, never block delivery:
+    // delivery is ack-gated on the executor, so a gauge fed from
+    // `Update::Block` would freeze with the pipeline it exists to expose.
     #[test]
     fn the_ordering_clock_tracks_the_tip_and_not_the_delivered_block() {
         use commonware_consensus::types::{Epoch, View};
@@ -2711,15 +2381,11 @@ mod tests {
         });
     }
 
-    /// The watch handed in by `with_beacon_tip` IS written by the same
-    /// `Update::Tip` that writes the app's own — the property that makes the
-    /// beacon actor's clock and the epoch manager's tip ONE VALUE on two
-    /// channels: the actor holds a receiver taken from the sender BEFORE the app
-    /// existed, the manager subscribes through `ordering_tip()` afterwards, and
-    /// one `Update::Tip` must reach both. A `with_beacon_tip` that dropped the
-    /// sender (or a `report` that wrote only one of the two) would leave the
-    /// actor's receiver on a channel nothing writes — `changed()` never fires,
-    /// no deal, no seal.
+    /// The watch handed in by `with_beacon_tip` is written by the same
+    /// `Update::Tip` that writes the app's own: the actor holds a receiver
+    /// taken before the app existed, the manager subscribes afterwards, and one
+    /// tip must reach both. A dropped sender would leave the actor on a channel
+    /// nothing writes.
     #[test]
     fn the_tip_is_published_on_the_watch_handed_in_and_on_every_later_subscription() {
         use commonware_consensus::types::{Epoch, View};

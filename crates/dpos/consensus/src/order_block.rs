@@ -1,6 +1,6 @@
 //! The F-type consensus unit: ordering only — txs + parent digest + result
 //! commitment. The digest deliberately excludes every execution output of
-//! THIS block; `result` commits the derived block hash K heights back, so
+//! this block; `result` commits the derived block hash K heights back, so
 //! agreeing OrderBlock N+K is the committee's attestation of block N's
 //! execution result.
 
@@ -14,9 +14,8 @@ use commonware_cryptography::{Committable, Digestible};
 use reth_ethereum_primitives::TransactionSigned;
 use reth_primitives_traits::SealedBlock;
 
-/// Result lag in blocks (D=3). Consensus-critical: MUST be
-/// byte-identical across nodes (same class as MAX_MESSAGE_SIZE, G11).
-/// Changing it is a chain-spec release, not a config knob.
+/// Result lag in blocks (D=3). Consensus-critical: must be byte-identical across
+/// nodes. Changing it is a chain-spec release, not a config knob.
 pub const K: u64 = 3;
 
 /// EIP-1559 hard floor for a header gas limit. Consensus-uniform (propose clamps
@@ -24,122 +23,84 @@ pub const K: u64 = 3;
 /// byte-identical anchor constructor ([`anchor_order_block`]) owns its own floor.
 pub const MIN_GAS_LIMIT: u64 = 5_000;
 
-/// Per-artifact decode cap (defense-in-depth + channel-specific bound) —
-/// same wire budget as the executed-block era: 50M gas / 16 B-per-calldata
-/// ≈ 3.125 MB worst case + ~30% headroom. Coupled to but independent from
-/// `fluentbase_p2p::constants::MAX_MESSAGE_SIZE`.
+/// Per-artifact decode cap (defense-in-depth and a channel-specific bound): 50M gas
+/// at 16 B per calldata byte is ~3.125 MB worst case, plus ~30% headroom. Independent
+/// of `fluentbase_p2p::constants::MAX_MESSAGE_SIZE`.
 pub const MAX_ORDER_BLOCK_SIZE: usize = 4 * 1024 * 1024;
 
 /// Tx-list byte budget for ordering assembly: [`MAX_ORDER_BLOCK_SIZE`] minus the
-/// [`MAX_EXTRA_DATA_SIZE`] allowance for the non-tx fields (parent/height/result,
-/// extra_data, codec framing), [`PROPOSAL_VIEW_FRAMING`] for the always-present
-/// `proposal_view`, and [`EQUIVOCATION_FRAMING`] for the one optional field a
-/// block may still carry — so an assembled artifact always fits its own decode
-/// cap.
-///
-/// This grew by 68 bytes (`2 * MAX_U64_VARINT_SIZE + BlsSignature::SIZE`) when
-/// `parent_seed` left the wire: the allowance existed only to keep a full-budget
-/// block carrying that field under the cap, and there is no such field to carry.
-/// The composition argument is unchanged — the sole consumer is the proposer's
-/// `assemble` call, and `MAX_ORDER_BLOCK_SIZE` (the decode cap every verifier
-/// enforces) did not move.
+/// [`MAX_EXTRA_DATA_SIZE`] allowance for the non-tx fields, [`PROPOSAL_VIEW_FRAMING`]
+/// for the always-present `proposal_view`, and [`EQUIVOCATION_FRAMING`] for the one
+/// optional field a block may still carry — so an assembled artifact always fits its
+/// own decode cap.
 pub const TX_BYTE_BUDGET: usize =
     MAX_ORDER_BLOCK_SIZE - MAX_EXTRA_DATA_SIZE - PROPOSAL_VIEW_FRAMING - EQUIVOCATION_FRAMING;
 
-/// Worst-case wire cost of the `equivocation` field: its decode cap plus the
-/// `u32` length prefix. Reserved out of [`TX_BYTE_BUDGET`] for EVERY block — a
-/// charge can ride any block whose proposer holds one — so a full-budget block
-/// carrying one still fits `MAX_ORDER_BLOCK_SIZE` / the byte-identical p2p frame
-/// cap (the composed-oversize class, bug 1).
+/// Worst-case wire cost of the `equivocation` field: its decode cap plus the `u32`
+/// length prefix. Reserved out of [`TX_BYTE_BUDGET`] for every block, since a charge
+/// can ride any block whose proposer holds one.
 pub const EQUIVOCATION_FRAMING: usize = MAX_EQUIVOCATION_SIZE + u32::SIZE;
 
-/// Wire cost of `proposal_view` — a fixed `u64` on every block. Reserved out of
-/// [`TX_BYTE_BUDGET`] so a full-budget block still fits `MAX_ORDER_BLOCK_SIZE` /
-/// the byte-identical p2p frame cap — the same composed-oversize class (bug 1)
-/// [`EQUIVOCATION_FRAMING`] documents. Not folded into the
-/// [`MAX_EXTRA_DATA_SIZE`] lump because it was carved out separately when the
-/// witness arrived and the field it shared that carve-out with has since left.
+/// Wire cost of `proposal_view`, a fixed `u64` on every block, reserved out of
+/// [`TX_BYTE_BUDGET`] so a full-budget block still fits [`MAX_ORDER_BLOCK_SIZE`].
 pub const PROPOSAL_VIEW_FRAMING: usize = u64::SIZE;
 
-/// Decode cap for `extra_data`. Deliberately far above the 3-byte production
-/// record it actually carries: this cap only has to compose with the
-/// TX_BYTE_BUDGET allowance. The BINDING bound is the vote-time exact-length
-/// rule in `application::structural_checks`, without which an over-length field
-/// could finalize here and then be unexecutable at the reth header cap
-/// (`FLUENT_MAXIMUM_EXTRA_DATA_SIZE`).
+/// Decode cap for `extra_data`, far above the 3-byte production record it carries:
+/// this cap only has to compose with the `TX_BYTE_BUDGET` allowance. The binding
+/// bound is the vote-time exact-length rule in `application::structural_checks`,
+/// without which an over-length field could finalize here and then be unexecutable
+/// at the reth header cap.
 const MAX_EXTRA_DATA_SIZE: usize = 4 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OrderBlock {
-    /// Digest of OrderBlock N−1 (the ordering chain, NOT the EVM parent hash).
+    /// Digest of OrderBlock N−1 (the ordering chain, not the EVM parent hash).
     pub parent: Digest,
     pub height: u64,
-    /// The simplex VIEW this block was proposed in — self-attested by the
-    /// proposer and (rule SA) checked at THIS block's own vote time against
-    /// `ctx.round.view()`, so for every certified block it is the TRUE
-    /// proposal view, sealed under the committee multisig via `digest()`.
-    /// That makes the round in which the PARENT was certified a pure function
-    /// of agreed data (`Round::new(parent_epoch, parent.proposal_view)`) —
-    /// including at the epoch boundary, where `ctx.parent` is the
-    /// GENESIS_VIEW sentinel and the certified round is otherwise
-    /// per-node/first-wins. Non-optional by design: an `Option` would
-    /// re-introduce a downgrade arm. The anchor block is never proposed (it
-    /// has no round) and writes `0` — a value, not a sentinel; nothing may
-    /// branch on it. No ingress path may recompute or re-validate this field
-    /// (it is inside the digest; SA is a vote-time-only obligation).
-    /// Written by `build_proposal` from `ctx.round.view()`; enforced by rule
-    /// SA in `structural_checks` at the block's own vote; consumed by the
-    /// verify gate's PIN and by the executor's speculative-round
-    /// re-canonicalisation.
+    /// The simplex view this block was proposed in, self-attested by the proposer
+    /// and checked at this block's own vote time against `ctx.round.view()` (rule
+    /// SA). It is sealed under the committee multisig via `digest()`, which makes the
+    /// round in which the parent was certified a pure function of agreed data
+    /// (`Round::new(parent_epoch, parent.proposal_view)`), including at the epoch
+    /// boundary. Non-optional by design: an `Option` would re-introduce a downgrade
+    /// arm. The anchor block is never proposed and writes `0`, a plain value nothing
+    /// may branch on. No ingress path may recompute or re-validate this field.
     pub proposal_view: u64,
     /// Proposer-chosen; becomes the derived header timestamp. `verify`
-    /// (`structural_checks`) gates it on TWO bounds: strictly monotonic vs the
-    /// parent AND `<= local_now + TIMESTAMP_FUTURE_TOLERANCE_SECS` — the latter
-    /// a VOTE-time wall-clock upper bound (the verifier's own clock) that
-    /// rejects future-dated blocks and defeats the time-ratchet attack. The
-    /// wall-clock bound gates the VOTE only; the state transition copies this
-    /// verbatim (`derive.rs`), so STF determinism is unaffected.
+    /// (`structural_checks`) gates it on two bounds: strictly monotonic vs the parent
+    /// and `<= local_now + TIMESTAMP_FUTURE_TOLERANCE_SECS`. The wall-clock bound is a
+    /// vote-time check only; the state transition copies this verbatim, so STF
+    /// determinism is unaffected.
     pub timestamp: u64,
-    /// Derived block gas limit, as AGREED in the artifact: derivation and
-    /// `verify` read THIS field — never a node's local config — so every node
-    /// derives an identical block. `verify` only bounds it within the EIP-1559
-    /// ±1/1024 step vs the parent. The PROPOSER nudges it one such step per
-    /// block toward its own `--builder.gaslimit` (the `target_gas_limit` fed to
-    /// `step_gas_limit` on the propose path): that flag sets the TARGET the
-    /// agreed value walks toward, NOT the per-block value itself — reading a
-    /// local `--builder.gaslimit` at derive/verify time would diverge nodes.
+    /// Derived block gas limit, as agreed in the artifact: derivation and `verify`
+    /// read this field, never a node's local config, so every node derives an
+    /// identical block. `verify` only bounds it within the EIP-1559 ±1/1024 step vs
+    /// the parent. A local `--builder.gaslimit` is the target the proposer walks the
+    /// agreed value toward, not the per-block value.
     pub gas_limit: u64,
     /// The production record — `[version: u8][leader_index: u8][accused: u8]`,
-    /// naming this block's producer and, optionally, the committee member it
-    /// convicts of equivocation. The producer half is checked at VOTE time
-    /// against the consensus-supplied round leader
-    /// (`application::structural_checks`), the accusation half against
-    /// [`Self::equivocation`] (`application::equivocation_gate_decision`). Copied
-    /// verbatim into the derived EVM header, where the executor feeds the
-    /// producer to `ProductionLiveness.recordProduction` and the accusation to
-    /// the slash system call — which is why the VERDICT rides here and its
-    /// EVIDENCE does not: a node syncing the EL from peers re-executes from the
-    /// header alone and has no OrderBlock.
+    /// naming this block's producer and, optionally, the committee member it convicts
+    /// of equivocation. The producer half is checked at vote time against the
+    /// consensus-supplied round leader; the accusation half against
+    /// [`Self::equivocation`]. Copied verbatim into the derived EVM header, which is
+    /// why the verdict rides here and its evidence does not: a node syncing the EL
+    /// from peers re-executes from the header alone and has no OrderBlock.
     pub extra_data: Bytes,
-    /// EVM hash of the DERIVED block at `height − K`; `B256::ZERO` while
+    /// EVM hash of the derived block at `height − K`; `B256::ZERO` while
     /// `height < anchor + K` (see [`result_target`]); the anchor EVM hash in
     /// the genesis/anchor artifact (binds the ordering chain to the EVM
     /// chain).
     pub result: B256,
     /// Ordered raw transactions.
     pub txs: Vec<TransactionSigned>,
-    /// Equivocation evidence backing this block's charge — the encoded
-    /// commonware `Activity` for one of the three attributable Byzantine
-    /// variants. Present IFF `extra_data` names an accused committee index, and
-    /// the two are bound to each other at vote time
-    /// (`application::equivocation_gate_decision`): every voter verifies the
-    /// charge from the block in front of it, so block validity never depends on
-    /// whether the evidence gossip reached that voter in time.
+    /// Equivocation evidence backing this block's charge — the encoded commonware
+    /// `Activity` for one of the three attributable Byzantine variants. Present iff
+    /// `extra_data` names an accused committee index, and the two are bound at vote
+    /// time: every voter verifies the charge from the block in front of it, so block
+    /// validity never depends on whether the evidence gossip reached that voter.
     ///
-    /// Opaque at this codec layer (the decode needs the epoch committee, which
-    /// this layer does not hold). Never reaches the EVM — it is a consensus-only
-    /// artifact; the verdict the executor acts on rides in `extra_data`, which
-    /// the derived header copies verbatim.
+    /// Opaque at this codec layer (the decode needs the epoch committee), and
+    /// consensus-only: the verdict the executor acts on rides in `extra_data`.
     pub equivocation: Option<Bytes>,
 }
 
@@ -154,17 +115,16 @@ impl OrderBlock {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResultTarget {
     /// `height < anchor + K`: no DPoS-derived block exists K back (a fresh
-    /// node may not even hold pre-anchor history) — `result` MUST be ZERO.
+    /// node may not even hold pre-anchor history) — `result` MUST be the zero hash.
     PreActivation,
     /// `result` MUST equal the derived EVM hash at this height.
     Height(u64),
 }
 
 /// `anchor_height` = the ordering-chain genesis height ([`anchor_order_block`]).
-/// The result-final cursor for an ordering-finalized tip: `tip - K`, clamped
-/// to `floor` (the cold-start anchor, result-final by construction). The ONE
-/// definition of the two-tier lag — every FCU-finalized computation (executor,
-/// trust-follower mirror) must go through it so the tiers cannot drift.
+/// The result-final cursor for an ordering-finalized tip: `tip - K`, clamped to
+/// `floor` (the cold-start anchor, result-final by construction). The one
+/// definition of the two-tier lag, so the tiers cannot drift.
 pub fn result_final_height(ordering_tip: u64, floor: u64) -> u64 {
     ordering_tip.saturating_sub(K).max(floor)
 }
@@ -178,11 +138,10 @@ pub fn result_target(height: u64, anchor_height: u64) -> ResultTarget {
 }
 
 /// True iff `result` matches what the locally-derived chain commits at the
-/// K-lagged result-final height. `executed_hash(h)` returns `None` while the
-/// derive at `h` is not yet locally resolved — the caller decides whether
-/// absence (`None`) is tolerable (executor: keep cursor) or a vote-false
-/// (verify). The single definition of the trustless result cross-check, shared
-/// by `FluentApp::verify` and the executor's finalized derive.
+/// K-lagged result-final height. `executed_hash(h)` returns `None` while the derive
+/// at `h` is not yet locally resolved; the caller decides whether absence is
+/// tolerable (executor: keep cursor) or a vote-false (verify). Shared by
+/// `FluentApp::verify` and the executor's finalized derive.
 pub fn result_matches(
     result: B256,
     height: u64,
@@ -195,17 +154,15 @@ pub fn result_matches(
     }
 }
 
-/// The ordering-chain anchor for an EVM anchor block: empty tx list,
-/// `result` = the anchor's EVM hash, parent = EMPTY. Deterministic across
-/// nodes given the same anchor (devnet genesis / migration weak-subjectivity
-/// checkpoint).
+/// The ordering-chain anchor for an EVM anchor block: empty tx list, `result` = the
+/// anchor's EVM hash, parent = the zero digest. Deterministic across nodes given the
+/// same anchor (devnet genesis / migration weak-subjectivity checkpoint).
 ///
-/// Fails loud (bug 14) if the anchor's gas limit is below [`MIN_GAS_LIMIT`]: the
-/// anchor seeds the EIP-1559 ±1/1024 progression, and `step_gas_limit`'s
-/// `.max(MIN_GAS_LIMIT)` at anchor+1 would jump further than `gas_limit_within_1_1024`
-/// accepts, so a sub-floor anchor (a malformed genesis/checkpoint) bricks the chain
-/// at anchor+1 with only a per-node vote-false. The check lives in this
-/// byte-identical constructor so every node rejects identically.
+/// Fails loud if the anchor's gas limit is below [`MIN_GAS_LIMIT`]: the anchor seeds
+/// the EIP-1559 ±1/1024 progression, and `step_gas_limit`'s `.max(MIN_GAS_LIMIT)` at
+/// anchor+1 would jump further than `gas_limit_within_1_1024` accepts, so a sub-floor
+/// anchor would brick the chain at anchor+1 with only a per-node vote-false. The
+/// check lives in this byte-identical constructor so every node rejects identically.
 pub fn anchor_order_block(
     anchor: &SealedBlock<reth_ethereum_primitives::Block>,
 ) -> eyre::Result<OrderBlock> {
@@ -222,7 +179,7 @@ pub fn anchor_order_block(
     Ok(OrderBlock {
         parent: Digest(B256::ZERO),
         height: anchor.number(),
-        // The anchor is never PROPOSED (it has no simplex round), so `0` here
+        // The anchor is never proposed (it has no simplex round), so `0` here
         // is a plain value, not a sentinel — nothing may branch on it.
         proposal_view: 0,
         timestamp: anchor.timestamp(),
@@ -240,35 +197,23 @@ pub fn anchor_order_block(
 //   ‖ gas_limit(8) ‖ result(32) ‖ extra_data_len(4)+bytes ‖ txs as one RLP list
 //   ‖ beacon_flags(1)
 //   ‖ [equivocation_len(4)+bytes].
-// `beacon_flags` bit2 = equivocation present, its body written iff the bit is
-// set. It is the only live bit.
+// `beacon_flags` bit2 = equivocation present, its body written iff the bit is set.
+// Bits 0, 1 and 3 are reserved and stay clear: they carried the retired
+// `beacon_outcome`, `parent_seed` and `dkg_logs` bodies and were not renumbered.
+// Decode rejects any of the three being set, because a set-but-unread bit would be
+// a second spelling of the same block and the flags byte is inside `digest()`.
 //
-// BITS 0, 1 AND 3 ARE RESERVED AND MUST STAY CLEAR. They carried the retired
-// `beacon_outcome`, `parent_seed` and `dkg_logs` bodies; the epoch key is now
-// agreed on the p2p agreement plane and delivered as a quorum-signed artifact,
-// and the round seed is resolved from the local `SeedStore` at the block's own
-// round, so no block carries beacon material at all. None of them were
-// renumbered — bit2 and its body stay byte-identical to the pre-shrink encoding
-// — and decode REJECTS any of the three being set, because a set-but-unread bit
-// would be a second spelling of the same block and the flags byte is inside
-// `digest()`.
+// Removals here are coordinated, not rolling: the flags byte and every optional body
+// sit inside `digest()`, so an old and a new binary disagree on the digest of any
+// block that carried a removed field and cannot run against each other on one chain.
+// No migration is provided; this is acceptable only because Fluent networks are
+// relaunched from block 0.
 //
-// RELEASE DISCIPLINE FOR THOSE REMOVALS: COORDINATED, NOT ROLLING. The flags
-// byte and every optional body sit inside `digest()`, so an old binary and a new
-// one disagree on the digest of any block that carried an outcome, a witness or
-// dealer logs — they cannot be run against each other on one chain, at any
-// overlap. There is no migration to perform and none is provided: this is
-// acceptable ONLY because Fluent networks are relaunched from block 0, so no
-// live chain has to cross the change. A future deployment that must survive a
-// rolling upgrade cannot reuse this pattern.
-//
-// `equivocation` is CANONICAL: its flag-set-but-empty encoding is rejected
-// because it is a second spelling of an absent charge. The RLP tx list reuses
-// alloy's canonical encoding so tx bytes are identical to their EVM-block
-// representation. `proposal_view` and `equivocation` are both part of the
-// encoding (hence the digest): a `proposal_view` outside the digest would be
-// forgeable, and evidence outside it could be swapped after the committee
-// attested it.
+// `equivocation` is canonical: its flag-set-but-empty encoding is rejected because it
+// is a second spelling of an absent charge. The RLP tx list reuses alloy's canonical
+// encoding. `proposal_view` and `equivocation` are both inside the digest: a
+// `proposal_view` outside it would be forgeable, and evidence outside it could be
+// swapped after the committee attested it.
 
 impl Write for OrderBlock {
     fn write(&self, buf: &mut impl BufMut) {
@@ -282,9 +227,7 @@ impl Write for OrderBlock {
         (self.extra_data.len() as u32).write(buf);
         buf.put_slice(&self.extra_data);
         self.txs.encode(buf);
-        // bit2 = equivocation present. Bits 0, 1 and 3 are RESERVED (retired
-        // `beacon_outcome` / `parent_seed` / `dkg_logs`) and stay clear — no
-        // renumbering, so bit2 keeps its pre-shrink position.
+        // bit2 = equivocation present. Bits 0, 1 and 3 are reserved and stay clear.
         let flags = (self.equivocation.is_some() as u8) << 2;
         flags.write(buf);
         if let Some(evidence) = &self.equivocation {
@@ -297,12 +240,8 @@ impl Write for OrderBlock {
 impl EncodeSize for OrderBlock {
     fn encode_size(&self) -> usize {
         use alloy_rlp::Encodable as _;
-        // Mirrors `write` field-for-field, drawing each term from the SAME size
-        // source the matching `write` line emits — so the two cannot drift:
-        // fixed-codec fields report their own `encode_size()`, raw `put_slice`
-        // fields their slice length, and each length-prefixed field a `u32`
-        // header. `LEN_PREFIX` is that header (the `(len as u32).write` in
-        // `write`); `FLAGS` is the single beacon-presence byte. The
+        // Mirrors `write` field-for-field, drawing each term from the same size
+        // source the matching `write` line emits, so the two cannot drift. The
         // `codec_round_trip` test pins `encode_size() == encode().len()`.
         const LEN_PREFIX: usize = u32::SIZE;
         const FLAGS: usize = u8::SIZE;
@@ -344,10 +283,9 @@ impl Read for OrderBlock {
             return Err(commonware_codec::Error::EndOfBuffer);
         }
         let extra_data = Bytes::from(buf.copy_to_bytes(extra_len));
-        // NOTE: `buf.chunk()` is only guaranteed to return *a* contiguous
-        // slice. Safe under the current p2p transport (delivers contiguous
-        // `Bytes`); documented so a future segmented `Buf` source is caught
-        // here — same caveat as the executed-block codec it replaces.
+        // `buf.chunk()` is only guaranteed to return *a* contiguous slice. Safe
+        // under the current p2p transport, which delivers contiguous `Bytes`;
+        // documented so a future segmented `Buf` source is caught here.
         let header = alloy_rlp::Header::decode(&mut buf.chunk()).map_err(|e| {
             commonware_codec::Error::Wrapped("reading tx list RLP header", e.into())
         })?;
@@ -364,10 +302,9 @@ impl Read for OrderBlock {
         let txs: Vec<TransactionSigned> = alloy_rlp::Decodable::decode(&mut bytes.as_ref())
             .map_err(|e| commonware_codec::Error::Wrapped("reading tx list", e.into()))?;
         let flags = u8::read_cfg(buf, &())?;
-        // Bits 0, 1 and 3 carried the retired `beacon_outcome` / `parent_seed` /
-        // `dkg_logs` bodies. They were not renumbered, and a set-but-unread bit
-        // would be a second spelling of the same block under a different digest
-        // (the flags byte is inside `digest()`), so reject rather than ignore.
+        // Bits 0, 1 and 3 carried the retired beacon bodies. They were not
+        // renumbered, and a set-but-unread bit would be a second spelling of the same
+        // block under a different digest, so reject rather than ignore.
         if flags & 0b0000_1011 != 0 {
             return Err(commonware_codec::Error::Invalid(
                 "order_block",
@@ -383,9 +320,7 @@ impl Read for OrderBlock {
                 ));
             }
             if len == 0 {
-                // bit2 set with an empty body is a second spelling of "no charge"
-                // (the canonical one is a cleared bit), and two encodings of the
-                // same block would carry two digests.
+                // bit2 set with an empty body is a second spelling of "no charge".
                 return Err(commonware_codec::Error::Invalid(
                     "order_block",
                     "equivocation flag set with an empty body",
@@ -409,14 +344,11 @@ impl Read for OrderBlock {
             txs,
             equivocation,
         };
-        // Combined-size gate (bug 1): each variable-length field is bounded
-        // against its OWN cap above (extra_data, tx list, equivocation), but the
-        // TOTAL is not — a block at the full tx budget plus a charge could exceed
-        // MAX_ORDER_BLOCK_SIZE and rely only on the p2p frame drop.
-        // Reject the composed over-cap artifact here so every honest verifier
-        // rejects deterministically. `encode_size` is the single drift-proof size
-        // source (pinned == `encode().len()`), so this rejects strictly what would
-        // not round-trip within the cap — honest artifacts (well under it) pass.
+        // Each variable-length field is bounded against its own cap above, but the
+        // total is not: a block at the full tx budget plus a charge could exceed
+        // `MAX_ORDER_BLOCK_SIZE` and rely only on the p2p frame drop. Reject the
+        // composed over-cap artifact here so every honest verifier rejects
+        // deterministically.
         if block.encode_size() > MAX_ORDER_BLOCK_SIZE {
             return Err(commonware_codec::Error::Invalid(
                 "order_block",
@@ -497,7 +429,7 @@ mod tests {
     }
 
     /// Hand-encode everything up to and including the beacon_flags byte with
-    /// ONLY bit2 (equivocation present) set — the trailer is the test's variable.
+    /// only bit2 (equivocation present) set; the trailer is the test's variable.
     fn write_bit2_frame_prefix(buf: &mut Vec<u8>, b: &OrderBlock) {
         write_header_prefix(buf, b);
         (b.extra_data.len() as u32).write(buf);
@@ -558,21 +490,14 @@ mod tests {
         }
     }
 
-    /// The wire-shrink's byte-identity claim, pinned against a golden capture
-    /// taken from the pre-shrink codec: bits 0, 1 and 3 lost their bodies WITHOUT
-    /// renumbering, so a block carrying `equivocation` encodes to the exact same
-    /// bytes — flags `0b0000_0100`, charge trailing — as it did while
-    /// `beacon_outcome` / `parent_seed` / `dkg_logs` still existed. Renumbering
-    /// bit2→bit0 would flip the flags byte to `0b0000_0001` and silently move the
-    /// digest of every block that carries a charge.
+    /// The wire shrink's byte-identity claim, pinned against a golden capture taken
+    /// from the pre-shrink codec: bits 0, 1 and 3 lost their bodies without
+    /// renumbering, so a block carrying `equivocation` encodes to the exact same bytes
+    /// as before. Renumbering bit2 to bit0 would silently move the digest of every
+    /// block that carries a charge.
     ///
-    /// The constant is NOT a capture of the current encoder. It is the same
-    /// pre-shrink capture the previous revision pinned, edited by hand in exactly
-    /// three places — flags `06` → `04`, the 50-byte seed body deleted, and the
-    /// 20-byte `fee_recipient` field deleted when the beneficiary stopped being
-    /// agreed data (it is now written at derive time from
-    /// `PRECOMPILE_FEE_MANAGER`, the only value the EL header check accepts) — so
-    /// it still testifies against an independently-produced encoding rather than
+    /// The constant is an independently-produced pre-shrink capture, hand-edited only
+    /// where fields left the wire, so it testifies against the old encoder rather than
     /// against the code under test.
     #[test]
     fn the_shrink_leaves_bit_2_byte_identical() {
@@ -593,7 +518,7 @@ mod tests {
             "the shrink moved bytes that must not move"
         );
 
-        // Spelt out separately from the golden so a future reader sees WHICH
+        // Spelt out separately from the golden so a future reader sees which
         // byte carries the claim: 0b0000_0100, not the renumbered 0b0000_0001.
         let flags_at = encoded.len() - u32::SIZE - 8 - 1;
         assert_eq!(encoded[flags_at], 0b0000_0100);
@@ -601,11 +526,8 @@ mod tests {
 
     #[test]
     fn read_rejects_a_set_reserved_flag_bit() {
-        // Bits 0, 1 and 3 are retired, not renumbered. Ignoring a set one would
-        // give a block two spellings under two digests (the flags byte is inside
-        // `digest()`), so decode must refuse it. Bit1 is the newest arrival
-        // (`parent_seed`): the frames the seed-trailer tests used to hand-encode
-        // are now exactly this rejection, not a decode.
+        // Bits 0, 1 and 3 are retired, not renumbered. Ignoring a set one would give
+        // a block two spellings under two digests, so decode must refuse it.
         for bit in [0b0000_0001u8, 0b0000_0010, 0b0000_1000] {
             let mut buf = Vec::new();
             let b = sample_order_block();
@@ -627,8 +549,7 @@ mod tests {
 
     #[test]
     fn digest_excludes_nothing_and_is_stable_per_field() {
-        // The digest is the consensus identity: any field change MUST change
-        // it (a field outside the digest would be unagreed data).
+        // The digest is the consensus identity: any field change must change it.
         let base = sample_order_block();
         let d = base.digest();
         let mutations: Vec<OrderBlock> = vec![
@@ -714,11 +635,9 @@ mod tests {
 
     #[test]
     fn read_consumes_exactly_the_charge_bytes_of_a_bit2_frame() {
-        // Hand-encoded (NOT via `Write`) so this pins the wire layout itself: a
-        // bit2 frame's trailer is a `u32` length and exactly that many bytes —
-        // no padding — and the decoder must stop precisely at its end. Inherited
-        // from the bit1 frame this replaces: with the seed gone, the charge is
-        // the only trailer whose exact consumption can still be pinned.
+        // Hand-encoded rather than via `Write`, so this pins the wire layout itself:
+        // a bit2 frame's trailer is a `u32` length and exactly that many bytes, and
+        // the decoder must stop precisely at its end.
         let b = sample_order_block();
         let charge = vec![0x5Au8; 291];
         let mut buf = Vec::new();
@@ -737,12 +656,8 @@ mod tests {
         assert_eq!(decoded.equivocation, Some(Bytes::from(charge)));
     }
 
-    /// The composed-size gate (bug 1), and that it counts the equivocation field.
-    ///
-    /// It used to have a twin that composed an oversize block out of a max-size
-    /// `beacon_outcome`; with that field gone the two state the same property, and
-    /// this is the stronger one — it MEASURES the headroom instead of assuming a
-    /// field big enough to blow past it.
+    /// The composed-size gate: a block at the top of its tx budget plus a max-size
+    /// charge exceeds `MAX_ORDER_BLOCK_SIZE`, and the charge alone decides it.
     #[test]
     fn the_composed_size_gate_counts_the_equivocation_field() {
         use alloy_primitives::{Signature, TxKind};
@@ -788,9 +703,9 @@ mod tests {
             .expect("the charge-free block is within the cap and decodes");
 
         // A charge that exactly fills the headroom is over it once its own 4-byte
-        // length prefix is counted. It passes its OWN cap; only the combined gate
-        // (bug 1) rejects — which is what EQUIVOCATION_FRAMING's carve-out out of
-        // TX_BYTE_BUDGET keeps an honest proposer clear of.
+        // length prefix is counted. It passes its own cap; only the combined gate
+        // rejects, which is what `EQUIVOCATION_FRAMING`'s carve-out out of
+        // `TX_BYTE_BUDGET` keeps an honest proposer clear of.
         block.equivocation = Some(Bytes::from(vec![0u8; headroom]));
         assert!(
             block.encode_size() > MAX_ORDER_BLOCK_SIZE,
@@ -834,8 +749,8 @@ mod tests {
 
     #[test]
     fn anchor_below_min_gas_limit_is_rejected_loud() {
-        // A malformed genesis/checkpoint (< MIN_GAS_LIMIT) would brick the chain at
-        // anchor+1; the byte-identical constructor refuses it (bug 14).
+        // A malformed genesis/checkpoint below MIN_GAS_LIMIT would brick the chain at
+        // anchor+1; the byte-identical constructor refuses it.
         let header = Header {
             number: 6_700_000,
             gas_limit: 4_000, // < MIN_GAS_LIMIT (5000)
@@ -857,7 +772,8 @@ mod tests {
     fn result_matches_distinguishes_absence_match_and_mismatch() {
         let anchor = 100;
         let local = B256::repeat_byte(0x77);
-        // Pre-activation: must commit ZERO, resolvable without an executed hash.
+        // Pre-activation: must commit the zero hash, resolvable without an executed
+        // hash.
         assert_eq!(
             result_matches(B256::ZERO, anchor + 1, anchor, |_| None),
             Some(true)

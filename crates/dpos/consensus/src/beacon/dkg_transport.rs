@@ -1,18 +1,14 @@
 //! Body transport for the epoch-key agreement instance.
 //!
-//! The agreement's `simplex` voter only ever knows a [`DkgProposal`]'s digest;
-//! the payload itself is disseminated by a [`buffered::Engine`], the same
-//! primitive the ordering plane uses for `OrderBlock` bodies. `buffered` is what
-//! makes a parking `verify` cheap: `Mailbox::subscribe(digest)` is a ready-made
-//! await hook that resolves the instant the body lands, whether it arrives before
-//! or after the vote that names it.
+//! The agreement's `simplex` voter only knows a [`DkgProposal`]'s digest; the
+//! payload itself is disseminated by a [`buffered::Engine`], the same primitive the
+//! ordering plane uses for `OrderBlock` bodies. `buffered` is what makes a parking
+//! `verify` cheap: `Mailbox::subscribe(digest)` resolves the instant the body lands,
+//! whether before or after the vote that names it.
 //!
-//! No new top-level p2p channel is opened for this. The muxes already in place
-//! carry `u64` sub-channels, so the instance takes a slice of that id space that
-//! no per-epoch consensus engine can reach — see
-//! [`DKG_SUBCHANNEL_BASE`](fluentbase_p2p::constants::DKG_SUBCHANNEL_BASE) for the
-//! disjointness argument and for which half of it expires with the `OrderBlock`
-//! shrink.
+//! No new top-level p2p channel is opened: the muxes already in place carry `u64`
+//! sub-channels, so the instance takes a slice of that id space no per-epoch
+//! consensus engine can reach.
 
 use commonware_broadcast::buffered;
 use commonware_p2p::{
@@ -39,16 +35,13 @@ pub(crate) type BodyMailbox = buffered::Mailbox<PeerPubkey, DkgProposal>;
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum TransportError {
     /// The target epoch is large enough that `DKG_SUBCHANNEL_BASE | epoch` would
-    /// re-enter the id space a per-epoch consensus engine registers from. Not
-    /// reachable by any real chain (2^32 epochs), but the alias would be silent —
-    /// a `register` that succeeds on the WRONG route — so it is refused here
-    /// rather than defended downstream.
+    /// re-enter the id space a per-epoch consensus engine registers from. Not reachable
+    /// by a real chain, but the alias would be silent, so it is refused here.
     #[error("target epoch {0} is not below DKG_SUBCHANNEL_BASE; its sub-channel id would alias a per-epoch consensus engine's")]
     EpochOutOfRange(u64),
-    /// The muxer refused the registration. `AlreadyRegistered` reaches the caller
-    /// as this error and NOT as a panic: it means some other subsystem already
-    /// owns the route, and taking the process down for it would turn a wiring bug
-    /// into an outage on a plane whose whole purpose is to survive one.
+    /// The muxer refused the registration. `AlreadyRegistered` reaches the caller as
+    /// this error rather than a panic, because some other subsystem owning the route is
+    /// a wiring bug, not an outage.
     #[error("dkg sub-channel {subchannel} registration failed: {source}")]
     Register {
         subchannel: u64,
@@ -88,24 +81,14 @@ where
 }
 
 /// Build the body engine without starting it, so the caller can start it on a
-/// context of its own choosing.
+/// context of its own choosing: the agreement instance needs its engines spawned
+/// from the supervisor task's context, or an external abort of the supervisor would
+/// leave them running.
 ///
-/// The agreement instance needs exactly that: its engines must be spawned from
-/// the supervisor task's context, or an external `abort()` of the supervisor
-/// would leave them running with nothing left to stop them
-/// ([`crate::beacon::dkg_engine`]).
-///
-/// # Precondition on `peers`
-///
-/// `peers` MUST resolve `latest.primary` to a set containing
+/// Precondition on `peers`: it must resolve `latest.primary` to a set containing
 /// `committee[target_epoch]`. `buffered` retains a received body only when its
-/// SENDER is in that set (`CW/broadcast/src/buffered/engine.rs:319-322`), so a
-/// provider tracking any other set — the CURRENT committee at a change boundary,
-/// say — drops every proposal body on the floor. The failure is silent end to end:
-/// nothing logs above `debug`, `verify` parks on a body that is never cached, and
-/// the plane simply never converges. The type system cannot carry this — a
-/// `Provider` is a runtime view of a mutable peer set, not a committee — so it is
-/// stated here and checked nowhere.
+/// sender is in that set, so a provider tracking any other set drops every proposal
+/// body silently and the plane never converges.
 pub(crate) fn build_body_engine<E, P>(
     context: E,
     me: PeerPubkey,
@@ -120,30 +103,10 @@ where
         buffered::Config {
             public_key: me,
             mailbox_size: BODY_MAILBOX_SIZE,
-            // Two agreement proposal bodies retained per PRIMARY sender.
-            // Measured, not guessed: the precondition pass counted exactly ONE
-            // distinct body per (instance, sender) in every shape it could
-            // build — B1, B2/C9 (three mints), B3 (an absent dealer), and a
-            // `[0,1] | [2,3]` network cut across six views inside epoch 1's
-            // agreement window (`testbed::preconditions::
-            // dkg_bodies_per_peer_are_measured_under_a_partition_in_the_agreement_window`);
-            // `Plan::Forward` re-sends the SAME digest, which the deque does not
-            // grow (`CW:broadcast/src/buffered/engine.rs:331-337`). The second
-            // slot is for a re-proposal after a nullify, and that IS a different
-            // body: with nothing certified yet, `DkgAgree::propose` builds the
-            // view's proposal from the confirmations and dealer logs it holds AT
-            // THAT VIEW (`dkg_agree.rs`, the `None` arm of `certified_value` →
-            // `build_proposal`), and a log or confirmation that landed between
-            // the nullified view and this one changes the encoding and so the
-            // digest. The same node leads again `n` views later (round-robin),
-            // so ONE sender can legitimately have two bodies in flight and a
-            // peer parked on the first must still find it — pinned by
-            // `two_bodies_from_one_sender_are_both_retained_a_third_evicts_the_first`
-            // below. A THIRD re-proposal evicts the first, which is the accepted
-            // bound: two nullified leaderships of one node in one agreement is
-            // already past the measured envelope (the precondition pass never
-            // produced even one). `MAX_COMMITTEE_SIZE` was 51 bodies of ~154 KiB
-            // per sender (R-037).
+            // Two agreement proposal bodies retained per primary sender: a nullify can be
+            // followed by a re-proposal from the same leader whose encoding differs, so a peer
+            // parked on the first must still find it. A third evicts the first, which is the
+            // accepted bound.
             deque_size: 2,
             priority: true,
             codec_config: (),
@@ -166,21 +129,8 @@ mod tests {
     use rand_08::{rngs::StdRng, SeedableRng as _};
     use std::time::Duration;
 
-    /// The production body engine holds TWO distinct bodies per primary sender
-    /// and no more — the shape a nullify-then-re-propose produces (see the
-    /// `deque_size` note in [`build_body_engine`]): the first proposal and the
-    /// rebuilt one are both answerable by digest, and a third evicts the first.
-    ///
-    /// Built through [`build_body_engine`] itself, so the number under test is
-    /// the production one and not a copy of it. The sender is this node — its
-    /// own broadcasts are cached under its own key exactly as a peer's are
-    /// (`CW:broadcast/src/buffered/engine.rs:247-249`, `insert_message(self.
-    /// public_key, ..)`), and it is in `latest.primary` by the `track` below.
-    ///
-    /// Falsifier: `deque_size` back to 1 (the second body evicts the first, and
-    /// a peer parked on the nullified view's body never gets it), or raised
-    /// (the third body evicts nothing — the bound the measurement priced is
-    /// gone).
+    /// The production body engine holds two distinct bodies per primary sender and no
+    /// more: both are answerable by digest, and a third evicts the first.
     #[test]
     fn two_bodies_from_one_sender_are_both_retained_a_third_evicts_the_first() {
         use crate::beacon::testing::DkgOutcome;
@@ -285,11 +235,8 @@ mod tests {
         );
     }
 
-    /// The RECEIVING half of the same contract. `dkg_subchannel` proves an
-    /// agreement id can never be minted inside the epoch space; this proves the
-    /// ingress classifier can never read one back OUT of it — which is the half
-    /// that was missing when a `BASE | E` id reached the frontier as epoch
-    /// `BASE | E`.
+    /// The receiving half of the same contract: an agreement sub-channel id can never
+    /// be read back out as an epoch.
     #[test]
     fn epoch_from_subchannel_reads_back_the_same_split() {
         use fluentbase_p2p::constants::epoch_from_subchannel;
@@ -315,7 +262,7 @@ mod tests {
     }
 
     /// A live muxer: the DKG registration must succeed alongside a per-epoch
-    /// engine's `register(epoch)` for the SAME epoch number, and a second DKG
+    /// engine's `register(epoch)` for the same epoch number, and a second DKG
     /// registration for that epoch must come back as `AlreadyRegistered` — an
     /// error the caller can act on, not a panic.
     #[test]

@@ -1,48 +1,24 @@
-//! The value `committee[E+1]` agrees over p2p during epoch `E` — and, once
-//! certified by the agreement instance, the body of the artifact served to
-//! peers.
+//! The value `committee[target_epoch]` agrees over p2p, and — once certified —
+//! the artifact body served to peers.
 //!
-//! [`DkgProposal::logs`] is the pinned dealer-log set: `(dealer idx,
-//! keccak256(SignedDealerLog))` over `committee[target_epoch]`, the same value
-//! `OrderBlock.dkg_logs` used to carry. Its canonicalisation rules are copied
-//! deliberately from that field and enforced HERE, at decode, so the proposal
-//! digest is a function of the SET and not of a proposer's ordering — a
-//! permuted or duplicated encoding of one set would otherwise be a second
-//! payload the instance could split on.
+//! The pinned dealer-log set is canonicalised at decode, so the proposal digest
+//! is a function of the set rather than of a proposer's ordering: a permuted or
+//! duplicated encoding of one set would be a second payload the instance could
+//! split on.
 //!
-//! [`DkgProposal::group_key`] is `PK_{target_epoch}` and travels as a
-//! mandatory fail-fast cross-check, never as the subject of agreement: it is a
-//! deterministic function of `logs` (`Σ commitments` over the canonical
-//! selection — no rng, no interpolation), so every voter recomputes it and a
-//! silent drift in that determinism surfaces here as a refused proposal rather
-//! than later as an undiagnosed epoch death on the ordering plane. It is
-//! encoded with the [`crate::beacon::outcome`] codec, the same one that
-//! serialises the block field and the durable share file.
+//! `group_key` is a mandatory fail-fast cross-check, never the subject of
+//! agreement: it is a deterministic function of `logs` that every voter
+//! recomputes, so drift surfaces as a refused proposal rather than as an
+//! undiagnosed epoch death.
 //!
-//! [`DkgProposal::confirms`] carries the share-confirmation count that
-//! [`entry_bar`] reads — the number of members that say they can finalize over
-//! the pinned set, which is the number that decides the epoch's fate and had no
-//! protocol representation at all before it. The confirmations live in the
-//! PAYLOAD rather than in local receive state so the acceptance predicate stays a
-//! pure function of the proposal: a bar counted from what a node happens to have
-//! received would make honest nodes diverge, which is the failure this whole plane
-//! exists to remove. [`ConfirmPool`] is the collection side — the beacon actor
-//! signs into it, `propose` draws the covering set out of it, and `verify` takes
-//! nothing from it but the namespace.
+//! The share-confirmations ride in the proposal payload rather than in local
+//! receive state, so the acceptance predicate stays a pure function of the
+//! proposal and honest nodes cannot diverge on delivery order.
 //!
-//! On top of the value sits the agreement instance's application half:
-//! [`DkgAgree`] (`Automaton` + `Relay`) and [`DkgReporter`]. The one rule that
-//! governs all of it: `verify` returns `false` ONLY for a proposal that is
-//! permanently unacceptable to every honest node, and PARKS for everything else.
-//! `verify → false` is `TimeoutReason::InvalidProposal`, i.e. an immediate
-//! nullify, so expressing "I do not hold that yet" as `false` would turn every
-//! delivery race into a lost view.
-//!
-//! The instance agrees ONE value and [`certified_value`] is what makes that
-//! structural: once a value is certified, every later view re-proposes it and
-//! `verify` refuses anything else. Without that bar simplex's per-view rule alone
-//! would let a quorum that missed a body at view `v` certify a different set at
-//! `v+1`, leaving two artifacts that both verify against `committee[target_epoch]`.
+//! `verify` returns `false` only for a proposal permanently unacceptable to every
+//! honest node, and parks for everything else: `verify` returning `false` is
+//! `TimeoutReason::InvalidProposal`, an immediate nullify. Once a value is
+//! certified, every later view re-proposes it and `verify` refuses anything else.
 
 use alloy_primitives::{keccak256, B256};
 use bytes::{Buf, BufMut};
@@ -98,61 +74,39 @@ use crate::{
 /// `confirms`): one entry per seat.
 const MAX_SET_LEN: usize = MAX_COMMITTEE_SIZE as usize;
 
-/// `u32` count/length prefix.
 const LEN_PREFIX: usize = u32::SIZE;
 
-/// One `(dealer idx, log hash)` entry on the wire.
 const LOG_ENTRY_SIZE: usize = u8::SIZE + 32;
 
-/// One member's statement that it holds body-checked dealer logs — the count of
-/// these is the number of members that can actually finalize, which is the
-/// number that governs the epoch's fate and has no other representation in the
-/// protocol.
-///
-/// The signed bytes bind `target_epoch` AND a digest of `recorded`. Both are
-/// load-bearing: a confirmation is lifted out of the DKG envelope into this
-/// payload, and the envelope's `ceremony_epoch` is plain framing that does not
-/// travel with it, so without the epoch a genuine confirmation replays into
-/// every other epoch, and without the set digest a valid signature re-attaches
-/// to an inflated `recorded`. `recorded` itself travels in the clear because a
-/// verifier must both re-derive that digest and test the superset relation
-/// against the proposal's `logs`.
+/// One member's statement that it holds body-checked dealer logs. The count of
+/// these is the number of members that can finalize, which governs the epoch's
+/// fate.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ShareConfirm {
     /// The confirming member's index in `committee[target_epoch]`.
     pub idx: u8,
-    /// Part of the signed bytes.
     pub target_epoch: u64,
-    /// The body-checked dealer logs this member holds. CANONICAL: strictly
-    /// ascending by `idx`, no duplicates, `idx < MAX_COMMITTEE_SIZE`.
+    /// The body-checked dealer logs this member holds, strictly ascending by `idx`
+    /// with no duplicates.
     pub recorded: Vec<(u8, B256)>,
     /// Over `target_epoch ‖ keccak256(canonical(recorded))`, under the member's
     /// consensus key.
     pub sig: Signature,
 }
 
-/// Domain-separator suffix for share-confirmation signatures, appended to the
-/// beacon plane's own namespace by [`ConfirmPool::new`].
-///
-/// The same ed25519 key signs dealer logs and player acks inside the ceremony, so
-/// the confirmation needs a domain of its own. A signed message is
-/// `union_unique(namespace, msg)`, which length-prefixes the namespace, so a
-/// distinct suffix is the whole requirement — no prefix-freedom against the base
-/// is needed or claimed.
+/// Domain separator appended to the beacon plane's namespace by
+/// [`ConfirmPool::new`]. The same ed25519 key signs dealer logs and player acks
+/// inside the ceremony, and `union_unique` length-prefixes the namespace, so a
+/// distinct suffix is the whole requirement.
 const CONFIRM_SUFFIX: &[u8] = b"_DKG_CONFIRM";
 
 /// The bytes a [`ShareConfirm`] signs: `target_epoch ‖ keccak256(canonical(recorded))`.
 ///
-/// Both halves are load-bearing and neither is recoverable from the framing. A
-/// confirmation is lifted out of the [`crate::beacon::dkg_msg::DkgMsg`] envelope
-/// into a proposal payload, and that envelope's `ceremony_epoch` is unsigned
-/// framing that does not travel with it — so without the epoch a genuine
-/// confirmation for `E` replays inside a proposal for any `E'` whose `logs` the
-/// confirmed set happens to cover, clearing the entry bar before that many members
-/// have confirmed anything for `E'`. Without the set digest a valid signature
-/// re-attaches to an inflated `recorded`, which buys the same inflation inside one
-/// epoch. The set is digested rather than signed whole so the signed message stays
-/// fixed-size.
+/// Both halves are load-bearing. A confirmation lifted out of the DKG envelope
+/// carries no `ceremony_epoch`, so without the epoch a genuine confirmation
+/// replays into another epoch; without the set digest a valid signature
+/// re-attaches to an inflated `recorded`. The set is digested rather than signed
+/// whole so the message stays fixed-size.
 fn confirm_message(target_epoch: u64, recorded: &[(u8, B256)]) -> [u8; 40] {
     let mut canonical = Vec::with_capacity(log_set_size(recorded));
     write_log_set(recorded, &mut canonical);
@@ -164,8 +118,7 @@ fn confirm_message(target_epoch: u64, recorded: &[(u8, B256)]) -> [u8; 40] {
 
 impl ShareConfirm {
     /// Sign this node's confirmation for `target_epoch`. `recorded` must already be
-    /// canonical — strictly ascending by `idx`, no duplicates — or the digest names
-    /// a set no decoder will ever reproduce.
+    /// canonical, or the digest names a set no decoder reproduces.
     pub fn sign(
         namespace: &[u8],
         signer: &Ed25519PrivateKey,
@@ -182,7 +135,6 @@ impl ShareConfirm {
         }
     }
 
-    /// Whether `member` really signed this confirmation of this set for this epoch.
     pub fn verify(&self, namespace: &[u8], member: &PeerPubkey) -> bool {
         member.verify(
             namespace,
@@ -191,13 +143,11 @@ impl ShareConfirm {
         )
     }
 
-    /// Whether this confirmation COVERS `logs`: the confirmed set contains every
+    /// Whether this confirmation covers `logs`: the confirmed set contains every
     /// pinned entry, hash included.
     ///
-    /// Hash-sensitive on purpose. A member that recorded a DIFFERENT body at a
-    /// pinned seat cannot finalize over that seat, so counting it towards the bar
-    /// would count a member that the epoch's fate does not include. Both sides are
-    /// strictly ascending by `idx` (enforced at decode), so this is one merge walk.
+    /// Hash-sensitive because a member that recorded a different body at a pinned
+    /// seat cannot finalize over that seat.
     pub fn covers(&self, logs: &[(u8, B256)]) -> bool {
         let mut recorded = self.recorded.iter().peekable();
         for entry in logs {
@@ -218,16 +168,13 @@ impl ShareConfirm {
     }
 }
 
-/// Whether `confirm` is a confirmation this instance may count: it names this
-/// target epoch, it names a seat that exists, and the member sitting there signed
-/// it.
+/// Whether `confirm` names this target epoch, names a seat that exists, and was
+/// signed by the member in it.
 ///
-/// Every clause is a permanent property of the confirmation under
-/// `committee[target_epoch]`, so two honest nodes always agree on it — which is
-/// what lets a proposal be REJECTED on it rather than parked. It deliberately does
-/// not check that the confirmed hashes are real: a member's confirmation is its own
-/// claim, and a Byzantine member can always overstate what it holds. That inflates
-/// the count by at most `f`, which the fault model already pays for.
+/// Every clause is a permanent property under `committee[target_epoch]`, so two
+/// honest nodes always agree and a proposal may be rejected rather than parked.
+/// It does not check that the confirmed hashes are real: a Byzantine member can
+/// always overstate what it holds, inflating the count by at most `f`.
 fn confirm_is_countable(
     confirm: &ShareConfirm,
     namespace: &[u8],
@@ -243,30 +190,16 @@ fn confirm_is_countable(
 /// The agreement view from which the margin is released and the bar is the bare
 /// quorum.
 ///
-/// Deliberately SMALL. No recorded incident would have been prevented by the margin
-/// at all — every one landed at zero share-holders, not at "quorum minus one" — so
-/// the margin refuses to ENTER an epoch that stands one fault from a stop and
-/// repairs nothing. A prophylactic that nothing has ever needed is worth two views
-/// of boundary latency and no more; raising it buys nothing measurable and costs
-/// that latency directly.
-///
-/// It is a VIEW count and never a duration. The view number is agreed by the
-/// protocol itself — it rides every vote and the finalization certificate — so
-/// every honest node in a view computes the same bar. A node-local timer would be
-/// the liveness split the fixed rule exists to prevent: two nodes would drop the
-/// margin at different moments and disagree on whether a proposal carrying only
-/// quorum confirmations is acceptable, and the stricter one would nullify a view
-/// the other certified.
+/// It is a view count, never a duration: the view number is agreed by the
+/// protocol, so every honest node computes the same bar. A node-local timer would
+/// let two nodes drop the margin at different moments and disagree on whether a
+/// quorum-only proposal is acceptable.
 pub(crate) const MARGIN_RELEASE_VIEW: u64 = 3;
 
 /// The margin above the quorum, as a function of the fault bound alone.
 ///
-/// `m <= f` is the hard constraint: the bar is `quorum(n) + m = n - f + m`, so any
-/// larger `m` would be unsatisfiable even with every member present. At `f = 1` it
-/// is 0, which is why committees of 4-6 — the dpos smoke, the production path and
-/// the growth case's start state — see no change from it: at those sizes any
-/// nonzero margin would mean "every member must succeed", which is stricter, not
-/// sturdier.
+/// `m <= f` is the hard constraint: the bar is `n - f + m`, so a larger `m` would
+/// be unsatisfiable. At `f = 1` it is 0, so committees of 4-6 see the bare quorum.
 const fn margin(f: u32) -> u32 {
     if f / 2 < 2 {
         f / 2
@@ -277,19 +210,12 @@ const fn margin(f: u32) -> u32 {
 
 /// How many share-confirmations a proposal must carry to be acceptable at `view`.
 ///
-/// NEVER CONFIGURABLE, and the reason is liveness rather than taste. `PK_E` is a
-/// pure function of the pinned set, so a node running a stricter bar that DOES
-/// finalize derives the identical key — it simply refuses to finalize, demotes to
-/// verify-only and votes false on the change-boundary block. A configurable margin
-/// therefore degrades into "the strictest node self-removes", and `> f` strict
-/// nodes halt the epoch. Neither `f` nor the margin is a parameter here for exactly
-/// that reason: both follow from `n` and the fault model, which the whole network
-/// already shares. Adding a knob — or a caller-supplied `f` — is a protocol change
-/// and belongs in review, not in a config file.
+/// Not configurable: `PK_E` is a pure function of the pinned set, so a node
+/// running a stricter bar still derives the same key but refuses to finalize and
+/// votes false, and `> f` strict nodes halt the epoch.
 ///
-/// Non-increasing in `view`, which is what makes rejecting on it safe: a value
-/// certified while the margin held stays acceptable in every later view, so the
-/// release can never orphan an agreement already reached.
+/// Non-increasing in `view`, so a value certified while the margin held stays
+/// acceptable in every later view.
 pub(crate) fn entry_bar(n: usize, view: View) -> usize {
     if n == 0 {
         return 0;
@@ -305,25 +231,16 @@ pub(crate) fn entry_bar(n: usize, view: View) -> usize {
 /// The share-confirmations this node has collected per target epoch, and the
 /// namespace they are signed under.
 ///
-/// ONE source for that namespace, deliberately. The beacon actor signs with it and
-/// the acceptance predicate verifies with it, and a mismatch between two
-/// independently derived copies would be invisible: every confirmation would simply
-/// fail to verify and the bar would never be met, on a plane whose entire failure
-/// mode is already "nothing happens". The pool is constructed once and handed to
-/// both.
-///
-/// The MAP feeds `propose` only. `verify` reads the namespace out of it and nothing
-/// else: the confirmations a proposal is judged on travel inside that proposal,
-/// never from here. A predicate that counted local receive state would stop being a
-/// pure function of the proposal, and honest nodes would diverge on delivery order —
-/// the exact failure this plane exists to remove.
+/// One namespace, shared by the actor that signs and the predicate that verifies:
+/// a mismatch would reject every confirmation silently. The map feeds `propose`
+/// only — `verify` reads the namespace and nothing else, because a predicate that
+/// counted local receive state would make honest nodes diverge.
 #[derive(Clone)]
 pub struct ConfirmPool {
     namespace: Arc<Vec<u8>>,
     confirms: Arc<Mutex<BTreeMap<u64, BTreeMap<u8, ShareConfirm>>>>,
-    /// Bumped whenever EITHER of `build_proposal`'s two node-local inputs grows —
-    /// this map, or the beacon actor's recorded dealer-log index. See
-    /// [`ConfirmPool::subscribe`].
+    /// Bumped whenever either node-local input of `build_proposal` grows: this map or
+    /// the beacon actor's recorded dealer-log index.
     inputs: Arc<watch::Sender<u64>>,
 }
 
@@ -346,36 +263,22 @@ impl ConfirmPool {
 
     /// A subscription that fires when a leader's refusal could have become stale.
     ///
-    /// `build_proposal` reads two node-local inputs — this pool and the beacon
-    /// actor's recorded dealer-log index — and a leader that cannot build yet has
-    /// to be woken by whichever of them grows. Both edges land here rather than one
-    /// each: the index is a bare `Arc<RwLock<_>>` shared with the plane, so giving
-    /// it a channel of its own would mean two subscriptions and two wakeups for one
-    /// predicate. The actor bumps it from [`ConfirmPool::record`] and from
-    /// `publish_recorded_logs`.
-    ///
-    /// `watch` and not `Notify`: the subscription marks the current value seen at
-    /// subscribe time, so a growth landing between the subscribe and the failed
-    /// build is still delivered. `Notify::notify_waiters` would drop it, and the
-    /// leader would then sleep out its whole view holding an answer it already had.
+    /// Both input edges land here rather than one each. `watch` rather than `Notify`:
+    /// the subscription marks the current value seen at subscribe time, so growth
+    /// landing between the subscribe and the failed build is still delivered.
     pub(crate) fn subscribe(&self) -> watch::Receiver<u64> {
         self.inputs.subscribe()
     }
 
-    /// Wake every subscriber. Called by the beacon actor when the recorded
-    /// dealer-log index grows; [`ConfirmPool::record`] does it for this map.
+    /// Wake every subscriber after either input grows.
     pub(crate) fn note_inputs_grew(&self) {
         self.inputs.send_modify(|seq| *seq = seq.wrapping_add(1));
     }
 
     /// Verify `confirm` against `committee[confirm.target_epoch]` and keep it if it
-    /// says more than what is already held for that seat. Returns whether it was
-    /// stored.
+    /// says more than what is already held for that seat.
     ///
-    /// Widest-wins rather than latest-wins: a member's body-checked set only ever
-    /// grows (the published index is first-wins per seat — `signed_log_hash` is the
-    /// FIRST-recorded hash of a dealer and `publish_recorded_logs` never overwrites an
-    /// entry), so the widest confirmation it ever signed is its truest one, and a
+    /// Widest-wins, not latest-wins: a member's confirmed set only grows, so a
     /// replayed older confirmation cannot narrow what this node counts.
     pub(crate) fn record(&self, committee: &[PeerPubkey], confirm: ShareConfirm) -> bool {
         if !confirm_is_countable(&confirm, self.namespace(), committee, confirm.target_epoch) {
@@ -419,16 +322,14 @@ impl ConfirmPool {
             .collect()
     }
 
-    /// Drop every epoch the predicate rejects. Called from the beacon actor's
-    /// height sweep on the same predicate that retains the ceremonies themselves.
+    /// Drop every epoch the predicate rejects.
     pub fn retain(&self, keep: impl Fn(u64) -> bool) {
         self.lock().retain(|epoch, _| keep(*epoch));
     }
 
-    /// A poisoned lock recovers rather than propagating: this map only ever raises a
-    /// count that a refusal is already the safe answer to, so reading it through a
-    /// panic cannot produce an unsafe verdict, while panicking here would take the
-    /// beacon actor down over a bookkeeping map.
+    /// A poisoned lock recovers: this map only raises a count that a refusal is
+    /// already the safe answer to, while panicking would take the beacon actor down
+    /// over bookkeeping.
     fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<u64, BTreeMap<u8, ShareConfirm>>> {
         self.confirms
             .lock()
@@ -436,14 +337,12 @@ impl ConfirmPool {
     }
 }
 
-/// What `committee[target_epoch]` agrees over p2p, and — once certified — the
-/// artifact body served to peers. See the module doc for what each field is and
-/// why it is here.
+/// The value `committee[target_epoch]` agrees over, and — once certified — the
+/// artifact body served to peers.
 ///
-/// CANONICAL: `logs` and every `recorded` strictly ascending by `idx`;
-/// `confirms` strictly ascending by member index; no duplicates; every index
-/// `< MAX_COMMITTEE_SIZE`; every set at most `MAX_COMMITTEE_SIZE` long.
-/// Enforced at decode.
+/// Canonical: `logs` and every `recorded` strictly ascending by index, `confirms`
+/// strictly ascending by member index, no duplicates, every index below
+/// `MAX_COMMITTEE_SIZE`. Enforced at decode.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DkgProposal {
     pub target_epoch: u64,
@@ -474,11 +373,10 @@ fn log_set_size(set: &[(u8, B256)]) -> usize {
 
 /// Decode a `(idx, hash)` set under the canonical rules.
 ///
-/// The COUNT bound does not bound the VALUE: `idx` is a `u8`, so without the
-/// per-entry check an entry could name seat 200 of a 51-seat committee and wedge
-/// whatever consumes it. `MAX_COMMITTEE_SIZE` is a network-wide constant, so
-/// this rejects identically on every node — a bound against the live committee
-/// length would instead make decoding depend on node-local state.
+/// The count bound does not bound the value: `idx` is a `u8`, so an entry could
+/// name a seat outside a 51-seat committee. `MAX_COMMITTEE_SIZE` is network-wide,
+/// so every node rejects identically; a bound against the live committee length
+/// would make decoding depend on node-local state.
 fn read_log_set(buf: &mut impl Buf) -> Result<Vec<(u8, B256)>, Error> {
     let count = u32::read(buf)? as usize;
     if count > MAX_SET_LEN {
@@ -512,8 +410,6 @@ fn read_log_set(buf: &mut impl Buf) -> Result<Vec<(u8, B256)>, Error> {
     Ok(set)
 }
 
-// Wire: idx(1) ‖ target_epoch(8) ‖ recorded_count(4) + count*(idx(1) ‖ hash(32))
-//   ‖ sig(64).
 impl Write for ShareConfirm {
     fn write(&self, buf: &mut impl BufMut) {
         self.idx.write(buf);
@@ -552,10 +448,8 @@ impl Read for ShareConfirm {
     }
 }
 
-// Wire: target_epoch(8) ‖ logs_count(4) + count*(idx(1) ‖ hash(32))
-//   ‖ group_key_len(4)+bytes ‖ confirms_count(4) + count*ShareConfirm.
-// `group_key` is length-prefixed because the commonware `Output` decoder needs
-// the committee-size config this layer supplies through `parse_outcome`.
+// `group_key` is length-prefixed because the commonware `Output` decoder needs the
+// committee-size config this layer supplies through `parse_outcome`.
 impl Write for DkgProposal {
     fn write(&self, buf: &mut impl BufMut) {
         self.target_epoch.write(buf);
@@ -652,51 +546,41 @@ impl Digestible for DkgProposal {
     }
 }
 
-/// The agreement's output: the certified payload plus simplex's own finalization
-/// certificate, which verifies standalone against `committee[target_epoch]`.
+/// The certified payload plus simplex's finalization certificate, which verifies
+/// standalone against `committee[target_epoch]`.
 pub type AgreedArtifact = (DkgProposal, Finalization<BlsScheme, Digest>);
 
 /// What this node can say about a candidate pinned dealer-log set.
 ///
-/// The three non-`Derived` arms are NOT interchangeable, and the split is the
-/// whole point: only [`Unusable`](PinnedDerive::Unusable) is a property of the
-/// proposal, so only it may become a `verify` verdict. The other two are
-/// properties of THIS node's delivery state, and a verdict drawn from those
-/// would nullify a view that a proposal-identical honest node accepts.
+/// Only `Unusable` is a property of the proposal, so only it may become a `verify`
+/// verdict; `Missing` and `Unavailable` are properties of this node's delivery
+/// state, and a verdict drawn from them would nullify a view that a
+/// proposal-identical honest node accepts.
 #[derive(Clone, Debug)]
 pub(crate) enum PinnedDerive {
-    /// Every named body is held under the named hash, and the public half of the
-    /// ceremony over exactly those dealers is this.
+    /// Every named body is held under the named hash and derives this group key.
     Derived(Box<DkgOutcome>),
-    /// The named bodies at these committee indices are not held, or are held
-    /// under a different hash. The caller aims a targeted fetch at them and
-    /// parks; a body that arrives later makes the same proposal acceptable.
+    /// The named bodies are not held, or are held under a different hash. The caller
+    /// fetches them by the pinned hash and parks; a late body makes the same proposal
+    /// acceptable.
     Missing(Vec<u8>),
-    /// The ceremony state needed to answer is not available here at all — no
-    /// live ceremony for the epoch, an unreadable roster. Park.
+    /// The ceremony state needed to answer is not available here. Park.
     Unavailable,
-    /// Every named body is held, and no group key follows from them. This is a
-    /// pure function of the proposal (the selection is canonical and the sum
-    /// takes no node-local input), so every honest node reaches it, which is
-    /// what makes it safe to vote on.
+    /// Every named body is held and no group key follows from them. A pure function
+    /// of the proposal, so every honest node reaches it.
     Unusable,
 }
 
-/// The seam between the agreement automaton and the ceremony state that holds
-/// the dealer-log BODIES.
+/// The seam between the agreement automaton and the ceremony state that holds the
+/// dealer-log bodies.
 ///
-/// The automaton is handed HASHES ([`DkgLogIndex`]) and could compare those on
-/// its own, but the `group_key` clause of the acceptance predicate is
-/// `Σ commitments` over the selected dealers, and a commitment lives in a body.
-/// Bodies are owned single-threaded by [`crate::beacon::actor::DkgActor`], so the
-/// answer crosses a channel and the call is async — the same shape
-/// [`crate::beacon::log_resolver::LogHandler`] uses for `Produce`/`Deliver`.
+/// The `group_key` clause needs `Σ commitments`, which lives in a body; bodies are
+/// owned single-threaded by the actor, so the answer crosses a channel and the
+/// call is async.
 ///
-/// IMPLEMENTOR CONTRACT: return [`PinnedDerive::Unusable`] ONLY when every named
-/// body is held. Any local inability to answer — no ceremony, no roster, a lock
-/// this implementation declined to take — is [`PinnedDerive::Unavailable`].
-/// Getting that wrong converts a node-local gap into a nullified view, which is
-/// exactly the failure the acceptance predicate is written to avoid.
+/// Implementor contract: return [`PinnedDerive::Unusable`] only when every named
+/// body is held; any local inability to answer is [`PinnedDerive::Unavailable`].
+/// Getting that wrong converts a node-local gap into a nullified view.
 pub(crate) trait PinnedLogs: Clone + Send + 'static {
     fn derive(&self, pinned: BTreeMap<u8, B256>) -> impl Future<Output = PinnedDerive> + Send;
 }
@@ -704,18 +588,10 @@ pub(crate) trait PinnedLogs: Clone + Send + 'static {
 /// The body `propose` built for the relay to broadcast, and the round it built it
 /// for.
 ///
-/// ROUND-KEYED, and it has to be: a propose task can outlive its own view. Since
-/// [`DkgAgree::build_proposal`] waits inside the leader's window and resolves
-/// whenever an input grows, a task asked at round `r` can still be inside
-/// `derive` when the voter has moved on and a second task has already armed the
-/// slot for a later round `r'`. On an unkeyed slot that late write replaces `r'`'s
-/// body: the relay then finds a body whose digest is not the one consensus asked
-/// it to broadcast, refuses to send it, and `r'` burns its whole certification
-/// timeout while its peers park in `verify` on a body that never left.
-///
-/// So a write only ever moves the round forward, and the round OUTLIVES the body:
-/// the relay takes the proposal but leaves the round behind, because a late task
-/// would otherwise just re-arm the emptied slot with its stale body.
+/// Round-keyed: a propose task can outlive its view, and on an unkeyed slot a late
+/// write would replace the current round's body, so the relay would refuse to
+/// broadcast a digest consensus asked for. A write only moves the round forward,
+/// and the round outlives the body so a late task cannot re-arm the emptied slot.
 #[derive(Clone, Default)]
 struct BuiltProposal(Arc<Mutex<Option<Armed>>>);
 
@@ -726,9 +602,8 @@ struct Armed {
 }
 
 impl BuiltProposal {
-    /// Offer `proposal` as the body for `round`. Returns whether the relay will
-    /// find it — `false` means a later round owns the slot and this proposal is
-    /// stale, or the lock is poisoned.
+    /// Offer `proposal` as the body for `round`. `false` means a later round owns the
+    /// slot, or the lock is poisoned.
     fn arm(&self, round: Round, proposal: DkgProposal) -> bool {
         let Ok(mut slot) = self.0.lock() else {
             warn!(
@@ -764,10 +639,9 @@ impl BuiltProposal {
 
 /// The `Automaton`/`Relay` half of the epoch-key agreement instance.
 ///
-/// One instance per target epoch, and it agrees exactly one value: the pinned
-/// dealer-log set for `committee[target_epoch]`. There is no parent chain — the
-/// genesis digest is a constant of the target epoch and every proposal builds on
-/// it.
+/// One instance per target epoch, agreeing exactly one value: the pinned
+/// dealer-log set. There is no parent chain — the genesis digest is a constant of
+/// the target epoch.
 pub(crate) struct DkgAgree<E, R, L> {
     context: E,
     target_epoch: u64,
@@ -783,13 +657,9 @@ pub(crate) struct DkgAgree<E, R, L> {
     /// decide one.
     recorded: DkgLogIndex,
     pinned: L,
-    /// The share-confirmations this node has collected, and the namespace they are
-    /// signed under. `propose` draws the covering set from it; `verify` takes only
-    /// the namespace.
     confirms: ConfirmPool,
-    /// Set by `propose`, taken by `Relay::broadcast(Plan::Propose)`. Shared
-    /// because the voter holds independent clones for the two roles — mirrors
-    /// `Inline`'s `last_built`.
+    /// Set by `propose`, taken by `Relay::broadcast`. Shared because the voter holds
+    /// independent clones for the two roles.
     last_built: BuiltProposal,
     notes: AgreementNotes,
 }
@@ -812,9 +682,7 @@ impl<E: Clone, R: Clone, L: Clone> Clone for DkgAgree<E, R, L> {
 }
 
 /// Everything one agreement instance's application half needs beyond its runtime
-/// context. A struct rather than a parameter list because the members are all
-/// distinct handles into the beacon plane and a positional call site invites a
-/// silent swap between two of them.
+/// context.
 pub(crate) struct DkgAgreeConfig<R, L> {
     pub target_epoch: u64,
     pub committee: Vec<PeerPubkey>,
@@ -822,10 +690,9 @@ pub(crate) struct DkgAgreeConfig<R, L> {
     pub logs: R,
     pub recorded: DkgLogIndex,
     pub pinned: L,
-    /// PRECONDITION: the same pool the beacon actor signs into. Its namespace is
-    /// what confirmations are verified under here, so a second pool built from a
-    /// different base namespace would reject every honest confirmation and the
-    /// entry bar would never be met — silently.
+    /// Precondition: the same pool the beacon actor signs into. A second pool built
+    /// from a different base namespace would reject every honest confirmation and the
+    /// entry bar would never be met, silently.
     pub confirms: ConfirmPool,
     pub metrics: BeaconMetrics,
 }
@@ -846,9 +713,7 @@ impl<E, R, L> DkgAgree<E, R, L> {
         }
     }
 
-    /// The `(target epoch, reason)` refusals already warned about — the warn-once
-    /// ledger, so a test can assert WHICH arm a refusal took and not only how many
-    /// arms fired.
+    /// The `(target epoch, reason)` refusals already warned about.
     #[cfg(test)]
     pub(crate) fn reported(&self) -> BTreeSet<(u64, &'static str)> {
         self.notes
@@ -859,11 +724,9 @@ impl<E, R, L> DkgAgree<E, R, L> {
     }
 }
 
-/// The genesis digest of the agreement instance for `epoch`.
-///
-/// A single-height instance has no parent chain, so this is just a domain-tagged
-/// constant: every honest member computes the same one, and it differs per epoch
-/// so a proposal cannot be replayed into another target's instance.
+/// The genesis digest for `epoch`. A single-height instance has no parent chain,
+/// so this is a domain-tagged constant; it differs per epoch so a proposal cannot
+/// be replayed into another target's instance.
 pub(crate) fn agreement_genesis(epoch: u64) -> Digest {
     let mut preimage = Vec::with_capacity(GENESIS_TAG.len() + 8);
     preimage.extend_from_slice(GENESIS_TAG);
@@ -876,22 +739,12 @@ const GENESIS_TAG: &[u8] = b"FLUENT_DKG_AGREE_GENESIS";
 /// The value this instance has already certified, read off the parent simplex
 /// supplies — or `None` while nothing is certified yet.
 ///
-/// This is the structural bar against two agreed values, and it has to be
-/// structural: `simplex` forbids conflicting finalizations WITHIN a view, not
-/// across them, so without it a quorum that missed the body at view `v` could
-/// certify a different set at `v+1` and the epoch would end with two `PK_E`s that
-/// both verify against `committee[target_epoch]` — the exact epoch death this
-/// plane exists to prevent.
-///
-/// The parent is authoritative and needs no local bookkeeping: before `verify` is
-/// ever called, simplex has checked that the named parent is certified, that it is
-/// at or above the last finalization, and that EVERY view between it and the
-/// current one is nullified (`CW/consensus/src/simplex/actors/voter/state.rs:705-744`).
-/// A view cannot be both certified and nullified under the fault model — an honest
-/// node forfeits notarize once it nullifies (`voter/round.rs:327-336`) and the two
-/// quorums intersect in an honest node — so a certified value can never be skipped
-/// back over. View 0 is the genesis container, so a parent there means the instance
-/// has certified nothing.
+/// The structural bar against two agreed values: `simplex` forbids conflicting
+/// finalizations within a view, not across them, so without it a quorum that
+/// missed the body at view `v` could certify a different set at `v+1`. The parent
+/// is authoritative: simplex has already checked that it is certified and that
+/// every view between it and the current one is nullified. View 0 is the genesis
+/// container, so a parent there means nothing is certified.
 const fn certified_value(parent: (View, Digest)) -> Option<Digest> {
     if parent.0.get() == 0 {
         None
@@ -902,11 +755,8 @@ const fn certified_value(parent: (View, Digest)) -> Option<Digest> {
 
 /// What a decision came to — or that it did not come to one.
 ///
-/// The voter's channel carries two answers; this plane needs three. `Park` is the
-/// third: not "yes", not "no", but "nothing this node holds decides it yet". It is
-/// a VALUE rather than a never-resolving future so that the parking discipline
-/// lives in [`drive`] — the one place that owns the wire to the voter — instead of
-/// in every branch that has to remember to spell it.
+/// `Park` is a value rather than a never-resolving future so the parking
+/// discipline lives in [`drive`], the one place that owns the wire to the voter.
 enum Decision<T> {
     Resolve(T),
     Park,
@@ -914,25 +764,17 @@ enum Decision<T> {
 
 /// A `verify` answer.
 ///
-/// Separate from `Decision<bool>` on purpose: the rule this plane turns on is that
-/// `false` is reserved for a proposal permanently unacceptable to EVERY honest node
-/// (it reaches the voter as `TimeoutReason::InvalidProposal`, an immediate nullify),
-/// so a rejection must be an act of naming, never the value a branch falls into. A
-/// new arm cannot write `false` here; it has to choose between [`Self::Reject`] and
-/// [`Self::Park`], which is the whole point.
+/// `false` is reserved for a proposal permanently unacceptable to every honest
+/// node — it reaches the voter as `TimeoutReason::InvalidProposal`, an immediate
+/// nullify — so a new arm must choose between [`Self::Reject`] and
+/// [`Self::Park`] rather than fall into `false`.
 enum Verdict {
     /// The proposal checks out: its pinned set derives its own group key.
     Accept,
-    /// Reject ONLY a proposal that is permanently unacceptable to EVERY honest
-    /// node — a replaced certified value, a structural violation, a set that
-    /// derives no key or the wrong one.
-    ///
-    /// This reaches the voter as `TimeoutReason::InvalidProposal`, an immediate
-    /// nullify. **When in doubt, [`Self::Park`].** "I do not hold that yet" is a
-    /// delivery race, not a bad proposal, and answering it here costs the view.
+    /// Reject only a proposal permanently unacceptable to every honest node. When in
+    /// doubt, park.
     Reject,
-    /// Nothing this node holds decides it yet. Costs nothing: the view runs its
-    /// own timeout, and a later round proposing the same set is still accepted.
+    /// Nothing this node holds decides it yet.
     Park,
 }
 
@@ -948,15 +790,9 @@ impl From<Verdict> for Decision<bool> {
 
 /// Resolve a voter request from a `decision` future, or leave it pending.
 ///
-/// The voter awaits the matching `rx` exactly once per `(context, payload)` and
-/// never retries. So this driver ends in exactly one of three ways: it sends the
-/// definitive verdict, it parks (holding `tx` open until the view moves on), or it
-/// exits because the voter already dropped `rx`.
-///
-/// The park arm must keep `tx` ALIVE. Dropping it unsent reaches the voter as
-/// `Err`, which it reads as `TimeoutReason::IgnoredProposal` and turns into an
-/// immediate nullify — the same lost view a `false` would have cost. That is the
-/// entire reason this function, and not each caller, owns the parking.
+/// The voter awaits the matching `rx` exactly once and never retries. The park arm
+/// keeps `tx` alive: dropping it unsent reaches the voter as `Err`, which it reads
+/// as `TimeoutReason::IgnoredProposal` and turns into an immediate nullify.
 async fn drive<T: Send>(mut tx: oneshot::Sender<T>, decision: impl Future<Output = Decision<T>>) {
     tokio::select! {
         _ = tx.closed() => {}
@@ -982,20 +818,14 @@ fn local_set(recorded: &DkgLogIndex, epoch: u64, n: usize) -> BTreeMap<u8, B256>
         .collect()
 }
 
-/// A proposal this node could not put to the instance because too few members have
-/// confirmed they hold a usable share. The two arms mean different things to an
-/// operator and must never be collapsed.
+/// The two unmet-entry-bar reasons, which mean different things to an operator and
+/// must not be collapsed.
 const BAR_QUORUM_UNMET: &str = "confirm_quorum_not_met";
 const BAR_MARGIN_UNMET: &str = "confirm_margin_not_met";
 
-/// Why this node had nothing it could put to the instance, warned where the
-/// refusal happens.
-///
-/// Warn-once per `(target epoch, reason)`, on the pattern the finalize-deferral
-/// path already uses (`beacon::actor`'s `Stalled{reason}` latch /
-/// `dkg_finalize_deferred`). Without the ledger every refusal would re-warn on
-/// every view of a plane whose whole symptom is that views keep passing; with it,
-/// the view carried in the message says how long the plane took to get stuck.
+/// Why this node had nothing to put to the instance, warned once per
+/// `(target epoch, reason)`: without the ledger every view of a stalled plane would
+/// re-warn.
 #[derive(Clone)]
 pub(crate) struct AgreementNotes {
     reported: Arc<Mutex<BTreeSet<(u64, &'static str)>>>,
@@ -1018,7 +848,6 @@ impl AgreementNotes {
             .insert((epoch, reason))
     }
 
-    /// Report why this node has nothing to propose at `view`.
     fn refuse(&self, epoch: u64, view: View, reason: &'static str) {
         if self.first_report(epoch, reason) {
             warn!(
@@ -1030,13 +859,9 @@ impl AgreementNotes {
         }
     }
 
-    /// Report an unmet entry bar, distinguishing the two cases.
-    ///
-    /// *Quorum met, margin not met* is a prophylactic refusal and not a fault: the
-    /// release at [`MARGIN_RELEASE_VIEW`] will start the epoch on its own. *Quorum
-    /// not met* is the opposite — the release will not help, because the members are
-    /// genuinely absent. An operator acts on the second and waits out the first, so
-    /// one message for both would be worse than none.
+    /// Report an unmet entry bar. Quorum met but margin unmet is a prophylactic
+    /// refusal that the release view will resolve; quorum unmet means the members are
+    /// genuinely absent, which the release will not help.
     fn bar_unmet(&self, epoch: u64, view: View, covering: usize, quorum: usize, bar: usize) {
         let reason = if covering < quorum {
             BAR_QUORUM_UNMET
@@ -1075,33 +900,13 @@ impl<E, R, L: PinnedLogs> DkgAgree<E, R, L> {
     /// leader's own window until it has one.
     ///
     /// The two node-local inputs — the recorded dealer-log set and the covering
-    /// share-confirmations — do not exist yet at the instant the instance spawns:
-    /// the instance is announced on the ceremony's seal edge, and the peers' sealed
-    /// logs and the confirmations minted from them are still in flight. A leader
-    /// that answered once and then parked spent its whole `leader_timeout` holding
-    /// an answer that went stale in milliseconds. Measured on the docker stand
-    /// (2026-08-19, `case growth`, two committee changes): `view = 2` both times and
-    /// `T_agree` = 30.07 s / 30.09 s, i.e. exactly one `LEADER_TIMEOUT`, view 1
-    /// nullified with nothing proposed. Re-reading on the growth edge is what makes
-    /// view 1 decide.
+    /// share-confirmations — may still be in flight when the instance is asked, so a
+    /// leader that answered once and parked would spend its whole leader timeout
+    /// holding a stale answer. It wakes on [`ConfirmPool::subscribe`] rather than a
+    /// clock; the wait ends when the voter drops the receiver and [`drive`] cancels.
     ///
-    /// Park-don't-error is UNCHANGED and is why the retry is expressible at all:
-    /// resolving the request as an error trips the leader deadline at once, so the
-    /// window a late dealer log has to arrive in only exists while the request is
-    /// held open. The wait ends by itself when the view moves on — the voter drops
-    /// the receiver, and [`drive`] cancels on that.
-    ///
-    /// It wakes on [`ConfirmPool::subscribe`] rather than on a clock: a poll
-    /// interval would be a second timeout to tune beside `leader_timeout`, and the
-    /// edge it would sample is already published by the writer.
-    ///
-    /// The FIRST admissible set is proposed, not the widest one. Waiting for the
-    /// set to stop growing would be the quiescence timer this design does not have,
-    /// and a narrower pinned set is not a weaker one: `derive_pinned` needs a
-    /// quorum, and a set that stalls below the full committee is exactly the case
-    /// where pinning what is actually there is the right answer. In practice the
-    /// dealers seal on one height tick and the set fills before any confirmation
-    /// covering it circulates, so the first admissible set is the full one.
+    /// The first admissible set is proposed, not the widest: a narrower pinned set is
+    /// not weaker, since deriving the key needs only a quorum.
     async fn build_proposal(self, view: View) -> Option<DkgProposal>
     where
         Self: Clone,
@@ -1114,31 +919,26 @@ impl<E, R, L: PinnedLogs> DkgAgree<E, R, L> {
             self.notes.refuse(self.target_epoch, view, "no_committee");
             return None;
         }
-        // Subscribed BEFORE the first attempt: a growth landing between the two is
-        // still delivered, so the leader can never sleep holding a usable answer.
+        // Subscribed before the first attempt, so growth landing between the two is still
+        // delivered.
         let mut grew = self.confirms.subscribe();
         loop {
             if let Some(proposal) = self.clone().attempt_proposal(view).await {
                 return Some(proposal);
             }
-            // Only the pool's own clones keep the sender alive, and this task holds
-            // one; an error here means the runtime is tearing down.
+            // Only the pool's clones keep the sender alive; an error means teardown.
             if grew.changed().await.is_err() {
                 return None;
             }
         }
     }
 
-    /// One attempt at [`Self::build_proposal`]'s value. Records why it refused, on
-    /// the warn-once ledger, so a retry loop cannot turn a stall into a log flood.
+    /// One attempt at [`Self::build_proposal`]'s value, recording refusals on the
+    /// warn-once ledger so the retry loop cannot flood the log.
     ///
-    /// The confirmations attached are exactly those that COVER the set being
-    /// proposed. A confirmation of a narrower set says nothing about a member's
-    /// ability to finalize over this one, so counting it would inflate the very
-    /// number the bar exists to measure.
-    ///
-    /// Runs inside the spawned propose task, not on the voter's own loop — `derive`
-    /// is a round-trip to the ceremony owner, and the voter must not block on it.
+    /// The attached confirmations are exactly those that cover the proposed set: a
+    /// narrower confirmation says nothing about a member's ability to finalize over
+    /// this one.
     async fn attempt_proposal(self, view: View) -> Option<DkgProposal> {
         let n = self.committee.len();
         let target_epoch = self.target_epoch;
@@ -1183,15 +983,9 @@ impl<E, R, L: PinnedLogs> DkgAgree<E, R, L> {
     }
 }
 
-/// The clauses of the acceptance predicate that need nothing but the proposal,
-/// the committee, the network's confirmation namespace and the view. Every one of
-/// them is a permanent property of the proposal under `committee[target_epoch]`,
-/// so two honest nodes holding the same proposal always reach the same answer —
-/// which is what makes rejecting on them safe. The view belongs in that list
-/// rather than beside it: it is agreed by the protocol and carried in every vote,
-/// so it is the one moving part every honest node in a round reads identically.
-/// Everything that depends on what THIS node happens to hold is decided in
-/// [`DkgAgree::decide`], and parks there.
+/// The acceptance clauses that need nothing but the proposal, the committee, the
+/// namespace and the view — all permanent properties, so two honest nodes holding
+/// the same proposal always agree and rejection is safe.
 fn rejects_structurally(
     proposal: &DkgProposal,
     target_epoch: u64,
@@ -1236,10 +1030,8 @@ fn rejects_structurally(
             );
             return true;
         }
-        // The signature fixes WHICH set the member attested; this fixes that the
-        // set attested covers the one being agreed. Without it a confirmation of a
-        // narrower set would count towards a proposal its signer cannot finalize
-        // over.
+        // The signature fixes which set the member attested; this fixes that it covers the
+        // set being agreed.
         if !confirm.covers(&proposal.logs) {
             warn!(
                 epoch = target_epoch,
@@ -1252,10 +1044,6 @@ fn rejects_structurally(
     }
     let bar = entry_bar(n, view);
     if proposal.confirms.len() < bar {
-        // Both arms are rejections; they are separated because they mean different
-        // things about the network. Below the QUORUM the members are genuinely
-        // absent and the margin release will not help; between quorum and the bar
-        // the epoch starts on its own at `MARGIN_RELEASE_VIEW`.
         let quorum = N3f1::quorum(n) as usize;
         if proposal.confirms.len() < quorum {
             warn!(
@@ -1280,15 +1068,12 @@ fn rejects_structurally(
     false
 }
 
-/// Decide `payload`, or park forever.
+/// Decide `payload`, or park.
 ///
-/// Parks (never resolves) on: a body engine that has gone away, an unreadable
-/// committee, and — the case this whole function exists for — a pinned dealer
-/// log whose body this node does not hold. That last one is a delivery race, not
-/// a bad proposal: the body arrives over the existing `{epoch, dealer, hash}`
-/// resolver (asked by the proposal's own hash for that seat), and a later round
-/// proposing the same set is accepted. Answering it
-/// with `false` would nullify the view instead.
+/// Parks on a body engine that has gone away, an unreadable committee, and a
+/// pinned dealer log whose body this node does not hold. That last is a delivery
+/// race, not a bad proposal: the body arrives over the resolver, and a later round
+/// proposing the same set is accepted. Answering `false` would nullify the view.
 impl<E, R, L> DkgAgree<E, R, L>
 where
     R: Resolver<Key = DkgLogKey, PublicKey = PeerPubkey>,
@@ -1306,7 +1091,7 @@ where
             }
         }
         let Ok(proposal) = self.bodies.subscribe(payload).await.await else {
-            // The body engine is gone (teardown). Not a verdict.
+            // The body engine is gone (teardown), not a verdict.
             return Verdict::Park;
         };
         if self.committee.is_empty() {
@@ -1372,12 +1157,9 @@ where
     }
 }
 
-/// Ask the roster for the bodies of the seats in `indices`, each by the EXACT hash
-/// the proposal pins for that seat (`pinned[idx]`). The hash is what makes the fetch
-/// answerable with the body under verification and nothing else: a dealer of which
-/// this node holds a DIFFERENT log is `Missing` here too, and only a by-hash fetch
-/// can fill that seat. A seat with no committee position or no pinned hash is
-/// skipped — nothing could be asked for it.
+/// Ask the roster for the bodies of the seats in `indices`, each by the exact hash
+/// the proposal pins. A dealer this node holds under a different log is `Missing`
+/// too, and only a by-hash fetch can fill that seat.
 async fn fetch_bodies<R>(
     logs: &mut R,
     committee: &[PeerPubkey],
@@ -1474,7 +1256,6 @@ where
         let verdict = self
             .clone()
             .decide(context.parent, context.round.view(), payload);
-        // The ONE place a `Verdict` becomes the voter's two-valued answer plus a park.
         let decision = async move { Decision::from(verdict.await) };
         let (tx, rx) = oneshot::channel();
         self.context
@@ -1495,10 +1276,8 @@ where
     L: PinnedLogs,
 {
     /// Unconditionally certifiable. The ordering plane uses this hook for an
-    /// availability gate (a block must be fetchable before it may finalize) and
-    /// for the boundary seed-verify; this instance has neither. Its payload is
-    /// already fully checked at `verify`, and there is no execution behind it to
-    /// wait for.
+    /// availability gate and a boundary seed-verify; this instance has neither, and
+    /// the payload is already fully checked at `verify`.
     async fn certify(
         &mut self,
         _round: commonware_consensus::types::Round,
@@ -1543,10 +1322,8 @@ where
                 if peers.is_empty() {
                     return;
                 }
-                // Forwarding serves a peer that voted on a digest whose body it
-                // never received, so it reads from the buffer rather than from
-                // `last_built`: the body being forwarded is usually someone
-                // else's.
+                // Forwarding reads from the buffer rather than `last_built`: the body being
+                // forwarded is usually someone else's.
                 let Some(proposal) = self.bodies.get(payload).await else {
                     debug!(
                         epoch = self.target_epoch,
@@ -1567,12 +1344,8 @@ where
 /// Count and name the body-checked dealer logs this node holds that the agreed set
 /// left out.
 ///
-/// OBSERVABILITY ONLY, and it must stay that way. This is the signal that separates
-/// a rare delivery race from a proposer systematically dropping entries, but the
-/// acceptance predicate must never read it: a predicate that consulted local state
-/// would turn every delivery race into a lost view, which is the failure the whole
-/// predicate is written to avoid — and which the ordering plane's own verify forbids
-/// by rule.
+/// Observability only: a predicate that read this local state would turn every
+/// delivery race into a lost view.
 pub(crate) fn note_omissions(
     recorded: &DkgLogIndex,
     target_epoch: u64,
@@ -1601,23 +1374,14 @@ pub(crate) fn note_omissions(
 
 /// The agreement instance's `Reporter`.
 ///
-/// Deliberately NOT the marshal, the slasher or `spec_exec`. Agreement rounds are
-/// not consensus rounds: feeding them to the slasher would manufacture
-/// equivocation evidence about `Round(target_epoch, v)` pairs that the ordering
-/// plane never held. The consequence — equivocation INSIDE this plane is
-/// unslashable — is a deliberate, bounded cost: a double-signer buys nullified
-/// views, never a wrong agreed value, because the acceptance predicate and the
-/// quorum still decide what gets certified.
+/// Deliberately not the marshal, the slasher or `spec_exec`: agreement rounds are
+/// not consensus rounds, and equivocation inside this plane is unslashable — a
+/// double-signer buys nullified views, never a wrong agreed value.
 ///
-/// It forwards the CERTIFICATE and never the body. Resolving the body here would
-/// have to happen on the voter's own chain — journal replay awaits every
-/// `report` inline (`CW/consensus/src/simplex/actors/voter/actor.rs:786-793`) — so
-/// the only thing that fits is an instant cache peek, and after a restart the
-/// in-memory buffer is empty. That peek returning `None` used to leave the
-/// supervisor waiting on a verdict that could never come: the instance was never
-/// torn down and its journal partition was never reclaimed. The body is resolved by
-/// the supervisor instead, off this chain and with an await that a late body can
-/// actually satisfy ([`crate::beacon::dkg_engine`]).
+/// It forwards the certificate and never the body. Journal replay awaits every
+/// `report` inline, so resolving the body here could only be an instant cache
+/// peek, which is empty after a restart; the supervisor resolves the body off this
+/// chain instead.
 pub(crate) struct DkgReporter {
     target_epoch: u64,
     verdict: tokio::sync::mpsc::Sender<Finalization<BlsScheme, Digest>>,
@@ -1682,20 +1446,13 @@ mod tests {
     use rand_08::rngs::StdRng;
     use rand_core::SeedableRng as _;
 
-    /// A park HOLDS the voter's sender; only a decision sends, and nothing drops it
-    /// early.
+    /// A park holds the voter's sender: only a decision sends, and nothing drops it
+    /// early. `try_recv` distinguishes live-but-unsent (`Empty`) from dropped
+    /// (`Closed`), the latter reaching the voter as `TimeoutReason::IgnoredProposal`.
     ///
-    /// This is the fork-critical property of the whole plane and it is invisible to
-    /// the agreement tests, which only ever see decided rounds. `try_recv` is the
-    /// discriminator: a live-but-unsent sender reads `Empty`, a dropped one reads
-    /// `Closed` — and `Closed` reaches the voter as `TimeoutReason::IgnoredProposal`,
-    /// the same lost view a wrong `false` would have cost.
-    ///
-    /// Both arms run through the real `drive`, so the `Empty` assertion cannot be
-    /// vacuous: the `Resolve` half proves the same channel does deliver when asked.
+    /// Both arms run through the real `drive`, so the `Empty` assertion is not vacuous.
     #[tokio::test]
     async fn a_park_holds_the_sender_and_a_decision_sends_it() {
-        // Park: no value, and the channel stays open for as long as the voter wants it.
         let (tx, mut rx) = oneshot::channel::<bool>();
         let parked = tokio::spawn(drive(tx, async { Decision::Park }));
         tokio::task::yield_now().await;
@@ -1705,14 +1462,11 @@ mod tests {
              view, and sending anything decides a round this node cannot decide"
         );
 
-        // ... and it exits cleanly once the view moves on, rather than leaking a task.
         drop(rx);
         parked
             .await
             .expect("drive must return when the voter drops its receiver");
 
-        // Decision: the same driver delivers. Without this the assertion above would
-        // hold on a `drive` that had simply stopped working.
         let (tx, mut rx) = oneshot::channel::<bool>();
         drive(tx, async { Decision::Resolve(false) }).await;
         assert_eq!(
@@ -1860,12 +1614,8 @@ mod tests {
         assert!(matches!(err, Error::Invalid("dkg_agree", _)), "{err:?}");
     }
 
-    /// The entry bar at the committee sizes that actually run, and the release.
-    ///
-    /// The `f = 1` rows are the point: at 4, 5 and 6 seats the margin is 0, so the
-    /// dpos smoke, the production path and the growth case's start state see the
-    /// bare quorum and nothing changes for them. Any nonzero margin there would
-    /// mean "every member must succeed", which is stricter, not sturdier.
+    /// The entry bar at the committee sizes that actually run, and the release. At
+    /// `f = 1` (4-6 seats) the margin is 0, so those sizes see the bare quorum.
     #[test]
     fn the_entry_bar_is_inert_where_f_is_one() {
         let held = View::new(1);
@@ -1894,13 +1644,8 @@ mod tests {
         }
     }
 
-    /// The invariant a configuration knob would break, asserted across every
-    /// committee size the network can have: the bar never asks for more members than
-    /// the committee has, and never for fewer than the quorum. `m <= f` is what buys
-    /// the first half, and it follows from the fault model rather than from a
-    /// setting — which is why neither `f` nor the margin is a parameter of
-    /// [`entry_bar`]. A configurable margin would be a liveness split: the strictest
-    /// node self-removes, and `> f` strict nodes halt the epoch.
+    /// The bar never exceeds the committee and never falls below the quorum, at every
+    /// committee size the network can have.
     #[test]
     fn the_entry_bar_is_satisfiable_at_every_committee_size() {
         for n in 1..=MAX_COMMITTEE_SIZE as usize {
@@ -1927,9 +1672,8 @@ mod tests {
         );
     }
 
-    /// The confirmation's domain separation. The same ed25519 key signs dealer logs
-    /// and player acks inside the ceremony, so a confirmation that verified under a
-    /// neighbouring namespace would be a signature reused across contexts.
+    /// A confirmation does not verify across namespaces: the same ed25519 key signs
+    /// dealer logs and player acks inside the ceremony.
     #[test]
     fn a_confirmation_does_not_verify_across_namespaces() {
         let mut rng = StdRng::seed_from_u64(51);
@@ -1994,10 +1738,8 @@ mod tests {
             }
         }
 
-        /// A `PinnedLogs` whose FIRST caller parks inside `derive` until released
-        /// and whose later callers answer at once — a `derive` round-trip that
-        /// outlives its own view, which is the only way one propose task can still
-        /// be running when a later round's task has already built.
+        /// A `PinnedLogs` whose first caller parks inside `derive` until released and whose
+        /// later callers answer at once.
         #[derive(Clone)]
         struct GatedPinned {
             answer: PinnedDerive,
@@ -2033,9 +1775,7 @@ mod tests {
             }
         }
 
-        /// Records the keys the automaton asked the dealer-log resolver for, so a
-        /// parked `verify` can be shown to have ALSO driven the repair that ends
-        /// the park.
+        /// Records the keys the automaton asked the resolver for.
         #[derive(Clone, Default)]
         struct RecordingResolver(Arc<Mutex<BTreeSet<DkgLogKey>>>);
 
@@ -2122,7 +1862,7 @@ mod tests {
         }
 
         /// The committee a test runs over: the seats, the private keys that let it
-        /// mint REAL share-confirmations for them, and the pool the automaton reads.
+        /// mint real share-confirmations for them, and the pool the automaton reads.
         /// Real signatures throughout — the entry bar is a signature check, so a
         /// fixture that faked them would test nothing.
         struct Committee {
@@ -2215,9 +1955,8 @@ mod tests {
         }
 
         /// A started body engine on a one-node simulated network, with the node in
-        /// `latest.primary` so a locally broadcast body is retained (and therefore
-        /// resolvable by `subscribe`, which is what lets the tests below isolate the
-        /// dealer-log half of the predicate).
+        /// `latest.primary` so a locally broadcast body is retained and resolvable by
+        /// `subscribe`.
         async fn body_mailbox(context: &deterministic::Context, me: PeerPubkey) -> BodyMailbox {
             let (network, oracle) = Network::new(
                 context.with_label("network"),
@@ -2282,13 +2021,10 @@ mod tests {
             (agree, bodies)
         }
 
-        /// How long a park is observed before it counts as a park. The decision
-        /// path has no timer of its own — it either resolves off an await that is
-        /// already satisfied or it is `pending()` forever — so this only has to
-        /// outlast the mailbox round-trips, not any protocol timeout.
+        /// How long a park is observed before it counts as a park. The decision path has
+        /// no timer of its own, so this only has to outlast the mailbox round-trips.
         const PARK_WINDOW: Duration = Duration::from_secs(5);
 
-        /// Resolve `rx`, or report that it stayed pending.
         async fn settle(
             context: &deterministic::Context,
             rx: oneshot::Receiver<bool>,
@@ -2314,7 +2050,6 @@ mod tests {
             ctx_at(committee, VIEW1)
         }
 
-        /// Resolve a `propose` request, or report that it stayed pending.
         async fn settle_digest(
             context: &deterministic::Context,
             rx: oneshot::Receiver<Digest>,
@@ -2325,11 +2060,9 @@ mod tests {
             }
         }
 
-        /// THE load-bearing behaviour of this component. A pinned dealer log whose
-        /// body has not reached this node yet is a delivery race, not a bad
-        /// proposal: `verify` must leave the request pending — and drive the fetch
-        /// that ends the race — instead of resolving `false`, which the voter reads
-        /// as `InvalidProposal` and turns into an immediate nullify.
+        /// A pinned dealer log whose body has not reached this node yet is a delivery
+        /// race, not a bad proposal: `verify` must leave the request pending — and drive
+        /// the fetch that ends the race — instead of resolving `false`.
         #[test]
         fn verify_parks_on_a_missing_dealer_log_body() {
             let runner = deterministic::Runner::timed(Duration::from_secs(600));
@@ -2359,7 +2092,7 @@ mod tests {
                     "verify resolved on a missing body instead of parking"
                 );
 
-                // Each seat is asked for by the PROPOSAL'S OWN hash for it — the
+                // Each seat is asked for by the proposal's own hash for it — the
                 // body under verification, not "a log of that dealer".
                 let asked = resolver.0.lock().unwrap().clone();
                 let logs = quorum_logs();
@@ -2509,7 +2242,7 @@ mod tests {
                 "a confirmation the named seat did not sign must not count"
             );
 
-            // A confirmation of a NARROWER set says nothing about this one: its
+            // A confirmation of a narrower set says nothing about this one: its
             // signer cannot finalize over the seat it never recorded.
             let mut narrow = good.clone();
             narrow.confirms[0] = ShareConfirm::sign(
@@ -2534,13 +2267,9 @@ mod tests {
             );
         }
 
-        /// THE replay the signed epoch exists to stop. The DKG envelope's
-        /// `ceremony_epoch` is unsigned framing and does not travel with a
-        /// confirmation once it is lifted into a proposal payload, so without the
-        /// epoch inside the signed bytes an honest confirmation for `E` counts
-        /// towards a proposal for `E'` whose pinned set it happens to cover — and the
-        /// entry bar clears before that many members have confirmed anything for
-        /// `E'`.
+        /// The DKG envelope's `ceremony_epoch` does not travel with a confirmation once it
+        /// is lifted into a proposal payload, so without the epoch inside the signed bytes
+        /// a confirmation for `E` clears the bar on a proposal for `E'`.
         #[test]
         fn a_confirmation_is_worthless_in_another_epoch() {
             let seats = Committee::new(N, 27);
@@ -2557,8 +2286,6 @@ mod tests {
                 );
             }
 
-            // The same thing seen from the proposal: lifting the bytes verbatim into
-            // a proposal for the next epoch does not make them count there.
             let lifted = DkgProposal {
                 target_epoch: TARGET + 1,
                 logs: quorum_logs(),
@@ -2571,10 +2298,8 @@ mod tests {
             );
         }
 
-        /// The other half of the same binding. The signature commits to a DIGEST of
-        /// the confirmed set, so re-attaching it to an inflated `recorded` — the
-        /// cheapest way to make a narrow confirmation "cover" a wide proposal — does
-        /// not verify.
+        /// The signature commits to a digest of the confirmed set, so re-attaching it to an
+        /// inflated `recorded` does not verify.
         #[test]
         fn a_signature_does_not_survive_an_inflated_recorded_set() {
             let seats = Committee::new(N, 29);
@@ -2649,9 +2374,8 @@ mod tests {
             });
         }
 
-        /// Below the bar the plane refuses, names WHICH of the two cases it is, and
-        /// says it once per epoch per reason — a plane whose whole symptom is that
-        /// views keep passing would otherwise make the log its own denial of service.
+        /// Below the bar the plane refuses, names which of the two cases it is, and says it
+        /// once per epoch per reason.
         #[test]
         fn an_unmet_bar_warns_once_per_reason_and_never_aborts() {
             let runner = deterministic::Runner::timed(Duration::from_secs(600));
@@ -2753,20 +2477,15 @@ mod tests {
             });
         }
 
-        /// A propose task that finishes after its own view is gone must not
-        /// replace the body the current view's leader armed.
+        /// A propose task that finishes after its own view is gone must not replace the
+        /// body the current view's leader armed.
         ///
-        /// `build_proposal` waits inside the leader's window, so a task asked at
-        /// view 1 can still be inside `derive` when view 2 has already proposed
-        /// and armed the slot. On an unkeyed slot that late write lands on top of
-        /// view 2's body, `Relay::broadcast` then finds a digest consensus never
-        /// asked for and refuses to send it, and view 2's peers park in `verify`
-        /// on a body that never left — a whole certification timeout on the plane
-        /// whose entire point is boundary latency.
+        /// `build_proposal` waits inside the leader's window, so a task asked at view 1 can
+        /// still be inside `derive` when view 2 has armed the slot; on an unkeyed slot the
+        /// late write would land on view 2's body and its peers would park in `verify` on a
+        /// body that never left.
         ///
-        /// View 1's receiver is held to the end on purpose. Live, the voter drops
-        /// it; holding it here fixes the order of the two writes instead of
-        /// leaving it to a race the test would have to win.
+        /// View 1's receiver is held to the end so the order of the two writes is fixed.
         #[test]
         fn a_late_propose_task_cannot_replace_a_newer_rounds_body() {
             let runner = deterministic::Runner::timed(Duration::from_secs(600));
@@ -2840,15 +2559,10 @@ mod tests {
             });
         }
 
-        /// A leader that could not build when it was asked must build when the
-        /// missing input lands, INSIDE its own view.
-        ///
-        /// This is the shape the first live run measured (2026-08-19, `case
-        /// growth`): the instance is announced on the ceremony's seal edge, so at
-        /// the instant view 1's leader is asked, the dealer logs and the
-        /// confirmations minted from them are still in flight. Answering once and
-        /// parking cost a full `LEADER_TIMEOUT` — 30.07 s and 30.09 s, `view = 2`
-        /// both times — for inputs that land in milliseconds.
+        /// A leader that could not build when it was asked must build when the missing
+        /// input lands, inside its own view. The instance is announced on the ceremony's
+        /// seal edge, so at the instant view 1's leader is asked the dealer logs and the
+        /// confirmations minted from them may still be in flight.
         ///
         /// Here the confirmations are the late half.
         #[test]
@@ -2932,13 +2646,10 @@ mod tests {
             });
         }
 
-        /// Rider (iv) of the beacon actor's delivery-side mint edge, asserted on the
-        /// leader that depends on it. [`ShareConfirm::covers`] is a STRICT superset
-        /// test, so peer confirmations minted at a narrower width stop covering the
-        /// moment the leader's own set GROWS: growth shrinks the covering count, here
-        /// all the way to zero, and the leader refuses until peers re-mint AT the new
-        /// width. That is why the actor mints on the path every member runs rather
-        /// than only on a leader's — a leader cannot raise its own bar.
+        /// [`ShareConfirm::covers`] is a strict superset test, so peer confirmations minted
+        /// at a narrower width stop covering the moment the leader's own set grows. Growth
+        /// shrinks the covering count, and the leader refuses until peers re-mint at the
+        /// new width.
         #[test]
         fn a_widened_local_set_refuses_until_peers_reconfirm_at_the_new_width() {
             let runner = deterministic::Runner::timed(Duration::from_secs(600));
@@ -2949,7 +2660,7 @@ mod tests {
                 let held: Vec<(u8, B256)> = quorum_logs();
                 let short: Vec<(u8, B256)> = held.iter().copied().take(3).collect();
                 let recorded = index_holding(&short);
-                // Peers confirm the NARROW set — the width they held when they minted.
+                // Peers confirm the narrow set — the width they held when they minted.
                 seats.seed_pool(&short, seats.bar());
                 let (mut agree, _bodies) = agree_over(
                     &context,
@@ -2999,15 +2710,10 @@ mod tests {
             });
         }
 
-        /// Journal replay re-fires every reported activity, so the certificate
-        /// leaves at most once.
-        ///
-        /// And it leaves WITHOUT the body — which is the whole point. On replay
-        /// after a restart the in-memory body buffer is empty; a reporter that
-        /// resolved the body itself could only peek that buffer (its `report` is
-        /// awaited inline by the replay loop), find nothing, and deliver nothing —
-        /// leaving the supervisor waiting on a verdict that never comes, the
-        /// instance never torn down and its partition never reclaimed.
+        /// Journal replay re-fires every reported activity, so the certificate leaves at
+        /// most once, and without the body. On replay after a restart the in-memory body
+        /// buffer is empty, so a reporter that resolved the body itself would deliver
+        /// nothing and leave the supervisor waiting on a verdict that never comes.
         #[test]
         fn reporter_delivers_the_certificate_once_and_without_the_body() {
             let runner = deterministic::Runner::timed(Duration::from_secs(600));
@@ -3065,7 +2771,6 @@ mod tests {
             );
         }
 
-        /// Anything that is not a finalization is not the agreement's output.
         #[test]
         fn reporter_ignores_non_finalization_activity() {
             let runner = deterministic::Runner::timed(Duration::from_secs(600));
@@ -3101,12 +2806,9 @@ mod tests {
             logs
         }
 
-        /// The structural bar against two agreed values. Once a value is certified,
-        /// the parent simplex hands every later view names it, and a proposal that
-        /// names anything else is permanently unacceptable — `simplex` forbids
-        /// conflicting finalizations only WITHIN a view, so nothing else stops a
-        /// quorum that missed a body at view `v` from certifying a different set at
-        /// `v+1` and leaving the epoch with two keys.
+        /// Once a value is certified, the parent simplex hands every later view names it,
+        /// and a proposal that names anything else is permanently unacceptable: `simplex`
+        /// forbids conflicting finalizations only within a view.
         #[test]
         fn verify_refuses_a_value_that_replaces_the_certified_one() {
             let runner = deterministic::Runner::timed(Duration::from_secs(600));
@@ -3163,7 +2865,7 @@ mod tests {
             runner.start(|context| async move {
                 let seats = Committee::new(N, 23);
                 let committee = seats.members.clone();
-                // The set this node would BUILD is a different one, so a re-proposal
+                // The set this node would build is a different one, so a re-proposal
                 // cannot be confused with a fresh build.
                 let (mut agree, bodies) = agree_over(
                     &context,

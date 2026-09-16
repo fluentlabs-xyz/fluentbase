@@ -1,14 +1,10 @@
-//! Bootstrappers loader: parse operator-supplied JSON list of
+//! Bootstrappers loader: parse the operator-supplied JSON list of
 //! `(Ed25519 peer pubkey, host:port)` pairs for cold-start peer discovery.
 //!
-//! No in-tree per-chain default lists — operator MUST provide a JSON file
-//! via `--dpos.bootstrappers` (genesis bootstrap event = empty `[]`
-//! JSON file). This avoids:
-//! - Silent prod deployment with empty defaults (no defense before).
-//! - Chain-ID duplication between `bootstrappers.rs` and `chainspec.rs`.
-//! - In-tree placeholder lists that drift from foundation's deployed bootnodes.
-//!
-//! Format normalization contract: see [`load_from_json_path`].
+//! There are no in-tree per-chain defaults: an operator must pass a JSON file
+//! via `--dpos.bootstrappers` (a genesis bootstrap passes an empty `[]`), which
+//! keeps chain IDs out of two places and placeholder lists from drifting away
+//! from the deployed bootnodes.
 
 use std::time::Duration;
 
@@ -24,14 +20,12 @@ use crate::ingress::parse_ingress;
 /// TXT seed discovery; anything else is a JSON file path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BootstrapperSpec<'a> {
-    /// Filesystem path to the bootstrappers JSON list (existing behavior).
+    /// Filesystem path to the bootstrappers JSON list.
     JsonPath(&'a str),
     /// DNS domain whose TXT records each carry one `pubkey@host:port` seed.
     Dns(&'a str),
 }
 
-/// Classify a `--dpos.bootstrappers` value. `dns:<domain>` → [`BootstrapperSpec::Dns`];
-/// any other string → [`BootstrapperSpec::JsonPath`] (a filesystem path).
 pub fn classify_spec(spec: &str) -> BootstrapperSpec<'_> {
     match spec.strip_prefix("dns:") {
         Some(domain) => BootstrapperSpec::Dns(domain),
@@ -42,32 +36,25 @@ pub fn classify_spec(spec: &str) -> BootstrapperSpec<'_> {
 /// Backoff schedule for the DNS TXT retry loop.
 #[derive(Copy, Clone, Debug)]
 struct RetrySchedule {
-    /// First inter-attempt delay.
     initial: Duration,
-    /// Cap the (doubling) delay never exceeds.
     max: Duration,
-    /// Total window after which the loop STOPS retrying and proceeds with
+    /// Total window after which the loop stops retrying and proceeds with
     /// whatever it has (possibly zero).
     window: Duration,
 }
 
-/// Production DNS TXT retry: 2 s initial, doubling to a 30 s cap, giving up after
-/// ~2 min (covers a seed DNS service starting a little after the validator).
+/// Production DNS TXT retry: gives up after ~2 min, covering a seed DNS service
+/// that starts a little after the validator.
 const DNS_RETRY: RetrySchedule = RetrySchedule {
     initial: Duration::from_secs(2),
     max: Duration::from_secs(30),
     window: Duration::from_secs(120),
 };
 
-/// Parse one TXT record `"pubkey_hex@host:port"` into a bootstrapper.
-///
-/// - `pubkey_hex`: `0x`-optional lowercase hex of a 32-byte Ed25519 peer pubkey,
-///   subgroup-checked at decode (same as the JSON-path `peer_pubkey`).
-/// - `host:port`: parsed by [`parse_ingress`] — an IP literal or (under
-///   `ALLOW_DNS`) a DNS hostname.
-///
-/// Errors name the offending record. Split on the FIRST `@` (a pubkey hex never
-/// contains `@`, so this is unambiguous).
+/// Parse one TXT record `"pubkey_hex@host:port"` into a bootstrapper: `pubkey_hex`
+/// is `0x`-optional hex of a 32-byte Ed25519 peer pubkey, subgroup-checked at
+/// decode; the address is parsed by [`parse_ingress`] (an IP literal, or a DNS
+/// hostname under `ALLOW_DNS`).
 pub fn parse_txt_record(record: &str) -> eyre::Result<Bootstrapper<PeerPubkey>> {
     let record = record.trim();
     let (pubkey_hex, addr) = record.split_once('@').ok_or_else(|| {
@@ -83,41 +70,30 @@ pub fn parse_txt_record(record: &str) -> eyre::Result<Bootstrapper<PeerPubkey>> 
     Ok((pk, ingress))
 }
 
-/// Load bootstrappers from the TXT records of a DNS `domain`.
+/// Load bootstrappers from the TXT records of a DNS `domain`, one
+/// `pubkey@host:port` seed per record ([`parse_txt_record`]); malformed records
+/// are warned and skipped. A lookup error or zero valid records is retried with
+/// exponential backoff ([`DNS_RETRY`]).
 ///
-/// Each TXT record is one `pubkey@host:port` seed ([`parse_txt_record`]). A
-/// malformed record is warned-and-skipped. A lookup error OR zero valid records
-/// is retried with exponential backoff ([`DNS_RETRY`]); each attempt logs at warn.
-///
-/// **Non-fatal on failure.** If the window elapses with no valid records, this
-/// logs one prominent warn and returns whatever it obtained — possibly an EMPTY
-/// list. A seed node itself has no one to dial and must still come up when its
-/// DNS zone is down: inbound connections + discovery gossip work with an empty
-/// bootstrapper list. Only a failure to READ the system resolver config
-/// (`/etc/resolv.conf`) is a hard error (genuine environment misconfig).
-///
-/// Uses the system resolver config; must be called on a tokio runtime. Note: a
-/// listed seed must be a committee-tracking validator (commonware only serves
-/// peer Info for tracked peers), not an arbitrary host.
+/// Non-fatal on failure: once the window elapses this returns whatever it has,
+/// possibly empty, because a seed node has no one to dial and must still come up
+/// while its DNS zone is down (inbound connections and discovery gossip work with
+/// an empty list). Only a failure to read the system resolver config
+/// (`/etc/resolv.conf`) is a hard error. Uses the system resolver config and must
+/// be called on a tokio runtime; each listed seed must be a committee-tracking
+/// validator, since commonware serves peer Info only for tracked peers.
 pub async fn load_from_dns(domain: &str) -> eyre::Result<Vec<Bootstrapper<PeerPubkey>>> {
     let (config, mut opts) = hickory_resolver::system_conf::read_system_conf().map_err(|e| {
         eyre::eyre!("failed reading system DNS config for bootstrappers domain {domain:?}: {e}")
     })?;
-    // Disable the resolver's positive+negative cache for this one-shot retry loop.
-    // With caching on, an authoritative NXDOMAIN (a wrong-record-name misconfig)
-    // is cached for the zone's negative TTL, so every subsequent retry inside the
-    // ~2 min window is a cache hit — degrading the retry to a single real query.
-    // cache_size = 0 forces each attempt to re-query, so a late-starting seed
-    // (refused/SERVFAIL/timeout — never cached) is genuinely re-tried.
+    // cache_size = 0: with caching on, an authoritative NXDOMAIN (a wrong record
+    // name) is held for the zone's negative TTL, so every retry inside the ~2 min
+    // window would be a cache hit instead of a real query.
     opts.cache_size = 0;
     let resolver = TokioAsyncResolver::tokio(config, opts);
     Ok(drive_txt_retry(domain, DNS_RETRY, || resolve_txt(&resolver, domain)).await)
 }
 
-/// Drive the retry loop over an injectable `lookup` (real resolver in prod, a
-/// stub in tests). Returns the first non-empty result, or — once `schedule.window`
-/// elapses — whatever the last attempt yielded (possibly empty). Never errors:
-/// an empty bootstrapper list is a valid inbound-only startup state.
 async fn drive_txt_retry<F, Fut>(
     domain: &str,
     schedule: RetrySchedule,
@@ -166,8 +142,6 @@ where
     }
 }
 
-/// One TXT lookup + parse pass. Malformed records are warned-and-skipped; the
-/// returned vec holds only the well-formed seeds.
 async fn resolve_txt(
     resolver: &TokioAsyncResolver,
     domain: &str,
@@ -195,19 +169,13 @@ async fn resolve_txt(
     Ok(out)
 }
 
-/// JSON schema for [`load_from_json_path`] (de-by-serde).
 #[derive(serde::Deserialize)]
 struct BootstrapperJson {
-    /// Hex-encoded Ed25519 peer pubkey (32 bytes); accepts `0x`-prefixed or bare.
     peer_pubkey: String,
-    /// Peer ingress address as `"host:port"` — an IP literal (e.g.
-    /// `"10.0.0.1:9000"`, `"[::1]:9000"`) or, when the network's `ALLOW_DNS`
-    /// policy permits, a DNS hostname (e.g. `"validator-3:9000"`). Parsed by
-    /// [`parse_ingress`].
     socket: String,
 }
 
-/// Load bootstrappers from a JSON file. Format:
+/// Load bootstrappers from a JSON file:
 ///
 /// ```json
 /// [
@@ -218,20 +186,14 @@ struct BootstrapperJson {
 ///
 /// Each `peer_pubkey` is subgroup-checked at decode (`PeerPubkey::decode`).
 ///
-/// Operator MUST provide a file via `--dpos.bootstrappers`; genesis
-/// bootstrap event = empty `[]` JSON file (explicit intent for the first
-/// bootnode in a new network).
-///
-/// **Format normalization contract** (pinned to avoid platform/version drift):
-/// - `peer_pubkey`: lowercase hex of 32 raw bytes; `0x` prefix is **optional**
-///   (accepted via `commonware_utils::from_hex_formatted`). Trailing whitespace
-///   is trimmed.
-/// - `socket`: a `"host:port"` string. An IP literal parses to
-///   `Ingress::Socket`; IPv6 addresses **require brackets** (e.g.
-///   `"[::1]:9000"`; bare `"::1:9000"` rejects). A non-IP host is treated as a
-///   DNS hostname (RFC-1035/1123) yielding `Ingress::Dns` — only *dialed* when
-///   the network-wide `ALLOW_DNS` policy is `true` (see `constants::ALLOW_DNS`).
-///   Existing IP-form files parse identically to before this change.
+/// Format contract (pinned against platform/version drift):
+/// - `peer_pubkey`: lowercase hex of 32 raw bytes; `0x` is optional and
+///   surrounding whitespace is trimmed.
+/// - `socket`: `"host:port"`. An IP literal parses to `Ingress::Socket`, and IPv6
+///   **requires brackets** (`"[::1]:9000"`; a bare `"::1:9000"` rejects). A non-IP
+///   host is a DNS hostname (RFC-1035/1123) yielding `Ingress::Dns`, dialed only
+///   while the network-wide `ALLOW_DNS` policy is `true` (see
+///   `constants::ALLOW_DNS`).
 pub fn load_from_json_path<P: AsRef<std::path::Path>>(
     path: P,
 ) -> eyre::Result<Vec<Bootstrapper<PeerPubkey>>> {
@@ -431,7 +393,7 @@ mod tests {
 
     #[tokio::test]
     async fn drive_txt_retry_empty_after_window_returns_empty_not_err() {
-        // Window ZERO => exactly one attempt, then proceed with what we have.
+        // Window zero means exactly one attempt, then proceed with what we have.
         let schedule = RetrySchedule {
             initial: Duration::from_millis(0),
             max: Duration::from_millis(0),
@@ -487,7 +449,6 @@ mod tests {
             classify_spec("/runtime/peers.json"),
             BootstrapperSpec::JsonPath("/runtime/peers.json")
         );
-        // A path that merely contains "dns" but lacks the prefix stays a path.
         assert_eq!(
             classify_spec("/etc/dns/peers.json"),
             BootstrapperSpec::JsonPath("/etc/dns/peers.json")

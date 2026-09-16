@@ -1,89 +1,39 @@
-//! Plane-native [`CertUpstream`] over `commonware_resolver::p2p` (Gap A).
+//! Plane-native [`CertUpstream`] over `commonware_resolver::p2p`.
 //!
-//! A plain `--dpos` validator with no WS `--dpos.follower-upstream` still needs the
-//! ONE capability the consensus plane lacks natively: FRONTIER DISCOVERY — the
+//! A `--dpos` validator with no WS upstream still needs frontier discovery: the
 //! frozen-tip ladder probe consumes [`CertUpstream::get_latest`] (and
-//! `get_finalization` for the rung itself) to learn there is a
-//! `(finalization, OrderBlock)` above its own frozen tip, and commonware's
-//! marshal `Request` enum has no over-the-wire `Latest` variant (`BlockID::Latest`
-//! resolves via a LOCAL archive read). This module adds that transport as a tiny
-//! Fluent-side resolver channel (`FRONTIER_CHANNEL`) built on the same
-//! `commonware_resolver::p2p::Engine` the beacon DKG-log resolver rides
-//! (`beacon/log_resolver.rs`), serving each peer THIS node's LOCAL marshal tip /
-//! archive — no execution, no marshal-serving change (`get_info`/`get_finalization`/
-//! `get_block` are public, local-only Mailbox reads).
+//! `get_finalization`) to learn there is a `(finalization, OrderBlock)` above its
+//! own tip, and commonware's marshal `Request` enum has no over-the-wire `Latest`
+//! variant. This module adds that transport as a Fluent-side resolver channel
+//! (`FRONTIER_CHANNEL`) built on the same `commonware_resolver::p2p::Engine` the
+//! beacon DKG-log resolver rides, serving each peer this node's local marshal
+//! tip/archive.
 //!
-//! [`PlaneUpstreamHandle`] implements [`CertUpstream`] verbatim, so it drops into the
-//! `U: CertUpstream` generic (`cold_start_jump` / `ReJump` / `DposLayerConfig`) with
-//! zero signature churn: a plane validator then uses the exact same
-//! `MarshalResolver::Hybrid { plane, upstream }` path a WS validator uses today, only
-//! the concrete `U` changes.
+//! [`PlaneUpstreamHandle`] implements [`CertUpstream`] verbatim, so it drops into
+//! the `U: CertUpstream` generic with no signature churn.
 //!
-//! Trust model: [`FrontierHandler::deliver`] is the SINGLE point of trust for
-//! everything this channel carries (§5.2). A frontier answer — to `Latest` or to
-//! `Finalized{h}` — passes five checks before anything downstream sees it: decode
-//! under a bounded cap, the requested height (and the pair's own
-//! payload↔digest bind), `epoch_of(height) == round.epoch` over the committee
-//! module's ONE geometry, `committee[round.epoch]` from that module, and the 2f+1
-//! BLS multisig under a VERIFY-ONLY scheme built from that record. Only then does
-//! the pair reach anything downstream.
+//! [`FrontierHandler::deliver`] is the single point of trust. An answer to `Latest`
+//! or `Finalized{h}` passes five checks before anything downstream sees it: decode
+//! under a bounded cap, the requested height and the payload/digest bind,
+//! `epoch_of(height) == round.epoch`, `committee[round.epoch]`, and the 2f+1 BLS
+//! multisig under a verify-only scheme built from that record.
 //!
-//! The multisig is checked under a scheme this file builds from the record it
-//! just read (`build_verifier(namespace, record.bls.bimap, epoch, None)`), NOT
-//! under [`Committee::scheme`]. The module's scheme carries the epoch's beacon
-//! SEED ORACLE, and `CombinedScheme::verify_certificate` runs that oracle after
-//! the multisig quorum: a node whose local `PK_epoch` came from a different mint
-//! answers `SeedCheck::Invalid` on an HONEST σ and the whole `verify` fails
-//! (`bls/src/combined_scheme.rs:428-444`). On this path that verdict would be a
-//! permanent ban of an honest peer, and the frontier has no beacon to resolve the
-//! key with first the way the cert inlet does (`cert_inlet.rs:620`). Without an
-//! oracle the same certificate is judged on exactly what §5.2 asks for — 2f+1
-//! under `committee[round.epoch]`, plus the epoch binding — and nothing on this
-//! path consumes σ.
+//! The scheme is built here with `oracle = None`, not taken from
+//! [`Committee::scheme`]: the module's scheme carries the epoch's seed oracle, so a
+//! node whose local `PK_epoch` came from a different mint would fail an honest
+//! certificate on the seed half and permanently ban an honest peer. Without an
+//! oracle the certificate is judged on the 2f+1 quorum and the epoch binding alone,
+//! which is what this path needs; nothing here consumes sigma.
 //!
-//! The RETURN VALUE is a second decision, and the split is the whole point.
-//! commonware reads `false` as "this peer lied": it `block!`s the peer and drops
-//! it into the fetcher's `excluded` set, which is never cleared for the life of
-//! the resolver engine (`resolver/p2p/engine.rs:436-437`, `fetcher.rs:516`,
-//! `:242`; `reconcile` does not touch it, `:500-505`). So `false` is returned ONLY
-//! on a signal of a LIE — undecodable bytes, a foreign height under
-//! `Finalized{h}`, a cert whose payload is not the served body's digest, a height
-//! whose epoch is not the certificate's round epoch, or a multisig that fails
-//! under a committee this node CAN read. Everything else — an epoch outside the
-//! read window, a committee this node cannot read yet, no frozen geometry yet —
-//! is "I cannot check this", and `deliver` returns `true` there: the fetch closes
-//! and the peer is not punished.
-//!
-//! **An answer this node cannot authenticate is DROPPED** (pass Б2, §5.2's letter)
-//! — on BOTH keys, with `dpos_frontier_dropped_total{reason}` counting it and the
-//! waiting caller answered `None` at once. Pass А passed such an answer on instead,
-//! and the two reasons it gave are both spent:
-//!
-//! * `Finalized{h}` — Д-72: withholding the answer was said to remove the only
-//!   event that would ask for the height again, because
-//!   `UpstreamResolver::spawn_finalized` is re-armed by the marshal's
-//!   `try_repair_gaps`, which runs per STORED finalization. That was measured with
-//!   no ladder in the system. Pass Б1 gave every node one: the executor's
-//!   frozen-tip probe names `Finalized{last(T+1)}` on EVERY frozen tick and hands
-//!   it to the marshal (`executor::probe_frontier`), so a node that stores nothing
-//!   still asks again, once a second, forever.
-//! * `Latest` — Д-78: its height was the only input of the deep re-jump trigger.
-//!   Pass Б1 took that consumer away (the trigger reads the marshal tip alone and
-//!   the target is a pair out of the local archive,
-//!   `executor::maybe_re_jump`), and pass Б2 took the last one that used a `Latest`
-//!   answer as a jump TARGET (the pre-engine cold-start jump). What is left is one
-//!   `hint_finalization(frontier)` and the probe's "was I served" bit, neither of
-//!   which is worth admitting an unauthenticatable certificate for.
-//!
-//! Nothing is ORPHANED by the drop: `deliver` removes the key's whole waiter
-//! entry, so `fetch_one` resolves with `None` at once. It does NOT cancel: with the
-//! entry already gone, `fetch_one`'s `None` branch finds no waiters, leaves `empty`
-//! false and never reaches `mailbox.cancel` — and nothing needs it to, because the
-//! `true` returned here already COMPLETES the fetch on the commonware side
-//! (`.claude/COMMONWARE_INTERNALS.md:389`). The next probe tick asks again.
-//!
-//! A peer with no data never reaches `deliver` at all (it answers
-//! `Payload::Error` ⇒ `add_retry`, no ban).
+//! `deliver` returning `false` tells commonware this peer lied, which excludes it
+//! from the channel for the life of the resolver engine. So `false` is returned
+//! only for a lie: undecodable bytes, a foreign height, a payload/digest mismatch,
+//! an epoch mismatch, or a failed multisig under a readable committee. An answer
+//! this node cannot authenticate — an epoch outside its read window, an unreadable
+//! committee, no frozen geometry — returns `true` (the peer is not punished) and is
+//! dropped, with `dpos_frontier_dropped_total{reason}` counting it and the waiter
+//! answered `None`. Dropping removes the key's waiter entry, so `fetch_one` resolves
+//! at once; the executor's frozen-tip probe asks again on its next tick.
 
 use crate::{
     cert_follow::{CertUpstream, UpstreamFinalized},
@@ -116,18 +66,14 @@ use tokio::sync::oneshot;
 use tracing::warn;
 
 /// `dpos_frontier_dropped_total{reason}` — a frontier answer that passed every
-/// check this node could MAKE (decode, the requested height, the payload↔digest
-/// bind, the height↔epoch bind) but whose committee it cannot read, so the 2f+1
-/// multisig cannot be checked. It is THROWN AWAY (§5.2): not a fault — the peer
-/// keeps the channel, because this is a statement about this node's own lag — and
-/// not an admission either. A rate that does not fall as a node catches up is a
-/// node that never gets inside its own read window.
+/// check this node could make (decode, requested height, payload/digest bind,
+/// height/epoch bind) but whose committee it cannot read. Dropped, not a fault: the
+/// peer keeps the channel, because this is a statement about this node's lag.
 const FRONTIER_DROPPED: &str = "dpos_frontier_dropped_total";
 
-/// `dpos_frontier_rejected_total{reason}` — a frontier answer that carried a
-/// SIGNAL OF A LIE (`deliver` ⇒ `false`), so commonware excluded its sender from
-/// this channel's fetches for the life of the resolver engine. Every increment is
-/// a peer lost on purpose.
+/// `dpos_frontier_rejected_total{reason}` — a frontier answer that carried a signal
+/// of a lie (`deliver` returned `false`), so commonware excluded its sender from this
+/// channel's fetches for the life of the resolver engine.
 const FRONTIER_REJECTED: &str = "dpos_frontier_rejected_total";
 
 // `reason` labels. One constant per arm so the dashboard and the tests name the
@@ -160,20 +106,16 @@ type VerifySchemeSlot = Arc<Mutex<Option<(u64, Arc<BlsScheme>)>>>;
 type Waiters = Arc<Mutex<HashMap<FrontierKey, Vec<oneshot::Sender<UpstreamFinalized>>>>>;
 
 /// How long a single `get_latest`/`get_finalization` awaits a plane delivery before
-/// returning `None`. Bounds the ladder probe's single-shot `get_latest` so an
-/// isolated / not-yet-tracked node returns `None` (→ the probe is a no-op this tick)
-/// rather than hanging; the resolver's own retry/multi-peer fallback delivers well inside
-/// this window when a tracked peer holds the data. Measured on the runtime
-/// [`Clock`] (the tokio timer in production, virtual time under the
+/// returning `None`. Bounds the ladder probe so an isolated node is a no-op rather
+/// than hanging. Measured on the runtime [`Clock`] (virtual time under the
 /// deterministic runner), never on a tokio timer directly.
 const FRONTIER_FETCH_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Resolver request key: two subjects, fixed-layout `Span`.
 ///
-/// `Latest` answers are time-varying — never cached; `Finalized { height }` is the
-/// by-height arm the `MarshalResolver::Hybrid` upstream path pulls. `Ord`/`Hash`
-/// derive from the fields (`Latest` orders before any `Finalized`); the codec is
-/// fixed-layout (`Cfg = ()`) so it round-trips byte-identically network-wide.
+/// `Latest` answers are time-varying and never cached; `Finalized { height }` is the
+/// by-height arm the hybrid upstream path pulls. The codec is fixed-layout
+/// (`Cfg = ()`) so it round-trips byte-identically network-wide.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FrontierKey {
     /// The peer's highest local finalized tip `(finalization, block)`.
@@ -237,17 +179,14 @@ impl Read for FrontierKey {
 
 impl Span for FrontierKey {}
 
-/// Everything [`FrontierHandler`] needs of a marshal, and nothing else: the two
-/// LOCAL archive reads the serve side answers with, and the two driving calls a
-/// VERIFIED delivery makes (inherited from [`MarshalSink`], the seam the cert
-/// inlet already owns).
+/// Everything [`FrontierHandler`] needs of a marshal: the two local archive reads
+/// the serve side answers with, plus the two driving calls a verified delivery makes
+/// (inherited from [`MarshalSink`]).
 ///
-/// A trait rather than the concrete [`MarshalMailbox`] for one reason: the
-/// mailbox's constructor is `pub(crate)` upstream, so a unit test cannot build
-/// one — and "a verified delivery drives `verified` then `report`, an unverified
-/// one drives NOTHING" is exactly the property this file has to pin.
+/// A trait rather than the concrete [`MarshalMailbox`] because the mailbox
+/// constructor is `pub(crate)` upstream, so a unit test cannot build one.
 pub trait FrontierMarshal: MarshalSink + Clone + Sync + 'static {
-    /// The `(finalization, block)` pair of this node's highest LOCAL finalized
+    /// The `(finalization, block)` pair of this node's highest local finalized
     /// tip, or `None` when the archive holds none.
     fn latest_pair(&self) -> impl Future<Output = Option<(Cert, OrderBlock)>> + Send;
 
@@ -260,21 +199,15 @@ impl FrontierMarshal for MarshalMailbox {
     async fn latest_pair(&self) -> Option<(Cert, OrderBlock)> {
         let (h, _digest) = self.get_info(Identifier::Latest).await?;
         let fin = self.get_finalization(h).await?;
-        // Re-read the block AT `h`, not `Identifier::Latest`: a block finalizing
+        // Re-read the block at `h`, not `Identifier::Latest`: a block finalizing
         // between the two awaits would pair `fin@h` with `block@h+1`, which the
-        // client's payload↔digest bind rejects as a lie — and the peer that
-        // served it would be excluded for a race it did not cause.
+        // client's payload/digest bind would reject as a lie.
         let block = self.get_block(h).await?;
         Some((fin, block))
     }
 
-    /// Both reads at the SAME explicit height, never `Identifier::Latest`: a block
-    /// finalizing between the two awaits would otherwise pair `fin@h` with
-    /// `block@h+1`, exactly as [`Self::latest_pair`] documents.
-    ///
-    /// THE one body for this concrete type. `executor::BlockFetcher::pair_at` —
-    /// the executor's erased seam, over the same `marshal::core::Mailbox` — calls
-    /// straight into this one rather than repeating it (review B1-15).
+    /// Both reads at the same explicit height, never `Identifier::Latest`, for the
+    /// same pairing reason as [`Self::latest_pair`].
     async fn pair_at(&self, height: Height) -> Option<(Cert, OrderBlock)> {
         let fin = self.get_finalization(height).await?;
         let block = self.get_block(height).await?;
@@ -282,9 +215,9 @@ impl FrontierMarshal for MarshalMailbox {
     }
 }
 
-/// Serve THIS node's local marshal tip/archive for `key` — no network, no execution.
-/// Encodes `(finalization, block)` exactly as the WS upstream / marshal resolver do
-/// (`cert_inlet.rs`), so `decode_frontier` on the client side round-trips it.
+/// Serve this node's local marshal tip/archive for `key` — no network, no execution.
+/// Encodes `(finalization, block)` as the WS upstream and marshal resolver do, so
+/// `decode_frontier` round-trips it.
 async fn serve<M: FrontierMarshal>(marshal: &M, key: FrontierKey) -> Option<Bytes> {
     let pair = match key {
         FrontierKey::Latest => marshal.latest_pair().await?,
@@ -293,12 +226,10 @@ async fn serve<M: FrontierMarshal>(marshal: &M, key: FrontierKey) -> Option<Byte
     Some(pair.encode())
 }
 
-/// Decode a delivered frontier value into an [`UpstreamFinalized`]. The certificate
-/// signer-bitmap is decoded with a BOUNDED cap (`MAX_COMMITTEE_SIZE`) — the value comes
-/// from an untrusted peer, and the unbounded decoder eagerly allocates from a tiny
-/// length prefix (audit R4-5, same guard as `CertifiedBlock::into_parts`). Exact
-/// participant validation still happens at cert-verify time against the per-epoch
-/// scheme.
+/// Decode a delivered frontier value. The signer bitmap is decoded with a bounded
+/// cap, because the value comes from an untrusted peer and the unbounded decoder
+/// allocates from a tiny length prefix. Exact participant validation still happens at
+/// cert-verify time.
 fn decode_frontier(value: &[u8]) -> Option<UpstreamFinalized> {
     let cap = fluentbase_p2p::constants::MAX_COMMITTEE_SIZE as usize;
     let (finalization, block) = <(Cert, OrderBlock)>::decode_cfg(value, &(cap, ())).ok()?;
@@ -308,34 +239,27 @@ fn decode_frontier(value: &[u8]) -> Option<UpstreamFinalized> {
     })
 }
 
-/// Bridges the resolver engine's `Producer` (serve local tip) + `Consumer` (the
-/// SINGLE point of trust for the frontier) to the shared [`Waiters`] map, the
-/// committee module and the late-bound marshal. Cloned into the engine for both
-/// roles, like the beacon's dealer-log resolver handler.
+/// Bridges the resolver engine's `Producer` (serve local tip) and `Consumer` (the
+/// single point of trust for the frontier) to the shared [`Waiters`] map, the
+/// committee module and the late-bound marshal.
 #[derive(Clone)]
 pub struct FrontierHandler<E, M = MarshalMailbox> {
     waiters: Waiters,
-    /// The node's own marshal, late-bound via the `marshal_slot` `OnceLock` (the
-    /// marshal is created by the later layer launch). Until filled, `produce` serves
-    /// "no data" and a verified delivery reaches nothing — which is safe, because
-    /// the only thing lost is a tip advance the next probe asks for again.
+    /// The node's own marshal, late-bound (the marshal is created by the later layer
+    /// launch). Until filled, `produce` serves "no data" and a verified delivery
+    /// reaches nothing, which is safe: the only thing lost is a tip advance the next
+    /// probe asks for again.
     marshal_slot: Arc<OnceLock<M>>,
-    /// The ONE committee module of this process: the geometry the height↔epoch
-    /// bind is taken over and the record the window admits. NOT a second copy of
-    /// either.
+    /// The process's one committee module: the geometry the height/epoch bind is taken
+    /// over and the record the window admits.
     committee: Arc<dyn Committee>,
-    /// The chain namespace every certificate on this chain is signed under —
-    /// `fluent_namespace(chain_id)`, the same value [`crate::committee::epoch_verifier`]
-    /// closes over. Held because this file builds its own VERIFY-ONLY scheme (see
-    /// the module docs) and the record does not carry the namespace.
+    /// The chain namespace every certificate is signed under, the same value
+    /// [`crate::committee::epoch_verifier`] closes over. Held because this file builds
+    /// its own verify-only scheme and the record does not carry it.
     namespace: Arc<Vec<u8>>,
-    /// One-slot memo of the verify-only scheme, keyed by the epoch it was built
-    /// for. A frontier answer is judged against the epoch it names, and
-    /// consecutive answers name the same epoch for a whole epoch's worth of
-    /// heights, so a single slot is the whole cache — and it cannot grow with the
-    /// chain the way a map keyed by epoch would. A miss costs one
-    /// `VoteScheme::verifier` (a `BiMap` clone), which is noise beside the 2f+1
-    /// pairing check that follows it.
+    /// One-slot memo of the verify-only scheme, keyed by epoch. Consecutive answers
+    /// name the same epoch for a whole epoch's worth of heights, so one slot is the
+    /// whole cache and cannot grow with the chain.
     verify_scheme: VerifySchemeSlot,
     /// The commonware context the certificate `verify()` draws its batch
     /// randomness from — the same `CryptoRngCore` seam the cert inlet holds.
@@ -347,9 +271,8 @@ where
     E: CryptoRngCore + Clone + Send + Sync + 'static,
     M: FrontierMarshal,
 {
-    /// One rejected answer: counted, WARNed once per occurrence, and `deliver`
-    /// answers `false` — which costs the sender this channel for the life of the
-    /// resolver engine. Loud on purpose: every increment is a peer lost.
+    /// One rejected answer: counted, warned, and `deliver` answers `false`, which
+    /// costs the sender this channel for the life of the resolver engine.
     fn reject(reason: &'static str, height: u64) -> bool {
         metrics::counter!(FRONTIER_REJECTED, "reason" => reason).increment(1);
         warn!(
@@ -361,13 +284,12 @@ where
         false
     }
 
-    /// The VERIFY-ONLY scheme for `epoch`, built from the record `deliver` just
-    /// read and memoized in the one-slot cache.
+    /// The verify-only scheme for `epoch`, built from the record `deliver` just read
+    /// and memoized.
     ///
-    /// `oracle = None` is the whole point (see the module docs): the frontier
-    /// judges "2f+1 under `committee[epoch]`, bound to `epoch`" and nothing else,
-    /// because it has no beacon with which to tell an honest σ it cannot check
-    /// from a forged one.
+    /// `oracle = None` is the point: the frontier judges "2f+1 under `committee[epoch]`,
+    /// bound to `epoch`" and nothing else, because it has no beacon with which to tell
+    /// an honest sigma it cannot check from a forged one.
     fn verifier_for(
         &self,
         epoch: u64,
@@ -399,22 +321,18 @@ where
     type Value = Bytes;
     type Failure = ();
 
-    /// The five steps of §5.2, in order, and nothing downstream of them runs
-    /// until all five pass. See the module docs for why the `bool` is a SECOND
-    /// decision rather than a restatement of the verdict.
+    /// The five steps, in order; nothing downstream runs until all five pass. See the
+    /// module docs for why the returned `bool` is a second decision.
     async fn deliver(&mut self, key: Self::Key, value: Self::Value) -> bool {
-        // (1) DECODE, under the bounded signer-bitmap cap.
         let Some(uf) = decode_frontier(value.as_ref()) else {
             return Self::reject(REASON_UNDECODABLE, 0);
         };
         let round = uf.finalization.proposal.round;
         let height = uf.block.height;
 
-        // (2) THE ANSWER IS THE ANSWER TO THE QUESTION. An honest marshal serves
-        // `Finalized{h}` from exactly `h` (`marshal/core/actor.rs:808-818`), so a
-        // foreign height is a substitution, not a race. The payload↔digest bind
-        // belongs to the same step: a real certificate paired with a swapped body
-        // is the same substitution one level down.
+        // The answer is the answer to the question. An honest marshal serves
+        // `Finalized{h}` from exactly `h`, so a foreign height is a substitution, not a
+        // race. The payload/digest bind is the same substitution one level down.
         if let FrontierKey::Finalized { height: asked } = key {
             if height != asked {
                 return Self::reject(REASON_WRONG_HEIGHT, height);
@@ -424,9 +342,9 @@ where
             return Self::reject(REASON_PAYLOAD_MISMATCH, height);
         }
 
-        // (3) HEIGHT ↔ EPOCH, over the module's ONE geometry. Before the freeze no
-        // height means anything, so there is nothing to judge — that is an
-        // UNAUTHENTICATED answer, not a lie.
+        // Height/epoch bind over the module's one geometry. Before the freeze no height
+        // means anything, so there is nothing to judge — an unauthenticated answer, not
+        // a lie.
         let epoch = round.epoch().get();
         let mut unauthenticated = None;
         match self.committee.epoch_of(height) {
@@ -437,26 +355,23 @@ where
             Some(_) => {}
         }
 
-        // (4) THE COMMITTEE, from the module. A failure here is never about the
-        // PEER — an epoch outside this node's read window, an anchor below the
-        // commit height, a read that faulted (the module already shouts) — so it
-        // can never produce a `false`. What it produces is a certificate this node
-        // CANNOT AUTHENTICATE, and step (5) decides what may be done with one.
+        // The committee, from the module. A failure here is never about the peer — an
+        // epoch outside the read window, an anchor below the commit height, a faulted
+        // read — so it can never produce a `false`; it produces an answer this node
+        // cannot authenticate, and the drop path below decides what to do with one.
         if unauthenticated.is_none() {
             unauthenticated = match self.committee.committee(epoch) {
                 Err(CommitteeError::OutOfWindow { .. }) => Some(REASON_OUT_OF_WINDOW),
                 Err(CommitteeError::NotReadable { .. }) => Some(REASON_NOT_READABLE),
                 Err(CommitteeError::Read(_)) => Some(REASON_READ_FAILED),
-                // The scheme is built HERE from the record, verify-only and
-                // WITHOUT the epoch's seed oracle — see the module docs. Taking
-                // `Committee::scheme` instead would make an honest certificate
-                // fail on this node's own stale `PK_epoch` and ban the peer that
-                // served it.
+                // Built here from the record, verify-only and without the epoch's seed
+                // oracle: taking `Committee::scheme` instead would make an honest
+                // certificate fail on this node's stale `PK_epoch` and ban the peer.
                 Ok(record) => {
                     let scheme = self.verifier_for(epoch, &record);
                     if !uf.finalization.verify(&mut self.ctx, &scheme, &Sequential) {
-                        // The committee IS readable, so this is a statement
-                        // about the CERTIFICATE and not about this node's lag.
+                        // The committee is readable, so this is a statement about the
+                        // certificate, not about this node's lag.
                         return Self::reject(REASON_BLS, height);
                     }
                     None
@@ -464,45 +379,30 @@ where
             };
         }
 
-        // (5) WHAT HAPPENS TO AN ANSWER THIS NODE CANNOT AUTHENTICATE: it is
-        // DROPPED, on BOTH arms (§5.2 "Правило единое", pass Б2). The certificate
-        // carries a 2f+1 claim nobody here can check, so nothing downstream gets to
-        // see it — that is the whole point of making `deliver` the single point of
-        // trust.
+        // An answer this node cannot authenticate is dropped: the certificate carries
+        // a 2f+1 claim nobody here can check, so nothing downstream gets to see it.
         //
-        // The peer is NOT punished for it (`true` below): an epoch outside this
-        // node's read window, an anchor below the commit height or a faulted read
-        // are statements about THIS node, and excluding the peer that answered
-        // honestly would cost the channel for the node's own lag.
+        // The peer is not punished (`true` below): an out-of-window epoch, an anchor
+        // below the commit height or a faulted read are statements about this node, and
+        // excluding an honest peer would cost the channel for this node's own lag.
         //
-        // The waiting caller is answered NOW rather than left to time out: removing
-        // the whole entry drops its sender, so `fetch_one` resolves `None`
-        // immediately. No `cancel` is issued and none is needed — `fetch_one`'s
-        // `None` branch sees the entry already gone (`waiters.get_mut` is `None` ⇒
-        // `empty = false`), and the `true` returned below already completes the
-        // fetch commonware-side. The retry driver is the executor's frozen-tip
-        // probe, which names the ladder step every tick (`executor::probe_frontier`)
-        // — not this answer.
+        // The waiter is answered now rather than left to time out: removing the entry
+        // drops its sender, so `fetch_one` resolves `None` immediately. No `cancel` is
+        // issued and none is needed — the `true` returned below already completes the
+        // fetch commonware-side. The retry driver is the executor's frozen-tip probe.
         if let Some(reason) = unauthenticated {
             metrics::counter!(FRONTIER_DROPPED, "reason" => reason).increment(1);
             drop(self.waiters.lock().unwrap().remove(&key));
             return true;
         }
-        // The answer is admitted. It is NOT written into the marshal from here:
-        // on every path that ends in the marshal, this value is handed on to the
-        // marshal's OWN resolver handler
-        // (`cert_inlet::UpstreamResolver::spawn_finalized` →
-        // `handler.deliver(MarshalRequest::Finalized{h})`), which decodes,
-        // BLS-verifies under the same committee module and stores it through
-        // `store_finalization` — the single writer §5.2 names. Reporting here as
-        // well would make this file a SECOND writer of the same finalization;
-        // measured on the stand, that moves every jump landing and fires
-        // `epoch_transition.rs`'s "two boundaries pending at once" debug assert.
+        // The admitted answer is not written into the marshal from here: on every path
+        // that ends in the marshal, this value is handed to the marshal's own resolver
+        // handler, which decodes, BLS-verifies under the same committee module and
+        // stores it through `store_finalization` — the single writer. Reporting here as
+        // well would make this file a second writer of the same finalization.
         let waiting = self.waiters.lock().unwrap().remove(&key);
-        // The awaiting `get_latest` / `get_finalization` calls. Only a
-        // five-step-verified answer can reach them — an unauthenticatable one was
-        // dropped above — so nothing downstream of this file ever consumes an
-        // unchecked frontier.
+        // Only a five-step-verified answer reaches the waiters; an unauthenticatable
+        // one was dropped above, so nothing downstream consumes an unchecked frontier.
         for tx in waiting.into_iter().flatten() {
             let _ = tx.send(uf.clone());
         }
@@ -510,8 +410,8 @@ where
     }
 
     async fn failed(&mut self, _: Self::Key, _: Self::Failure) {
-        // No-op: the awaiting call times out on its own and cleans its waiter; the
-        // marshal / jump re-requests on the next repair sweep / re-jump edge.
+        // No-op: the awaiting call times out on its own, and the marshal or jump
+        // re-requests on the next repair sweep or re-jump edge.
     }
 }
 
@@ -524,9 +424,9 @@ where
 
     async fn produce(&mut self, key: Self::Key) -> cw_oneshot::Receiver<Bytes> {
         let (response, receiver) = cw_oneshot::channel();
-        // Read the local marshal inline (rare, O(1), local mpsc round-trips). A missing
-        // slot (marshal not yet launched) or an archive miss drops `response` unsent →
-        // the resolver relays a "no data" response and the requester retries a peer.
+        // Read the local marshal inline. A missing slot (marshal not yet launched) or
+        // an archive miss drops `response` unsent, so the resolver relays "no data" and
+        // the requester retries a peer.
         if let Some(marshal) = self.marshal_slot.get() {
             if let Some(bytes) = serve(marshal, key).await {
                 let _ = response.send(bytes);
@@ -536,15 +436,12 @@ where
     }
 }
 
-/// Build the frontier bridge: the [`FrontierHandler`] (Producer + Consumer, passed into
-/// `commonware_resolver::p2p::Engine::new`) and the shared [`Waiters`] map that the
-/// resulting [`PlaneUpstreamHandle`] registers waiters on. `marshal_slot` is the SAME
-/// `OnceLock` the node fills after the layer launch (`node/dpos.rs`); `committee` is the
-/// process's ONE committee module, which is what makes `deliver` able to judge an answer
-/// at all; `chain_id` is what the certificate namespace is derived from — the same
-/// `fluent_namespace(chain_id)` [`crate::committee::epoch_verifier`] uses, so the scheme
-/// `deliver` builds and the scheme the rest of the process holds differ in exactly one
-/// thing, the absent seed oracle.
+/// Build the frontier bridge: the [`FrontierHandler`] (Producer + Consumer) and the
+/// shared [`Waiters`] map the resulting [`PlaneUpstreamHandle`] registers waiters on.
+/// `marshal_slot` is the same `OnceLock` the node fills after the layer launch;
+/// `committee` is the process's one committee module; `chain_id` derives the
+/// certificate namespace, so the scheme built here differs from the process's own in
+/// exactly the absent seed oracle.
 pub fn new_bridge<E, M>(
     marshal_slot: Arc<OnceLock<M>>,
     committee: Arc<dyn Committee>,
@@ -569,10 +466,9 @@ where
     )
 }
 
-/// A plane-native [`CertUpstream`] over the frontier resolver. Holds the runtime
-/// clock (to bound a fetch), the client resolver mailbox (to issue fetches) + the
-/// shared [`Waiters`] map (to await the resolver's delivery). Cloneable (mpsc +
-/// `Arc`), `Send + Sync + 'static`.
+/// A plane-native [`CertUpstream`] over the frontier resolver. Holds the runtime clock
+/// to bound a fetch, the client resolver mailbox to issue fetches, and the shared
+/// [`Waiters`] map to await the resolver's delivery.
 #[derive(Clone)]
 pub struct PlaneUpstreamHandle<E: Clock> {
     context: E,
@@ -590,23 +486,14 @@ impl<E: Clock> PlaneUpstreamHandle<E> {
     }
 
     /// Register a waiter, issue the fetch, and await the delivery with a bounded
-    /// timeout. UNTARGETED: the resolver picks + rotates peers from the tracked
-    /// set on its own, and with an empty tracked set the fetch is a no-op and this
-    /// returns `None` after the timeout.
+    /// timeout. Untargeted: the resolver picks and rotates peers itself, and with an
+    /// empty tracked set the fetch is a no-op and this returns `None`.
     ///
-    /// The ladder step's `fetch_targeted` is NOT issued here, and trying to put it
-    /// here is what this comment exists to stop anyone repeating: a targeted fetch
-    /// has no fallback, and re-deriving targets from the HEIGHT inside this call
-    /// retargets whichever ordinary by-height repair pull happens to land on
-    /// `last(T+1)` — measured on the stand, that starves the contiguous catch-up
-    /// of a node that has just landed a jump and it never finishes.
-    ///
-    /// Carrying the step's OWN target list down to here — the A2-05 / B1-10 route
-    /// — was built and MEASURED in the third pass, and rolled back: see
-    /// `cert_inlet::UpstreamResolver::fetch_targeted` for the number. The step is
-    /// addressed where it is ISSUED (`executor::probe_frontier` →
-    /// `marshal.hint_finalization(height, committee[T+1])`); how far those targets
-    /// travel on each resolver shape is the journal's §7.
+    /// The ladder step's `fetch_targeted` is deliberately not issued here: a targeted
+    /// fetch has no fallback, and re-deriving targets from the height inside this call
+    /// retargets whichever by-height repair pull lands on `last(T+1)`, which starves
+    /// the contiguous catch-up of a node that has just landed a jump. The step is
+    /// addressed where it is issued.
     async fn fetch_one(&self, key: FrontierKey) -> Option<UpstreamFinalized> {
         let (tx, rx) = oneshot::channel();
         self.waiters
@@ -617,9 +504,8 @@ impl<E: Clock> PlaneUpstreamHandle<E> {
             .push(tx);
         let mut mailbox = self.mailbox.clone();
         mailbox.fetch(key).await;
-        // The bound runs on the runtime `Clock` (the `beacon/artifact.rs` pull
-        // seam's form): a tokio timer would need a tokio reactor, which the
-        // deterministic runner does not provide.
+        // The bound runs on the runtime `Clock`: a tokio timer would need a tokio
+        // reactor, which the deterministic runner does not provide.
         let answer = tokio::select! {
             answer = rx => answer.ok(),
             () = self.context.sleep(FRONTIER_FETCH_TIMEOUT) => None,
@@ -631,14 +517,12 @@ impl<E: Clock> PlaneUpstreamHandle<E> {
             }
             None => {
                 tracing::debug!(%key, "frontier fetch timed out (no tracked peer served it)");
-                // Timed out: prune the now-closed waiter and, if this key has no
-                // remaining waiters, cancel the in-flight fetch so the resolver stops
-                // probing peers for it.
+                // Timed out: prune the closed waiter and, if no waiters remain, cancel the
+                // in-flight fetch so the resolver stops probing peers for it.
                 //
-                // The OTHER way in here is a `deliver` DROP, and it takes neither
-                // branch: `deliver` removed the whole entry, so `get_mut` is `None`,
-                // `empty` stays false and no `cancel` is sent. Deliberate — `deliver`
-                // returned `true`, which already closes that fetch commonware-side.
+                // A `deliver` drop takes neither branch: it removed the whole entry, so
+                // `get_mut` is `None`, `empty` stays false and no `cancel` is sent —
+                // `deliver` returned `true`, which already closed that fetch.
                 let empty = {
                     let mut waiters = self.waiters.lock().unwrap();
                     let empty = match waiters.get_mut(&key) {
@@ -683,9 +567,8 @@ impl<E: Clock> CertUpstream for PlaneUpstreamHandle<E> {
 
     fn rotate(&self) -> impl Future<Output = ()> + Send {
         // Best-effort: cancel the current frontier fetch so the next `get_latest`
-        // re-issues a fresh one (the resolver already does multi-peer fallback, so
-        // there is no per-peer cursor to advance — the executor `ReJump.rotate` and
-        // inlet data-fault rotation map onto this unchanged).
+        // re-issues one. The resolver already does multi-peer fallback, so there is no
+        // per-peer cursor to advance.
         let mut mailbox = self.mailbox.clone();
         async move {
             mailbox.cancel(FrontierKey::Latest).await;
@@ -729,10 +612,8 @@ mod tests {
     /// heights 32..=63.
     const EPOCH_LEN: u64 = 32;
 
-    /// A real committee: peer keys, BLS keys, and the `(signers, verifier)` pair
-    /// a genuine 2f+1 finalization needs. Verbatim in shape from the cert-inlet
-    /// unit tests — a certificate that is not really signed proves nothing about
-    /// a gate whose whole job is to check the signature.
+    /// A real committee: peer keys, BLS keys, and the `(signers, verifier)` pair a
+    /// genuine 2f+1 finalization needs.
     struct Fixture {
         peers: Vec<PeerPubkey>,
         bls_kps: Vec<ValidatorBlsKeypair>,
@@ -811,7 +692,7 @@ mod tests {
             build_verifier(&self.namespace, record.bls.bimap, epoch, None)
         }
 
-        /// A REAL 2f+1 finalization over `block`, under `epoch`'s committee.
+        /// A real 2f+1 finalization over `block`, under `epoch`'s committee.
         fn certify(&self, epoch: u64, block: &OrderBlock) -> UpstreamFinalized {
             let record = self.record(epoch);
             let round = Round::new(Epoch::new(epoch), View::new(block.height));
@@ -857,9 +738,8 @@ mod tests {
         }
     }
 
-    /// Records the marshal driving calls in order — the ONLY witness that a
-    /// verified delivery drives `verified` then `report` and that a refused one
-    /// drives NOTHING.
+    /// Records the marshal driving calls in order — the only witness that a verified
+    /// delivery drives `verify` then `report` and that a refused one drives nothing.
     #[derive(Clone, Default)]
     struct FakeMarshal {
         calls: Arc<StdMutex<Vec<&'static str>>>,
@@ -894,8 +774,8 @@ mod tests {
     }
 
     /// The five-step gate under test, wired the way production wires it: a real
-    /// committee module double, a recording marshal, and the deterministic
-    /// runner's context as the certificate-verify RNG.
+    /// committee module double, a recording marshal, and the deterministic runner's
+    /// context as the verify RNG.
     fn gate(
         ctx: deterministic::Context,
         committee: Arc<dyn Committee>,
@@ -911,8 +791,8 @@ mod tests {
         (handler, marshal, waiters)
     }
 
-    /// A module that answers `epoch` with the fixture's record + verifier, over
-    /// a frozen 32-block geometry and the window `[lo, hi]`.
+    /// A module that answers `epoch` with the fixture's record and verifier, over a
+    /// frozen 32-block geometry and the window `[lo, hi]`.
     fn module(f: &Fixture, window: (u64, u64)) -> Arc<dyn Committee> {
         let verifier_f = fixture(1);
         let record_f = fixture(1);
@@ -925,9 +805,9 @@ mod tests {
         )
     }
 
-    /// The node's local beacon key for the epoch came from a DIFFERENT mint —
-    /// Д-75's shape. It resolves (so this is not `NoKey`) and it disagrees with
-    /// the σ an honest quorum recovered, so every assembled seed is `Invalid`.
+    /// The node's local beacon key for the epoch came from a different mint: it
+    /// resolves and disagrees with the sigma an honest quorum recovered, so every
+    /// assembled seed is invalid.
     #[derive(Debug)]
     struct StaleEpochKeyOracle;
 
@@ -959,9 +839,8 @@ mod tests {
         }
     }
 
-    /// The module as a node in a BEACON-ACTIVE epoch holds it: the same record,
-    /// but the scheme carries a seed oracle — and that oracle's key is the wrong
-    /// one ([`StaleEpochKeyOracle`]).
+    /// The module as a beacon-active epoch holds it: the same record, but the scheme
+    /// carries a seed oracle whose key is the wrong one.
     fn module_with_a_stale_epoch_key(window: (u64, u64)) -> Arc<dyn Committee> {
         let verifier_f = fixture(1);
         let record_f = fixture(1);
@@ -983,9 +862,8 @@ mod tests {
     }
 
     /// A real BLS signature in the seed slot that belongs to no sharing this node
-    /// knows — shape-valid so the certificate round-trips, unverifiable so a
-    /// wrong-key oracle answers `Invalid` on it. Stands in for the honest σ of a
-    /// beacon-active epoch as seen by a node whose `PK_epoch` is stale.
+    /// knows — shape-valid so the certificate round-trips, unverifiable so a wrong-key
+    /// oracle answers invalid on it.
     fn unvouchable_seed(round: Round) -> fluentbase_bls::BlsSignature {
         use commonware_cryptography::bls12381::primitives::group::{Private, Share};
         let mut rng = StdRng::seed_from_u64(0x5EED);
@@ -996,8 +874,8 @@ mod tests {
         fluentbase_bls::beacon::sign_seed_partial(&share, b"some-other-mint", round).value
     }
 
-    /// Register a waiter for `key` and hand back the receiving half, so a test
-    /// can assert whether the answer was FANNED OUT or dropped.
+    /// Register a waiter for `key` and hand back the receiving half, so a test can
+    /// assert whether the answer was fanned out or dropped.
     fn waiter(waiters: &Waiters, key: FrontierKey) -> oneshot::Receiver<UpstreamFinalized> {
         let (tx, rx) = oneshot::channel();
         waiters.lock().unwrap().entry(key).or_default().push(tx);
@@ -1029,19 +907,11 @@ mod tests {
         assert!(decode_frontier(b"not a certified pair").is_none());
     }
 
-    /// (а) The honest answer: height matches the key, its epoch matches the
-    /// certificate's round epoch, and the multisig verifies under the committee
-    /// this node can read. `deliver` answers `true` and the awaiting call is
-    /// resolved.
-    ///
-    /// And the marshal is NOT driven from here — asserted, not merely absent.
-    /// §5.2's step (5) puts `verify_block` + `report_finalization` in `deliver`;
-    /// by the code the value this call admits is handed on to the marshal's OWN
-    /// resolver handler, which BLS-verifies it under the same committee module and
-    /// stores it through `store_finalization`. Driving the marshal here as well
-    /// makes this file a second writer of the same finalization (journal §0(6)).
-    ///
-    /// Falsifier: a `false`; an unresolved waiter; ANY marshal call.
+    /// The honest answer: height matches the key, its epoch matches the certificate's
+    /// round epoch, and the multisig verifies under the committee this node can read.
+    /// `deliver` answers `true` and the waiter is resolved, and the marshal is not
+    /// driven from here — the admitted value is handed to the marshal's own resolver
+    /// handler, the single writer.
     #[test]
     fn an_honest_by_height_answer_is_admitted_without_a_second_marshal_writer() {
         deterministic::Runner::default().start(|ctx| async move {
@@ -1066,17 +936,10 @@ mod tests {
         });
     }
 
-    /// (б) R-009: the answer to `Finalized{h}` carries a wholly real,
-    /// self-consistent finalization of a DIFFERENT height. An honest marshal
-    /// serves exactly `h` (`marshal/core/actor.rs:808-818`), so this is a
-    /// substitution — `deliver` must answer `false` (commonware then excludes the
-    /// sender), drive NOTHING into the marshal, and leave the waiter unresolved.
-    ///
-    /// RED before this change: HEAD's `deliver` never compared the key to the
-    /// delivered height — it returned `true` and fanned the wrong-height pair to
-    /// the waiter.
-    ///
-    /// Falsifier: a `true`; any marshal call; a resolved waiter.
+    /// The answer to `Finalized{h}` carries a wholly real, self-consistent
+    /// finalization of a different height. An honest marshal serves exactly `h`, so this
+    /// is a substitution: `deliver` answers `false`, drives nothing, and leaves the
+    /// waiter unresolved.
     #[test]
     fn a_foreign_height_under_a_by_height_key_is_a_lie() {
         deterministic::Runner::default().start(|ctx| async move {
@@ -1100,15 +963,10 @@ mod tests {
         });
     }
 
-    /// (в) The height↔epoch bind: a certificate whose round epoch is not the
-    /// epoch the served height belongs to. The per-epoch engine only ever
-    /// proposes inside its own height range, so this is a malformed / cross-epoch
-    /// certificate and a lie signal — `false`, nothing driven. This is also the
-    /// arm an INFLATED `Latest` (R-004) lands on: adding `10^6` to the height
-    /// moves it out of the certificate's epoch long before it moves out of the
-    /// read window.
-    ///
-    /// Falsifier: a `true`; any marshal call.
+    /// The height/epoch bind: a certificate whose round epoch is not the epoch the
+    /// served height belongs to. The per-epoch engine only proposes inside its own
+    /// height range, so this is malformed and a lie signal. An inflated `Latest` height
+    /// lands here long before it leaves the read window.
     #[test]
     fn a_height_outside_the_certificates_epoch_is_a_lie() {
         deterministic::Runner::default().start(|ctx| async move {
@@ -1124,23 +982,10 @@ mod tests {
         });
     }
 
-    /// (г1) An epoch the read window does not admit, delivered under `Latest` —
-    /// an honest peer far ahead of this node. Unverifiable is NOT a lie: `deliver`
-    /// answers `true` and the peer keeps the channel. But the answer is DROPPED
-    /// (pass Б2, §5.2): it carries a 2f+1 claim nobody here can check, and there is
-    /// no longer a consumer that needs it — the jump trigger reads the marshal tip
-    /// and its target comes out of the local archive (pass Б1), and the pre-engine
-    /// cold-start jump that used a `Latest` answer as a TARGET is gone (pass Б2).
-    ///
-    /// WHAT THIS TEST PROVED BEFORE. It was
-    /// `an_out_of_window_latest_is_passed_on_unauthenticated` and its last assert
-    /// was `rx.await.is_ok()` — "the answer was withheld — the deep re-jump trigger
-    /// has no other input". That input no longer exists, so the assertion is
-    /// inverted: the waiter must be resolved with NOTHING.
-    ///
-    /// Falsifier: a `false` (the honest peer would be excluded for this node's own
-    /// lag); a marshal call; a waiter that RECEIVES the answer; a drop counter that
-    /// did not move.
+    /// An epoch the read window does not admit, delivered under `Latest` — an honest
+    /// peer far ahead of this node. Unverifiable is not a lie, so `true` and the peer
+    /// keeps the channel, but the answer is dropped: it carries a 2f+1 claim nobody
+    /// here can check, and no consumer needs it. The waiter is resolved with nothing.
     #[test]
     fn an_out_of_window_latest_is_dropped_without_punishing_the_peer() {
         deterministic::Runner::default().start(|ctx| async move {
@@ -1164,19 +1009,9 @@ mod tests {
         });
     }
 
-    /// (г2) The SAME out-of-window answer under a BY-HEIGHT key. Same verdict, and
-    /// the same drop.
-    ///
-    /// WHAT THIS TEST PROVED BEFORE. It was
-    /// `an_out_of_window_by_height_answer_is_passed_on_unauthenticated` and it
-    /// pinned Д-72: `UpstreamResolver::spawn_finalized` is re-armed only by the
-    /// marshal's `try_repair_gaps`, which runs per STORED finalization, so
-    /// withholding the answer was said to remove the event that would ask again.
-    /// Pass Б1 added a second driver that does not depend on storing anything: the
-    /// executor's frozen-tip probe names `Finalized{last(T+1)}` on every frozen tick
-    /// (`executor::probe_frontier`). The assertion is inverted with it.
-    ///
-    /// Falsifier: a `false`; a marshal call; a waiter that RECEIVES the answer.
+    /// The same out-of-window answer under a by-height key: same verdict and same drop.
+    /// The executor's frozen-tip probe names `Finalized{last(T+1)}` on every frozen
+    /// tick, so withholding the answer does not remove the event that asks again.
     #[test]
     fn an_out_of_window_by_height_answer_is_dropped_without_punishing_the_peer() {
         deterministic::Runner::default().start(|ctx| async move {
@@ -1204,15 +1039,10 @@ mod tests {
         });
     }
 
-    /// (д) The epoch is inside the window but this node's anchor has not reached
-    /// its commit height — `CommitteeError::NotReadable`. Same verdict as (г) and
-    /// for the same reason: this is a statement about THIS node, not about the
-    /// peer — and the answer is dropped all the same, because
-    /// an unchecked 2f+1 claim is not admissible whatever the reason it is
-    /// unchecked. (Was `an_unreadable_committee_passes_the_answer_on_without_
-    /// punishing_the_peer`, whose last assert was `rx.await.is_ok()`.)
-    ///
-    /// Falsifier: a `false`; a marshal call; a waiter that RECEIVES the answer.
+    /// The epoch is inside the window but this node's anchor has not reached its commit
+    /// height — `NotReadable`. Same verdict as out-of-window and for the same reason: a
+    /// statement about this node, not the peer, and the answer is dropped because an
+    /// unchecked 2f+1 claim is not admissible whatever the reason it is unchecked.
     #[test]
     fn an_unreadable_committee_is_dropped_without_punishing_the_peer() {
         deterministic::Runner::default().start(|ctx| async move {
@@ -1246,17 +1076,13 @@ mod tests {
         });
     }
 
-    /// (е) The committee IS readable and the multisig does not verify under it —
-    /// the one arm where a failing signature is a statement about the
-    /// CERTIFICATE. `false`, nothing driven.
+    /// The committee is readable and the multisig does not verify under it — the one arm
+    /// where a failing signature is a statement about the certificate. `false`, nothing
+    /// driven.
     ///
-    /// The forgery is the R-004/R-001 shape: the served body is swapped and the
-    /// certificate's payload re-pointed at the new digest, so the structural
-    /// payload↔digest bind still passes and the multisig — a real signature over
-    /// the ORIGINAL payload — is the only thing left to catch it.
-    ///
-    /// Falsifier: a `true`; a marshal call; the tamper not actually changing the
-    /// served block.
+    /// The forgery swaps the served body and re-points the certificate's payload at the
+    /// new digest, so the structural bind still passes and the multisig over the original
+    /// payload is the only thing left to catch it.
     #[test]
     fn a_multisig_that_fails_under_a_readable_committee_is_a_lie() {
         deterministic::Runner::default().start(|ctx| async move {
@@ -1285,28 +1111,15 @@ mod tests {
         });
     }
 
-    /// (е2) Д-75, the honest-peer ban this pass closes. The certificate is a REAL
-    /// 2f+1 multisig of the right height in the right epoch, carrying the σ of a
-    /// beacon-active epoch. This node's local key for that epoch came from a
-    /// different mint, so its oracle calls the σ `Invalid` — and
-    /// `CombinedScheme::verify_certificate` fails the WHOLE certificate on it
-    /// (`bls/src/combined_scheme.rs:431-438`), which on this path means a
-    /// permanent exclusion of an honest peer from the frontier channel.
+    /// An honest 2f+1 certificate of the right height and epoch, carrying the sigma of a
+    /// beacon-active epoch, on a node whose local key for that epoch came from a
+    /// different mint. Judged under the module's oracle-carrying scheme it fails
+    /// entirely, which on this path would permanently exclude an honest peer. `deliver`
+    /// builds a verify-only scheme from the record instead, so the certificate is judged
+    /// on the 2f+1 quorum and the epoch binding alone.
     ///
-    /// `deliver` therefore builds its own VERIFY-ONLY scheme from the record it
-    /// just read, with no oracle: 2f+1 under `committee[epoch]` plus the epoch
-    /// binding is exactly what §5.2 asks the frontier to check, nothing on this
-    /// path consumes σ, and the frontier has no beacon to resolve the key with
-    /// first the way the cert inlet does (`cert_inlet.rs:620`).
-    ///
-    /// NOT VACUOUS: the test proves the arm is live by verifying the same
-    /// certificate under the MODULE's scheme first and asserting it FAILS there.
-    ///
-    /// RED before this change: `deliver` took `Committee::scheme(epoch)`, so this
-    /// honest answer returned `false`.
-    ///
-    /// Falsifier: the module's scheme accepting the certificate (then the stale
-    /// key is not modelled); a `false`; an unresolved waiter.
+    /// Not vacuous: the test first verifies the same certificate under the module's
+    /// scheme and asserts it fails there.
     #[test]
     fn an_honest_certificate_is_admitted_when_this_nodes_epoch_key_is_stale() {
         deterministic::Runner::default().start(|ctx| async move {
@@ -1332,8 +1145,8 @@ mod tests {
             );
 
             let module = module_with_a_stale_epoch_key((0, 3));
-            // THE WITNESS: under the module's own scheme this honest certificate
-            // does not verify, and that verdict is what used to ban the peer.
+            // Under the module's own scheme this honest certificate does not verify:
+            // that verdict is what bans the peer.
             let mut probe_ctx = ctx.clone();
             let with_oracle = module
                 .scheme(1)
@@ -1362,11 +1175,8 @@ mod tests {
         });
     }
 
-    /// (ж) Undecodable bytes: `false`, nothing driven, the awaiting waiter kept
-    /// (the fetch stays alive so the resolver tries another peer). The one arm
-    /// that behaved this way before this change.
-    ///
-    /// Falsifier: a `true`; a marshal call; a resolved or dropped waiter.
+    /// Undecodable bytes: `false`, nothing driven, and the awaiting waiter kept so the
+    /// resolver can try another peer.
     #[test]
     fn an_undecodable_delivery_is_a_lie_and_keeps_the_waiters() {
         deterministic::Runner::default().start(|ctx| async move {
@@ -1386,12 +1196,10 @@ mod tests {
         });
     }
 
-    /// Before the geometry is frozen no height means anything, so an answer
-    /// cannot be judged at all: counted and passed on with `true`, never refused.
-    /// Answering `false` here would exclude every peer a node talks to during the
-    /// window between its start and its first readable, DPoS-scheduled block.
-    ///
-    /// Falsifier: a `false`; a marshal call.
+    /// Before the geometry is frozen no height means anything, so an answer cannot be
+    /// judged: counted and passed on with `true`, never refused. Answering `false` would
+    /// exclude every peer a node talks to between its start and its first readable,
+    /// DPoS-scheduled block.
     #[test]
     fn an_answer_before_the_geometry_is_frozen_is_not_punished() {
         deterministic::Runner::default().start(|ctx| async move {

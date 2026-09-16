@@ -1,10 +1,6 @@
-//! EIP-2335 BLS12-381 keystore conformance vectors.
-//!
-//! Vectors are the canonical Appendix A from
-//! <https://eips.ethereum.org/EIPS/eip-2335> — both scrypt and PBKDF2-HMAC-SHA256
-//! KDFs, sharing the same 32-byte secret and password. If these break after
-//! an eth-keystore / crypto-primitive bump, regenerate AND audit
-//! cross-language parity.
+//! EIP-2335 keystore conformance against the spec's canonical test vectors
+//! (<https://eips.ethereum.org/EIPS/eip-2335>). Both KDF variants must decrypt the
+//! same secret, so a failure points at the crypto primitives, not the fixture.
 
 use fluentbase_bls::keystore::EthKeystoreV4;
 

@@ -1,4 +1,4 @@
-//! The fakes below the consensus seams. See the module doc for what each lies about.
+//! The fakes below the consensus seams.
 
 use crate::{
     application::{
@@ -45,15 +45,11 @@ use std::{
 pub(super) type ExecBlock = SealedBlock<reth_ethereum_primitives::Block>;
 
 /// `dposActivationBlock` of every stand: the ordering chain starts at genesis.
-/// ONE binding, because it is read in four places that must agree — the contract
-/// read ([`FakeStaking::dpos_activation_block`]), `OuterBuilder`, and the jump's
-/// two clamps ([`JumpElSync`]'s and `jump_to_target`'s own).
 pub(super) const DPOS_ACTIVATION_BLOCK: u64 = 0;
 
-/// The derived-EVM-block stand-in: a sealed header at `number` over `parent`
-/// whose hash is pinned by `discriminator` (`extra_data`). `timestamp = number`
-/// keeps every virtual timestamp tiny (§13 rule 23: the anchor's timestamp seeds
-/// the ordering chain's pace sleep).
+/// The derived-EVM-block stand-in: a sealed header at `number` over `parent`,
+/// its hash pinned by `discriminator` (`extra_data`). `timestamp = number` keeps
+/// virtual timestamps tiny.
 pub(super) fn sealed_at(parent: B256, number: u64, discriminator: B256) -> ExecBlock {
     let header = AlloyHeader {
         parent_hash: parent,
@@ -75,33 +71,22 @@ pub(super) fn genesis_sealed() -> ExecBlock {
 }
 
 /// One executed block as the devp2p peer network holds it: its height and the
-/// hash of its parent, so a jumping node can WALK a served tip's branch down to a
-/// fork point it already holds — exactly as reth's backfill downloads bodies by
-/// parent hash.
+/// hash of its parent, so a jumping node can walk a served tip's branch down to a
+/// fork point it already holds.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct ElBlock {
     pub height: u64,
     pub parent: B256,
 }
 
-/// What the NETWORK executed, keyed BY HASH → `(height, parent)` — the stand's
-/// devp2p EL peer. Every node publishes a block here the moment its own executor
-/// finalizes it (`advance_finalized`), and a node that EL-syncs walks a served
-/// tip's parent chain out of it exactly as reth backfills bodies from peers.
+/// What the network executed, keyed by hash to `(height, parent)` — the stand's
+/// devp2p EL peer. Every node publishes a block the moment its executor finalizes
+/// it, and a node that EL-syncs walks a served tip's parent chain out of it.
 ///
-/// Keyed by HASH, not by height, on purpose: a divergent branch coexists with the
-/// honest chain under its own hashes (an honest node published height `h` under
-/// one hash, a divergent node under another), so a lying upstream that publishes a
-/// second branch (R-001 var Б) can actually be SERVED it — which a
-/// first-writer-wins-by-height map made structurally impossible. The fork-safety
-/// that map provided is now `land_jump`'s job: it lands a served block only where
-/// the CANONICAL chain has no block at that height yet, and refuses
-/// (`ConflictingPrefix`) where the two disagree.
-///
-/// This is the seam that makes a re-jump mean anything: EL sync does not need σ,
-/// because the block arrives fully formed with its `prev_randao` already in the
-/// header — which is why a node parked for want of an epoch key can still be
-/// carried forward by it.
+/// Keyed by hash, not height, so a divergent branch coexists with the honest chain
+/// and a lying upstream can actually serve its branch; fork safety is
+/// [`FakeChain::land_jump`]'s job. EL sync needs no σ because the block arrives
+/// with its `prev_randao` already in the header.
 #[derive(Clone, Default)]
 pub(super) struct ElNetwork {
     blocks: Arc<Mutex<std::collections::HashMap<B256, ElBlock>>>,
@@ -122,9 +107,7 @@ impl ElNetwork {
         self.blocks.lock().unwrap().get(&hash).copied()
     }
 
-    /// Publish a whole branch of `(hash, height, parent)` triples at once — the
-    /// seam a lying-upstream role uses to seed a divergent prefix into the peer
-    /// network before serving a tip that points at it.
+    /// Publish a whole branch of `(hash, height, parent)` triples at once.
     #[cfg(feature = "dpos-devnet-byzantine")]
     pub(super) fn publish_branch(&self, branch: &[(B256, u64, B256)]) {
         for &(hash, height, parent) in branch {
@@ -133,24 +116,20 @@ impl ElNetwork {
     }
 }
 
-/// What [`FakeChain::land_jump`] did. The two refusals are NOT the same event and
-/// map to different production `SyncFailure`s, which the executor treats
-/// differently (`InvalidTarget` is `Fault::corruption` since review B1-04 — the
-/// EL contradicted an attested pair this node read from its own archive —
-/// while `StalledWithPeers` is deliberately non-fatal and does not even rotate).
+/// What [`FakeChain::land_jump`] did. The two refusals map to different production
+/// `SyncFailure`s, which the executor treats differently: `InvalidTarget` is
+/// corruption, while `StalledWithPeers` is non-fatal and does not rotate.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum JumpLanding {
-    /// The served branch's prefix was copied into the CANONICAL chain (the reth
-    /// backfill side effect). The finalized cursor is NOT advanced here — that is
-    /// the executor's `reseed_forward` on a `Landed` OUTCOME (`executor.rs:2386`).
+    /// The served branch's prefix was copied into the canonical chain. The finalized
+    /// cursor is not advanced here — that is the executor's `reseed_forward` on a
+    /// `Landed` outcome.
     Landed,
-    /// The devp2p peer holds no such hash — the walk falls off the served tip
-    /// immediately, nothing to serve.
+    /// The devp2p peer holds no such hash, so the walk falls off the served tip
+    /// immediately.
     Unservable,
-    /// The peer serves the branch, but at `h` a walked block sits where this node's
-    /// CANONICAL chain already holds a DIFFERENT hash — the served branch
-    /// contradicts executed history. A rendered verdict on the branch, not a
-    /// timeout.
+    /// The peer serves the branch, but at `height` a walked block sits where this
+    /// node's canonical chain holds a different hash.
     ConflictingPrefix {
         height: u64,
         mine: B256,
@@ -158,11 +137,8 @@ pub(super) enum JumpLanding {
     },
 }
 
-/// One executed block as reth's engine tree holds it: `InsertExecutedBlock`
-/// lands it in the tree-private `TreeState.blocks_by_hash`, which NO provider
-/// method reads (`.claude/RETH_INTERNALS.md` engine-tree verdict (c), and the
-/// chain-state resolution-order table: `block_hash(n)` / `header(&hash)` see
-/// "canonical in-memory (unpersisted)" but NOT "TreeState-only, pre-FCU").
+/// One executed block as reth's engine tree holds it: `InsertExecutedBlock` lands
+/// it in `TreeState.blocks_by_hash`, which no provider method reads.
 #[derive(Clone, Copy, Debug)]
 struct TreeBlock {
     height: u64,
@@ -171,157 +147,36 @@ struct TreeBlock {
 
 /// One EL-tier transition of a node's [`FakeChain`], in the order it happened.
 ///
-/// The two tiers are only meaningful RELATIVE to each other — "the guard read
-/// height `h` while `h` was still tree-only" is an ORDERING claim, and an
-/// absent log line cannot prove it. One interleaved log is therefore the
-/// observable, not two per-tier lists: a test compares the INDEX of a
-/// [`Self::Derived`] against the index of the [`Self::Canonicalized`] for the
-/// same height.
+/// The two tiers are only meaningful relative to each other, so one interleaved
+/// log is the observable: a test compares the index of a [`Self::Derived`] against
+/// the index of the [`Self::Canonicalized`] for the same height.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ElEvent {
-    /// `derive_and_execute` sealed this block and put it in the TREE. Nothing is
+    /// `derive_and_execute` sealed this block and put it in the tree; nothing is
     /// canonical yet.
     Derived(u64, B256),
-    /// A `fork_choice_updated` (or a jump landing) made this block CANONICAL at
-    /// this height — the point from which `spec_executed_hash` answers it.
+    /// A `fork_choice_updated` (or a jump landing) made this block canonical at this
+    /// height.
     Canonicalized(u64, B256),
 }
 
 /// reth's two tiers over the same blocks, as the executor's guards read them.
 ///
-/// * `tree` — EXECUTED but not canonical: what an `InsertExecutedBlock` leaves
+/// * `tree` — executed but not canonical: what an `InsertExecutedBlock` leaves
 ///   behind, keyed by hash so a same-height sibling coexists with the canonical
-///   block (fork delta §11, `f6fb181`: the already-known gate is by HASH, not by
-///   height, so a sibling is inserted rather than dropped).
-/// * `canonical` — the chain by NUMBER that `provider.block_hash(n)` answers,
-///   and therefore the ONLY thing
+///   block.
+/// * `canonical` — the chain by number that `provider.block_hash(n)` answers, and
+///   the only thing
 ///   [`ExecutedChain::spec_executed_hash`](crate::application::ExecutedChain::spec_executed_hash)
-///   can see. A block enters it only when a `fork_choice_updated` names it, or
-///   a DESCENDANT of it, as head ([`FakeBeacon::fork_choice_updated`] →
-///   [`FakeChain::canonicalize`], which walks the head's parent chain down to the
-///   fork point) — or when the devp2p peer backfills it under a jump landing
-///   ([`FakeChain::land_jump`]). Naming a head that is ALREADY canonical at its
-///   height — an ancestor included — is a no-op (reth skips a backward FCU to an
-///   ancestor); the suffix above `head_h` is dropped (`retain(h <= head_h)`) only
-///   when the head is NOT canonical there, i.e. on the walk back to the fork
-///   point — the reorg half of `NewCanonicalChain`.
+///   can see. A block enters it only when an FCU names it (or a descendant) as
+///   head, or when the devp2p peer backfills it under a jump landing.
 ///
-/// # Divergences from reth
-///
-/// What is MODELLED here, with the anchor it is modelled from:
-///
-/// * derive/import do not canonicalize; only an FCU (or a backfill landing)
-///   does — verdict (c), `.claude/RETH_INTERNALS.md` "engine tree" §Verdict (c)
-///   (`engine/tree/src/tree/mod.rs:1551-1576`). This is the R-006 tier: guard
-///   #2 in `executor.rs:3140-3180` runs BEFORE the delivered block's own FCU
-///   (`executor.rs:3308`), so it reads `None` at that height.
-/// * an already-known `(height, hash)` import is a silent no-op — fork delta
-///   §11 (`f6fb181`; fire-and-forget, no response channel). Structural here:
-///   the tree insert is an `or_insert`, so a re-import of the same hash changes
-///   nothing and answers `Valid` exactly as reth's skip does.
-/// * a new-head FCU commits `[fork point ..= head]` and DROPS the old canonical
-///   suffix above the head — reth's `NewCanonicalChain::Commit|Reorg` →
-///   `on_canonical_chain_update`, §"forkchoice_updated paths" branch 4.
-/// * an FCU whose head is already canonical at its own height is a NO-OP ON THE
-///   CANONICAL CHAIN — branches 2 and 3 of the same list. Only the chain: reth's
-///   branch 2 (head == tip) still re-runs safe/finalized while branch 3 (head is
-///   an ancestor) skips them (RETH_INTERNALS §Gotchas 1), and this fake tracks
-///   no safe/finalized tags at all, so it cannot tell the two apart.
-/// * an FCU whose head the tree cannot LINK to the current canonical chain
-///   canonicalizes NOTHING and answers `SYNCING` — reth's branch 5
-///   (`handle_missing_block`: SYNCING + `DownloadRequest::single_block`, verdict
-///   (d)). The walk is fail-closed on purpose: committing a segment whose
-///   ancestor walk fell off the tree would leave a GAPPED or UNLINKED canonical
-///   map — `{0, 5}` from a head at 5 with an absent parent, or a `3'` that is
-///   not a child of `2` — a chain shape reth cannot produce. Every executor FCU
-///   site tolerates SYNCING (`fcu.is_valid() || fcu.is_syncing()` on the
-///   finalize path `executor.rs:3309` and the speculative path `:2717`; the
-///   gap-walk does not inspect the response at all), so the answer costs no
-///   liveness where the head IS linked.
-///
-/// What is NOT modelled, and why:
-///
-/// * **`PayloadStatusEnum::ACCEPTED` is never produced.** True of reth too —
-///   §"new_payload outcome map" ends with "ACCEPTED never produced" — so this
-///   is a divergence only against the engine API, not against reth. Nothing to
-///   model.
-/// * **`SYNCING` is produced ONLY for an unlinkable FCU head (above); the other
-///   two reth SYNCING sources are absent, and the IMPORT leg never answers it.**
-///   reth's FCU also answers SYNCING while a backfill holds the engine
-///   (§"forkchoice_updated paths" step 1) — the stand has no backfill, so that
-///   window does not exist. On the import leg there is nothing to diverge from:
-///   production's `import_derived` is `InsertExecutedBlock`, which is
-///   fire-and-forget and synthesises `Valid` unconditionally
-///   (`node/src/importer.rs:112-133`) — it is not `new_payload`, so the
-///   parent-state-missing SYNCING of the `new_payload` outcome map never
-///   applies. The import leg's only production-side gap is the transport `Err`,
-///   covered by the engine-fatal bullet below.
-/// * **`PayloadStatusEnum::Invalid` is never produced, by either call.** reth
-///   answers INVALID for a head descending from its `InvalidHeaderCache`
-///   (populated from blocks IT downloaded and rejected) and for a payload that
-///   fails validation (§"new_payload outcome map", §"Invalid handling"). The
-///   executor keys THREE distinct behaviours on it — #15 `SafetyHalt(ElInvalid)`
-///   on the finalize FCU (`executor.rs:3309-3320`), a plain
-///   `Defer(SpecFcuRejected)` on the speculative FCU (`:2717-2731`, the
-///   deliberate asymmetry), and a halt on an `Invalid` IMPORT from either path —
-///   and none of the three is reachable here. Not modelled because the stand has
-///   no second source of blocks: every block it judges is one its own deriver
-///   produced, so there is nothing for an invalid-ancestor verdict to be ABOUT.
-///   Note also that an INVALID verdict is not a permanent oracle in reth (a
-///   cache entry evicts after 128 hits, and a transient consensus error is not
-///   cached at all — RETH_INTERNALS §"Invalid handling"), which is a second
-///   reason to leave it to `executor.rs`'s own fixture (`fcu_status` /
-///   `import_status`) rather than approximate it here.
-/// * **`safe_block_hash` and `finalized_block_hash` are IGNORED.**
-///   `fork_choice_updated` reads only `head_block_hash`. reth validates both on
-///   branches 2 and 4 and rejects the WHOLE forkchoice as `invalid_state` when
-///   either names a hash it cannot resolve (§"forkchoice_updated paths" step 2,
-///   §"Finalized/safe tracking"; the zero hash is a legal no-op) — the condition
-///   `executor.rs`'s `fcu_anchor_inconsistent` fixture exists for. The executor
-///   reasons about the tags (`update_safe`'s "safe is ALWAYS canonical-findable
-///   at this FCU" argument, `executor.rs:3283-3296`), and this fake can neither
-///   confirm nor refute that argument: it neither validates the tags nor tracks
-///   them, so `finalized ⊆ safe ⊆ head` is unchecked here.
-/// * **The ancestor-FCU short-circuit is modelled as "no chain change" but NOT
-///   as "safe/finalized are skipped too."** reth's branch 3 returns VALID
-///   without touching safe/finalized (verdict (b)); this fake tracks no
-///   safe/finalized TAGS at all — the finalized tier here is the executor's own
-///   [`FinalizedCursor`], which is advanced by `advance_finalized` and never by
-///   an FCU. A test about the DPoS finalized-freeze (verdict (a)+(b)) therefore
-///   cannot be written against this fake.
-/// * **The sync-target-gated eager `MakeCanonical` is absent.** reth
-///   canonicalizes a new_payload / buffered / downloaded block with no FCU when
-///   its hash equals the head of the last SYNCING FCU (verdict (a)). Reaching
-///   it needs a SYNCING FCU first, which this fake never answers, so the whole
-///   branch is unreachable rather than omitted.
-/// * **The cert-follow finalized-freeze is absent** for the same reason: it is
-///   verdict (a) + verdict (b) composed, and both legs are missing above.
-/// * **An engine-fatal `Err` is never produced.** reth's tree can answer
-///   `Internal(InsertBlockFatalError)` and then the tree thread EXITS, so every
-///   later call is `EngineUnavailable` (§"Service topology", Handle Err
-///   semantics; §Gotchas 6). Both calls here are infallible. The executor's
-///   transport-vs-verdict split is tested in `executor.rs`'s own fixture
-///   (`fcu_transport_errs` / `import_transport_errs` /
-///   `fcu_anchor_inconsistent`), which is where that behaviour belongs; the
-///   stand asserts on multi-node agreement, not on engine-boundary taxonomy.
-/// * **The by-HASH header-index lag is absent.** reth resolves `header(hash)`
-///   only once an FCU canonicalized the segment (verdict (c)); a block landed
-///   by devp2p backfill is by-NUMBER visible first. `FakeDeriver` never reads
-///   the parent by hash, so the parent-visibility park (`executor.rs:3063`) is
-///   unreachable here. `executor.rs`'s `ByHashVisibility` models it.
-/// * **`executed_tip()` conflates two different reth reads.**
-///   `ProviderExecutedChain::executed_tip` is `last_block_number()`, which the
-///   resolution-order table marks DB-only — it does NOT see canonical
-///   in-memory blocks and lags the head by the persistence threshold. Here it
-///   is the canonical tip, i.e. no persistence lag. Consequence: the fake's
-///   [`Self::executed_state_hash`] (production's `executed.rs:45-65`, which
-///   gates on `best_block_number()` — a THIRD read, the canonical head) uses
-///   that same tip, so the stand cannot express the `best` vs `last` skew that
-///   `executed.rs`'s doc is about.
-/// * **No persistence, no pruning, no backfill `clear_state()`.** Nothing here
-///   ever leaves the canonical map except at a reorg, so a deep-history provider
-///   miss below the finalized cursor — the `None` arm `FinalizedCursor::resolve`
-///   exists for — cannot happen in the stand.
+/// Divergences from reth: only an FCU (or a landing) canonicalizes; an
+/// already-known `(height, hash)` import is a silent no-op; a new-head FCU drops
+/// the old canonical suffix above the head; an FCU whose head cannot be linked to
+/// the canonical chain canonicalizes nothing and answers `SYNCING`; safe and
+/// finalized tags are ignored; `INVALID` and an engine-fatal `Err` are never
+/// produced; there is no persistence lag and no pruning.
 #[derive(Clone, Default)]
 pub(super) struct FakeChain {
     /// Tier-T: every executed block by hash, canonical or not.
@@ -329,32 +184,24 @@ pub(super) struct FakeChain {
     /// Tier-S: the canonical chain by number — `provider.block_hash(n)`.
     canonical: Arc<Mutex<BTreeMap<u64, B256>>>,
     finalized: FinalizedCursor,
-    /// The highest height the executor advanced the finalized cursor to — the
-    /// tier-F tip. The stand compares nodes on THIS tier: tier-S at a height a
-    /// node has not finalized yet may hold a notarized-then-nullified sibling.
+    /// The highest height the executor advanced the finalized cursor to — the tier-F
+    /// tip. Nodes are compared on this tier, because tier-S at an unfinalized height
+    /// may hold a notarized-then-nullified sibling.
     finalized_tip: Arc<AtomicU64>,
-    /// The σ the executor handed `derive_and_execute` at each height (LAST
-    /// writer wins — a re-derive of the same height overwrites, which is what
-    /// the tier split above deliberately does NOT do to `canonical`): `None` in
-    /// a beacon-INACTIVE epoch. The object the live-beacon tests compare across
-    /// nodes.
+    /// The σ the executor handed `derive_and_execute` at each height, last writer
+    /// wins; `None` in a beacon-inactive epoch.
     seeds: Arc<Mutex<BTreeMap<u64, Option<Seed>>>>,
-    /// The devp2p peer this node's EL syncs from. Written on every finalized
-    /// height this node executes; read only by a re-jump landing.
+    /// The devp2p peer this node's EL syncs from, written on every finalized height
+    /// this node executes and read only by a re-jump landing.
     el_network: ElNetwork,
-    /// Every tier transition in order — see [`ElEvent`]. The observable behind
-    /// "the guard read `h` BEFORE `h` was canonical": that is an ordering claim,
-    /// and no absent log line can carry it.
+    /// Every tier transition in order — see [`ElEvent`].
     el_events: Arc<Mutex<Vec<ElEvent>>>,
-    /// `best − ordering_finalized` (canonical tip minus the tier-F tip) right
-    /// after every FCU that moved the canonical chain, as a histogram `gap →
-    /// count`. Event-driven rather than sampled: the speculative lead lives for
-    /// one notarize→finalize round trip, shorter than any driver tick.
+    /// `best − ordering_finalized` right after every FCU that moved the canonical
+    /// chain, as a histogram `gap -> count`. Event-driven because the speculative
+    /// lead lives shorter than a driver tick.
     head_gap_on_fcu: Arc<Mutex<BTreeMap<u64, u64>>>,
-    /// The same gap right after every jump landing — the EL was carried to the
-    /// landing while the tier-F tip is still the pre-jump one, until
-    /// `reseed_forward` advances it. Kept apart from the FCU histogram because it
-    /// is the jump window, not speculation.
+    /// The same gap right after every jump landing, when the EL has moved but the
+    /// tier-F tip has not.
     head_gap_on_landing: Arc<Mutex<BTreeMap<u64, u64>>>,
 }
 
@@ -369,18 +216,14 @@ impl FakeChain {
         chain
     }
 
-    /// `InsertExecutedBlock`: the block is EXECUTED and reachable by hash, and
-    /// nothing about the canonical chain changes. An already-known hash is a
-    /// silent no-op on the block itself (fork delta §11) — with ONE repair: a
-    /// stored parent of `B256::ZERO` is a PLACEHOLDER, not a claim, and a later
-    /// insert that knows the real parent replaces it.
+    /// `InsertExecutedBlock`: the block is executed and reachable by hash, and the
+    /// canonical chain is untouched. An already-known hash is a silent no-op, with one
+    /// repair: a stored parent of `B256::ZERO` is a placeholder and a later insert that
+    /// knows the real parent replaces it.
     ///
-    /// The placeholder exists because [`Self::note_hash`] registers a replayed
-    /// node's persisted finalized marker before any body has been re-derived, so
-    /// it cannot know the parent. Without the repair, the honest re-derive of
-    /// that same hash could never link it — an `or_insert` would be a no-op —
-    /// and [`Self::canonicalize`]'s ancestor walk would fall off the tree at
-    /// exactly the one height a replay has to cross.
+    /// The placeholder exists because [`Self::note_hash`] registers a replayed node's
+    /// persisted marker before any body has been re-derived, so it cannot know the
+    /// parent, and without the repair the honest re-derive could never link it.
     fn insert_tree(&self, height: u64, hash: B256, parent: B256) {
         self.tree
             .lock()
@@ -394,26 +237,16 @@ impl FakeChain {
             .or_insert(TreeBlock { height, parent });
     }
 
-    /// An FCU naming `head`: reth commits `[fork point ..= head]` into the
-    /// canonical chain and drops the old suffix above `head`
-    /// (`NewCanonicalChain::Commit|Reorg` → `on_canonical_chain_update`,
-    /// RETH_INTERNALS "forkchoice_updated paths" branch 4). A head already
-    /// canonical at its own height is branch 2/3: no change to the chain.
+    /// An FCU naming `head`: reth commits `[fork point ..= head]` and drops the old
+    /// suffix above `head`. A head already canonical at its own height is a no-op.
+    /// Returns `false` when the head cannot be linked to the current canonical chain —
+    /// unknown to the tree, or its ancestor walk falls off before meeting a block the
+    /// canonical chain holds — which is reth's missing-block branch that answers
+    /// `SYNCING`.
     ///
-    /// Returns `false` when the head cannot be LINKED to the current canonical
-    /// chain — unknown to the tree, or its ancestor walk falls off the tree
-    /// before meeting a block the canonical chain already holds. That is reth's
-    /// branch 5 (`handle_missing_block`), and the caller answers `SYNCING`.
-    ///
-    /// FAIL-CLOSED IS THE POINT. Committing a segment whose walk did not reach a
-    /// fork point writes a chain shape reth cannot produce: head 5 with an absent
-    /// parent over `{0}` gives `{0, 5}` (a hole), and head 3 with an absent
-    /// parent over `{0..4}` gives `{0,1,2,3'}` with `3'` not a child of `2` (an
-    /// unlinked chain). Every consumer of `spec_executed_hash` — the result
-    /// gates, the gap-walk's backward probe, [`Self::land_jump`]'s prefix
-    /// comparison — reads that map as a CHAIN, so a fake that can emit a
-    /// non-chain is a fake oracle again, in the same shape as the one this tier
-    /// split removed.
+    /// Fail-closed on purpose: committing a segment whose walk did not reach a fork
+    /// point writes a hole or an unlinked chain, and every consumer reads this map as
+    /// a chain.
     fn canonicalize(&self, head: B256) -> bool {
         let tree = self.tree.lock().unwrap();
         let Some(&TreeBlock { height: head_h, .. }) = tree.get(&head) else {
@@ -424,8 +257,7 @@ impl FakeChain {
             return true;
         }
         // Walk back to the fork point: the first ancestor the canonical chain
-        // already holds at that height. Reaching height 0 without meeting one
-        // means even genesis disagrees — not a fork point, a broken chain.
+        // already holds at that height.
         let mut segment: Vec<(u64, B256)> = Vec::new();
         let mut cursor = head;
         let linked = loop {
@@ -476,19 +308,11 @@ impl FakeChain {
     }
 
     /// Make `hash` canonical at `height` outright: the genesis anchor, and the
-    /// devp2p-backfilled prefix a jump landing copies in (reth declares that
-    /// segment canonical AND executed before `sync_to` returns —
-    /// `cold_start_jump.rs:442-613`, so a landing is a whole executed prefix and
-    /// never a hash on a hole).
+    /// devp2p-backfilled prefix a jump landing copies in.
     ///
-    /// The parent is `canonical[height - 1]`, and its ABSENCE is a stand
-    /// invariant violation rather than a case to fall back on: the only two
-    /// callers are genesis (`height == 0`, whose parent IS `B256::ZERO` —
-    /// `genesis_sealed`) and [`Self::land_jump`], which walks the peer's
-    /// executed range in ASCENDING order and has therefore already landed
-    /// `height - 1`. Silently storing `B256::ZERO` here would plant exactly the
-    /// unlinked tree entry [`Self::canonicalize`] now refuses to commit, one
-    /// call too early to see it.
+    /// The parent is `canonical[height - 1]`; its absence panics rather than falling
+    /// back, because the only callers are genesis and [`Self::land_jump`], which lands
+    /// ascending and has therefore already landed `height - 1`.
     fn land_canonical(&self, height: u64, hash: B256) {
         let parent = match height.checked_sub(1) {
             None => B256::ZERO,
@@ -513,10 +337,9 @@ impl FakeChain {
             .push(ElEvent::Canonicalized(height, hash));
     }
 
-    /// Whether `hash` is on the CANONICAL chain — production's
-    /// `provider.block_number(hash)`, which the resolution-order table marks
-    /// memory→DB and blind to TreeState-only blocks. Deliberately distinct from
-    /// [`Self::height_of`], which reads the tree.
+    /// Whether `hash` is on the canonical chain — production's
+    /// `provider.block_number(hash)` — as distinct from [`Self::height_of`], which
+    /// reads the tree.
     fn canonical_holds(&self, hash: B256) -> bool {
         self.canonical.lock().unwrap().values().any(|x| *x == hash)
     }
@@ -526,22 +349,13 @@ impl FakeChain {
         self.el_events.lock().unwrap().clone()
     }
 
-    /// The devp2p backfill a re-jump's `sync_to` FCU drives: WALK the served tip
-    /// `hash`'s parent chain out of [`ElNetwork`] down to a fork point the
-    /// CANONICAL chain already holds, and commit the walked segment canonically
-    /// (`cold_start_jump.rs:442-613` — reth declares the branch canonical AND
-    /// executed before `sync_to` returns, so a landing is a whole executed prefix
-    /// and never a hash on a hole). This is the reth SIDE EFFECT only: it does NOT
-    /// advance the finalized cursor — that is the executor's job in
-    /// `reseed_forward` (`executor.rs:2386`), and only on a `Landed` OUTCOME.
+    /// The devp2p backfill a re-jump's `sync_to` drives: walk the served tip's parent
+    /// chain out of [`ElNetwork`] down to a fork point the canonical chain already
+    /// holds, and commit the walked segment. This is the reth side effect only; the
+    /// finalized cursor is the executor's `reseed_forward` on a `Landed` outcome.
     ///
-    /// The two refusals are DIFFERENT conditions and the caller must not fold them
-    /// together — see [`JumpLanding`]:
-    ///   * `Unservable` — the peer holds no such hash (an unknown / inflated
-    ///     target), the walk falls off the tip immediately;
-    ///   * `ConflictingPrefix` — a walked block sits at a height where THIS node's
-    ///     canonical chain already holds a DIFFERENT hash (the served branch
-    ///     contradicts executed history).
+    /// `Unservable` means the peer holds no such hash; `ConflictingPrefix` means a
+    /// walked block contradicts this node's executed history.
     pub(super) fn land_jump(&self, hash: B256) -> JumpLanding {
         let mut segment: Vec<(u64, B256)> = Vec::new();
         let mut cursor = hash;
@@ -554,8 +368,7 @@ impl FakeChain {
                 // The peer holds no such hash: nothing to walk, nothing to serve.
                 return JumpLanding::Unservable;
             };
-            // The canonical chain holds a DIFFERENT hash at this height: the served
-            // branch contradicts our own executed history.
+            // The canonical chain holds a different hash at this height.
             if let Some(mine) = self.spec_hash_at(height) {
                 return JumpLanding::ConflictingPrefix {
                     height,
@@ -577,34 +390,23 @@ impl FakeChain {
         JumpLanding::Landed
     }
 
-    /// Record `hash` as an EXECUTED block at `height` without making it
-    /// canonical — a tree-only entry ([`Self::insert_tree`]). Used for a
-    /// replayed node's persisted finalized marker: the one height a restarted
-    /// node knows a hash for before it has re-derived anything (reth's
-    /// finalized marker survives the process; the stand's block bodies do not).
-    ///
-    /// DIVERGENCE, deliberate: after a real restart that block IS canonical in
-    /// reth's DB. Landing it canonically here would give the replayed node a
-    /// canonical hash at a height whose body this process never derived, i.e. a
-    /// canonical chain with a hole under it — which is not what the replay
-    /// tests are modelling (they re-derive `1..=height` into a fresh
-    /// [`FakeChain`]).
+    /// Record `hash` as an executed block at `height` without making it canonical —
+    /// the persisted finalized marker a restarted node knows before it has re-derived
+    /// anything. Landing it canonically would leave a hole the replay does not model.
     pub(super) fn note_hash(&self, height: u64, hash: B256) {
         self.insert_tree(height, hash, B256::ZERO);
     }
 
-    /// Height of an executed hash, or `None` when this chain never sealed it.
-    /// Reads the TREE, not the canonical chain: a reorged-out sibling still has
-    /// a number, and this is what [`FakeStaking`] answers "what was the contract
-    /// state at this hash" from.
+    /// Height of an executed hash, or `None` when this chain never sealed it. Reads
+    /// the tree, not the canonical chain: a reorged-out sibling still has a number,
+    /// and this is what [`FakeStaking`] reads contract state by.
     pub(super) fn height_of(&self, hash: B256) -> Option<u64> {
         self.tree.lock().unwrap().get(&hash).map(|b| b.height)
     }
 
-    /// The three-valued executed-state probe [`fluentbase_consensus::executed_state_hash`]
-    /// is in production (`executed.rs:45-65`), over this chain: `Ok(None)` strictly
-    /// above the executed head, `Ok(Some)` at a materialized height, `Err` for a
-    /// materialized height with no hash (the header-index fault arm).
+    /// The three-valued executed-state probe production uses, over this chain:
+    /// `Ok(None)` strictly above the executed head, `Ok(Some)` at a materialized
+    /// height, `Err` for a materialized height with no hash.
     pub(super) fn executed_state_hash(&self, height: u64) -> Result<Option<B256>, ReadError> {
         let best = self.executed_tip();
         if height > best {
@@ -639,9 +441,8 @@ impl FakeChain {
 }
 
 impl ExecutedChain for FakeChain {
-    /// Production: `provider.last_block_number()` (`node/src/ordering.rs:42`) —
-    /// the DB tier. Here: the CANONICAL tip (see the type's divergence list,
-    /// "`executed_tip()` conflates two different reth reads").
+    /// Production is `provider.last_block_number()` (the DB tier); here it is the
+    /// canonical tip.
     fn executed_tip(&self) -> u64 {
         self.canonical
             .lock()
@@ -651,33 +452,27 @@ impl ExecutedChain for FakeChain {
             .copied()
             .unwrap_or(0)
     }
-    /// Production: `provider.block_hash(height)` (`node/src/ordering.rs:46`) —
-    /// reth's canonical chain by number. Here: the `canonical` map, which only
-    /// an FCU or a jump landing writes. Tier-S.
+    /// Production is `provider.block_hash(height)`; here it is the canonical map,
+    /// which only an FCU or a jump landing writes.
     fn spec_executed_hash(&self, height: u64) -> Option<B256> {
         self.spec_hash_at(height)
     }
-    /// Production: the same canonical read gated by the [`FinalizedCursor`]
-    /// (`node/src/ordering.rs:57-59`). Identical here — tier-F IS tier-S below
-    /// the cursor, in both.
+    /// Production is the same canonical read gated by the [`FinalizedCursor`];
+    /// identical here, since tier-F is tier-S below the cursor.
     fn finalized_executed_hash(&self, height: u64) -> Option<B256> {
         self.finalized.resolve(height, |h| self.spec_hash_at(h))
     }
-    /// Production: the cursor only (`node/src/ordering.rs:62`). Here the cursor
-    /// plus two stand-only bookkeeping writes — the tier-F tip the driver samples
-    /// and the [`ElNetwork`] publish that makes this node a devp2p peer.
+    /// Production is the cursor only; here it also records the tier-F tip and
+    /// publishes the executed block to [`ElNetwork`].
     fn advance_finalized(&self, height: u64) {
         let from = self.finalized_tip.load(Ordering::SeqCst);
         self.finalized.advance(height);
         self.finalized_tip.fetch_max(height, Ordering::SeqCst);
         // Publish what this node just finalized-executed, so a peer that has to
-        // EL-sync can be served the bodies it never derived. [`ElNetwork`]'s doc
-        // says "every node publishes a height the moment its executor finalizes
-        // it", and this loop is the only writer, so a SILENT skip here would
-        // make that doc false and thin the devp2p peer without a trace.
+        // EL-sync can be served the bodies it never derived.
         for h in from + 1..=height {
             match self.spec_hash_at(h) {
-                // Publish by HASH with the parent hash, so a jumping peer can walk
+                // Publish by hash with the parent hash, so a jumping peer can walk
                 // this branch down to a fork point (`land_jump`). The parent is the
                 // canonical hash below `h` (genesis's parent is `ZERO`).
                 Some(x) => {
@@ -687,24 +482,16 @@ impl ExecutedChain for FakeChain {
                         .unwrap_or(B256::ZERO);
                     self.el_network.publish(x, h, parent);
                 }
-                // A height THIS node derived must be canonical before the cursor
-                // passes it — that is the executor's own canonical postcondition
-                // (`executor.rs:3389`, the re-apply loop, which cannot exit until
-                // `spec_executed_hash(h) == derived_hash`). If it is not, the tier
-                // split above is broken and every later result-gate read is
-                // sampling a chain that does not exist. Fail loudly rather than
-                // publish a thinner history.
+                // A height this node derived must be canonical before the cursor
+                // passes it, or the tier split is broken and every later result-gate
+                // read samples a chain that does not exist.
                 None if self.seeds.lock().unwrap().contains_key(&h) => panic!(
                     "testbed: finalized cursor advanced to {height} past {h}, which this node \
                      DERIVED but never canonicalized — the FCU that should have committed it \
                      did not, or a later reorg dropped it"
                 ),
-                // A height this node never derived: the ONE legitimate case is a
-                // replay, whose `Actor::init` seeds the cursor from the marshal's
-                // durable acked height (`executor.rs:1045`) while the fresh
-                // `FakeChain` has no bodies below it — the stand does not persist
-                // block bodies (see `note_hash`). Nothing to publish; the nodes
-                // that DID derive those heights published them already.
+                // A height this node never derived: the one legitimate case is a
+                // replay, whose fresh [`FakeChain`] has no bodies below the cursor.
                 None => {}
             }
         }
@@ -712,15 +499,11 @@ impl ExecutedChain for FakeChain {
 }
 
 /// derive = `sealed_at(parent, height, keccak(order digest ‖ prev_randao(seed)))`.
-/// With `divergent_at = Some(h)` the block at `h` seals to a DIFFERENT hash on
-/// this node only — the `Role::DivergentResult` fault: K blocks later this node
-/// commits (and expects) a `result` nobody else derived.
+/// With `divergent_at = Some(h)` the block at `h` seals to a different hash on this
+/// node only — the [`Role::DivergentResult`](super::stand::Role) fault.
 ///
-/// The derived block lands in the [`FakeChain`] TREE and nowhere else:
-/// production's `derive_and_execute` (`node/src/derive.rs:98`) executes against
-/// the parent's state and hands back a sealed block — it canonicalizes nothing,
-/// and `import_derived` after it canonicalizes nothing either. Only the FCU
-/// does.
+/// The derived block lands in the [`FakeChain`] tree and nowhere else: only an FCU
+/// canonicalizes.
 #[derive(Clone)]
 pub(super) struct FakeDeriver {
     chain: FakeChain,
@@ -772,20 +555,14 @@ impl DerivedBlockBuilder for FakeDeriver {
     }
 }
 
-/// The engine boundary over the SAME [`FakeChain`] the [`ExecutedChain`] reads —
-/// one struct of truth, so "what the executor imported" and "what the executor
-/// can read back" cannot drift apart the way they did while the beacon recorded
-/// nothing.
+/// The engine boundary over the same [`FakeChain`] the [`ExecutedChain`] reads, so
+/// "what the executor imported" and "what the executor can read back" cannot drift
+/// apart.
 ///
-/// `import_derived` inserts into the tree (canonical chain untouched) and always
-/// answers `Valid`, exactly as production's `InsertExecutedBlock` seam does
-/// (`node/src/importer.rs:112-133` — fire-and-forget, the status is synthesised).
-/// `fork_choice_updated` canonicalizes `[fork point ..= head]` and answers
-/// `Valid`, or — when the head cannot be linked to the canonical chain —
-/// canonicalizes nothing and answers `SYNCING`, reth's missing-block branch 5.
-/// The statuses and errors that are NOT modelled (INVALID on either call, the
-/// backfill-window SYNCING, a transport `Err`, and the ignored safe/finalized
-/// tags) are listed on [`FakeChain`] with the reason each is absent.
+/// `import_derived` inserts into the tree and always answers `Valid`;
+/// `fork_choice_updated` canonicalizes `[fork point ..= head]` and answers `Valid`,
+/// or canonicalizes nothing and answers `SYNCING` when the head cannot be linked.
+/// What is not modelled is listed on [`FakeChain`].
 #[derive(Clone)]
 pub(super) struct FakeBeacon {
     chain: FakeChain,
@@ -805,7 +582,7 @@ impl BeaconEngineLike for FakeBeacon {
         state: ForkchoiceState,
     ) -> Result<ForkchoiceUpdated, EngineError> {
         // `safe_block_hash` / `finalized_block_hash` are deliberately unread —
-        // see the divergence block on `FakeChain`.
+        // see the divergence list on `FakeChain`.
         let status = match self.chain.canonicalize(state.head_block_hash) {
             true => PayloadStatusEnum::Valid,
             false => PayloadStatusEnum::Syncing,
@@ -837,161 +614,101 @@ impl OrderingAssembler for NoTxs {
 }
 
 /// `epoch → member node indices`, or `None` for an epoch the contract never
-/// committed a committee for. This is the stand's INPUT: WHO sits in an epoch.
-/// WHEN that epoch becomes readable, and at WHICH hash, is [`FakeStaking`]'s
-/// answer, not this closure's.
+/// committed a committee for. When that epoch becomes readable, and at which hash,
+/// is [`FakeStaking`]'s answer.
 pub(super) type Members = Arc<dyn Fn(u64) -> Option<Vec<usize>> + Send + Sync>;
 
-/// Which branch of the READING node's own execution layer a state hash sits on,
-/// at the moment of the read.
+/// Which branch of the reading node's own execution layer a state hash sits on at
+/// the moment of the read.
 ///
-/// The distinction the epoch-pure `Members` closure cannot express: the contract
-/// is a state machine over a CHAIN, and two chains that share a height can hold
-/// two different committees there. `Canonical` is `provider.block_hash(h) == at`
-/// (tier-S — the `canonical` map of [`FakeChain`]);
-/// `Speculative` is every other hash the node's tree knows at `h` — a
-/// derived-but-not-yet-canonical block, a reorged-out sibling, or the
-/// tree-only marker a replayed node is handed
-/// ([`FakeChain::note_hash`]).
+/// `Canonical` is `provider.block_hash(h) == at`; `Speculative` is every other hash
+/// the node's tree knows at `h` — a derived-but-not-canonical block, a reorged-out
+/// sibling, or the tree-only marker a replayed node is handed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Branch {
     Canonical,
     Speculative,
 }
 
-/// `(epoch, state hash, height of that hash, which branch it is on) → member
-/// node indices`, or `None` for an epoch with no committee on that branch.
+/// `(epoch, state hash, height, branch) → member node indices`, or `None` for an
+/// epoch with no committee on that branch.
 ///
-/// The BRANCHING form of [`Members`]: where that closure is a pure function of
-/// the epoch — so "two nodes at different heights read the same committee" is
-/// true of any caller, correct or not — this one lets the stand hand a
-/// DIFFERENT committee to a read taken off the canonical chain. That is what
-/// makes the cross-node equality of a committee record a property of the
-/// READING code instead of a tautology of the fake.
+/// The branching form of [`Members`]: it lets the stand hand a different committee
+/// to a read taken off the canonical chain, so cross-node equality of a committee
+/// record becomes a property of the reading code rather than a tautology.
 pub(super) type BranchCommittees =
     Arc<dyn Fn(u64, &B256, u64, Branch) -> Option<Vec<usize>> + Send + Sync>;
 
-/// One node (by index) tombstoned from `height` on, as the contract's LIVE
-/// equivocation flag: `getEpochCommitteeWithStakes` reads `tombstoned` at the
-/// call's own block rather than at the epoch commit
-/// (`crates/staking-abi/src/lib.rs:204-214`,
-/// `crates/dpos/staking-reader/src/reader.rs` — the `tombstoned` leg), which is
-/// what lets a mid-epoch verdict reach the committee it names.
+/// A node (by index) tombstoned from a height on, as the contract's live
+/// equivocation flag: the flag is read at the call's own block while the
+/// membership beside it is frozen.
 pub(super) type Tombstones = Arc<Vec<(usize, u64)>>;
 
-/// How many staking reads answered "committed" and how many answered "not
-/// committed yet", per epoch — the observation the not-yet-committed tests
-/// assert on. Counted inside [`FakeStaking`], so it says what the plane and the
-/// `EpochTransition` actually ASKED, not what the stand arranged.
+/// How many staking reads answered "committed" and how many "not committed yet",
+/// per epoch, plus the other refusal classes. Counted inside [`FakeStaking`], so it
+/// says what the plane and the `EpochTransition` actually asked.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct StakingReads {
     /// `epoch -> reads that came back with a committee`.
     pub committed: BTreeMap<u64, u64>,
-    /// Reads that came back EMPTY because the epoch is not committed at the read
-    /// height yet, per epoch. Production answers those with `Ok` and an empty
-    /// `validators`, never an error — `reader.rs:633`.
+    /// Reads that came back empty because the epoch is not committed at the read
+    /// height yet. Production answers those with `Ok` and an empty `validators`.
     pub uncommitted: BTreeMap<u64, u64>,
     /// Reads at a hash this chain never sealed (production: a state read at an
     /// unknown block).
     pub unknown_state: u64,
-    /// `epoch -> reads taken at a hash this node's canonical chain did NOT hold
-    /// at that height` ([`Branch::Speculative`]).
-    ///
-    /// Counted whatever the committee schedule is, because it is a property of
-    /// the CALLER and not of the fake: a consumer that resolves its own block
-    /// hash off a speculative cursor shows up here even when every branch
-    /// answers the same committee.
-    ///
-    /// One stand artifact belongs here rather than in a test: a REPLAYED node
-    /// (`StandConfig::resume_from`) is handed its persisted finalized marker
-    /// through [`FakeChain::note_hash`], which is deliberately TREE-ONLY, so
-    /// the cold-start read at that marker is counted `Speculative`.
+    /// `epoch -> reads taken at a hash this node's canonical chain did not hold at
+    /// that height`. Counted whatever the schedule is: it is a property of the
+    /// caller, so a consumer resolving its block hash off a speculative cursor
+    /// shows up here even when every branch answers the same committee.
     pub speculative: BTreeMap<u64, u64>,
-    /// `epoch -> reads that answered a non-empty committee with NO frozen
-    /// weights` — the contract's "my weight ring has wrapped past this epoch"
-    /// answer (`stakes` empty beside a non-empty `addrs`).
+    /// `epoch -> reads that answered a non-empty committee with no frozen weights`
+    /// — the contract's "weight ring has wrapped past this epoch" answer.
     pub weights_none: BTreeMap<u64, u64>,
-    /// `epoch → how many committee reads REVERTED` — the other permanent class
-    /// (`FakeStaking::reverts_for`). A counter of its own, because a revert
-    /// produces no snapshot at all and so lands in neither `committed` nor
+    /// `epoch -> how many committee reads reverted`. A counter of its own, because
+    /// a revert produces no snapshot and lands in neither `committed` nor
     /// `uncommitted`.
     pub reverted: BTreeMap<u64, u64>,
-    /// `epoch -> reads that answered at least one TOMBSTONED member`.
+    /// `epoch -> reads that answered at least one tombstoned member`.
     pub tombstoned_seen: BTreeMap<u64, u64>,
-    /// `epoch -> snapshot calls made through the COMMITTEE MODULE'S port`
+    /// `epoch -> snapshot calls made through the committee module's port`
     /// ([`crate::committee::EpochReads`]) alone.
     ///
-    /// Separate from [`Self::committed`] because that counter cannot answer
-    /// "one snapshot per epoch": it also counts the `EpochTransition`'s own
-    /// reads and the two extra snapshots this fake's [`FakeStaking::dkg_qual`]
-    /// issues to compute the bit. This one counts exactly what the module
-    /// asked.
+    /// Separate from [`Self::committed`], which also counts the `EpochTransition`'s
+    /// reads and the snapshots this fake's [`FakeStaking::dkg_qual`] issues.
     pub module_snapshot: BTreeMap<u64, u64>,
 }
 
-/// The staking contract as a STATE MACHINE OVER EXECUTED HEIGHT.
+/// The staking contract as a state machine over executed height.
 ///
-/// Every read takes `at: B256` — an executed hash of some height of the node's
-/// own [`FakeChain`] — and answers the contract state AS OF that height. The
-/// two rules it reproduces:
+/// Every read takes `at: B256`, an executed hash of the node's own [`FakeChain`],
+/// and answers the contract state as of that height. After block `h` every epoch
+/// `<= epoch(h) + MAX_COMMITTEE_LOOKAHEAD_EPOCHS` is committed, except that
+/// genesis commits epoch 0 only. A not-yet-committed epoch answers `Ok` with an
+/// empty committee, never an error, and
+/// `dkgQual[e] = committee[e] != committee[e-1]` is readable exactly when the
+/// committee is.
 ///
-/// * **Commit height.** The node's pre-execution stage drains
-///   `commitEpochCommittee()` on EVERY block while
-///   `nextEpochToCommit() <= current_epoch + MAX_COMMITTEE_LOOKAHEAD_EPOCHS`
-///   (`node/src/evm.rs:895-918`, `:1227-1231`), and the contract reverts a
-///   target above that horizon (`contracts/staking/src/consensus.rs:572-578`).
-///   So after block `h` every epoch `<= epoch(h) + 2` is committed. Genesis is
-///   the one exception: it is not executed by that stage, and the bootstrap
-///   issues exactly ONE `commitEpochCommittee`, for epoch 0
-///   (`devnet/local-dpos-smoke/genesis-bootstrap/src/bootstrap.rs:399-408`).
-/// * **Not committed = `Ok` with an empty committee**, NOT a `ReadError`. The
-///   production reader documents and returns exactly that (`reader.rs:633-634`),
-///   and `EpochTransition` keys three separate branches on it
-///   (`epoch_transition.rs:523`, `:545`, `:631`); an `Err` there would take the
-///   boundary down instead of parking it.
+/// Frozen weights live in a [`WEIGHT_RING_EPOCHS`] ring and read `None` once a
+/// frame is reused, an epoch 14 below the reading height — far outside the
+/// committee module's window, so [`FakeStaking::weights_none_for`] exists as a
+/// separate switch.
 ///
-/// `dkgQual[e] = committee[e] != committee[e-1]`, set inside the same commit
-/// (`contracts/staking/src/consensus.rs:598`, `staking-abi/src/lib.rs:110`), so
-/// it is readable exactly when the committee is.
-///
-/// * **Frozen weights come out of a RING.** The contract keeps them in
-///   [`WEIGHT_RING_EPOCHS`] frames and answers an empty `stakes` leg beside a
-///   non-empty `addrs` once a frame has been reused
-///   (`crates/staking-abi/src/lib.rs:204-214`), which the reader decodes as
-///   `weights: None`. A frame is reused at `E + WEIGHT_RING_EPOCHS`, and the
-///   newest epoch committed at height `h` is `epoch(h) +
-///   MAX_COMMITTEE_LOOKAHEAD_EPOCHS`, so an epoch answers `None` exactly while
-///   `epoch + WEIGHT_RING_EPOCHS <= epoch(h) + MAX_COMMITTEE_LOOKAHEAD_EPOCHS`
-///   — 14 epochs below the reading height, far outside the committee module's
-///   own window (`committee/mod.rs::WINDOW_FITS_THE_WEIGHT_RING`). A stand can
-///   therefore never reach that arm by running long enough, which is why
-///   [`FakeStaking::weights_none_for`] exists as a separate switch.
-///
-/// NOT modelled (step 5b): `recordProduction`, penalties, registry mutation.
-/// The registry is a fixed set.
+/// Not modelled: `recordProduction`, penalties, registry mutation.
 #[derive(Clone)]
 pub(super) struct FakeStaking {
     chain: FakeChain,
     members: Members,
     /// The branching committee schedule, if the stand set one — see
-    /// [`BranchCommittees`]. `None` keeps [`Self::members`] as the whole answer,
-    /// which is what every test written before it assumes.
+    /// [`BranchCommittees`]. `None` keeps [`Self::members`] as the whole answer.
     by_branch: Option<BranchCommittees>,
-    /// The one epoch for which this contract answers `weights: None` DESPITE the
-    /// ring still holding its frame — "the contract answered something no
-    /// committed epoch can answer". A switch and not a schedule: the module
-    /// refuses such an epoch permanently, so a second one would only be a second
-    /// copy of the same refusal.
+    /// The one epoch for which this contract answers `weights: None` despite the
+    /// ring still holding its frame; a switch, because a committed epoch can never
+    /// produce it.
     weights_none_for: Option<u64>,
-    /// The one epoch whose committee read REVERTS — the other permanent class.
-    ///
-    /// A revert is the contract refusing to answer (a staking-module code
-    /// error, a read before the module exists), not a statement about the
-    /// committed state, so the module must treat it differently from the switch
-    /// above: refuse the epoch loudly and keep the node running. Without this
-    /// knob the stand could only ever produce one of the two permanent classes,
-    /// and "the node halts on the impossible one" would have had nothing to
-    /// contrast with.
+    /// The one epoch whose committee read reverts — the contract refusing to
+    /// answer rather than a statement about committed state, so the module must
+    /// refuse the epoch loudly and keep the node running.
     reverts_for: Option<u64>,
     /// Nodes tombstoned from a height on — see [`Tombstones`].
     tombstoned: Tombstones,
@@ -1040,10 +757,8 @@ impl FakeStaking {
         }
     }
 
-    /// The step-5b knobs, applied after [`Self::new`] rather than passed
-    /// through it: the constructor already takes six arguments, and more
-    /// positional ones would be more things a caller can transpose.
-    /// Every one of them defaults to the pre-step behaviour.
+    /// The optional schedule and schedule switches, applied after [`Self::new`] so
+    /// the constructor keeps six positional arguments.
     pub(super) fn with_schedule(
         mut self,
         by_branch: Option<BranchCommittees>,
@@ -1066,9 +781,8 @@ impl FakeStaking {
         self.reads.lock().unwrap().clone()
     }
 
-    /// Every stand node in one epoch-0 snapshot. NOT a contract read: it is the
-    /// fixed anonymous sharing `StaticRandomness` deals from, which by
-    /// construction covers every node whatever an epoch's committee is.
+    /// Every stand node in one epoch-0 snapshot. Not a contract read: it is the
+    /// fixed anonymous sharing `StaticRandomness` deals from.
     pub(super) fn all_validators_snapshot(&self) -> ValidatorSetSnapshot {
         let validators = self.validators.as_ref().clone();
         ValidatorSetSnapshot {
@@ -1080,8 +794,7 @@ impl FakeStaking {
         }
     }
 
-    /// Whether `epoch`'s committee is committed in the state at `height` — the
-    /// contract's own horizon. See the type doc for both anchors.
+    /// Whether `epoch`'s committee is committed in the state at `height`.
     fn committed_at(&self, epoch: u64, height: u64) -> bool {
         if height == 0 {
             return epoch == 0;
@@ -1099,9 +812,9 @@ impl FakeStaking {
         })
     }
 
-    /// Which branch of THIS node's execution layer `at` sits on at `height` —
-    /// see [`Branch`]. The comparison is against the canonical map, which is the
-    /// only tier `provider.block_hash(n)` can see.
+    /// Which branch of this node's execution layer `at` sits on at `height` — see
+    /// [`Branch`]. Compared against the canonical map, the only tier
+    /// `provider.block_hash(n)` sees.
     fn branch_of(&self, at: B256, height: u64) -> Branch {
         match self.chain.spec_hash_at(height) {
             Some(canonical) if canonical == at => Branch::Canonical,
@@ -1109,14 +822,13 @@ impl FakeStaking {
         }
     }
 
-    /// The committee the contract would hold for `epoch` IN THE STATE AT `at`,
-    /// peer-key ASCENDING as `commitEpochCommittee` sorts it
-    /// (`contracts/staking/src/consensus.rs:564`).
+    /// The committee the contract would hold for `epoch` in the state at `at`,
+    /// peer-key ascending as `commitEpochCommittee` sorts it.
     ///
-    /// `tombstoned` is applied LAST and from the read HEIGHT, not from the
-    /// epoch: the contract reads that flag live at the call's own block while
-    /// the membership beside it is frozen, so a member tombstoned at height `h`
-    /// is flagged in every read at or above `h` of every epoch it sits in.
+    /// `tombstoned` is applied last and from the read height, not the epoch: the
+    /// contract reads that flag live at the call's own block while the membership
+    /// beside it is frozen, so a member tombstoned at height `h` is flagged in
+    /// every read at or above `h`.
     fn committee(
         &self,
         epoch: u64,
@@ -1146,11 +858,8 @@ impl FakeStaking {
         Some(members)
     }
 
-    /// The frozen leader weights the contract answers for `epoch` at `height`,
-    /// or `None` for its "the ring has wrapped past this epoch" answer — see the
-    /// ring paragraph on [`FakeStaking`]. An EMPTY committee takes neither arm:
-    /// the reader's equal-length branch answers `Some(vec![])` there
-    /// (`reader.rs:667-680`), which is what an uncommitted epoch looks like.
+    /// The frozen leader weights the contract answers for `epoch` at `height`, or
+    /// `None` for the ring-wrapped answer. An empty committee takes neither arm.
     fn weights_at(&self, epoch: u64, height: u64, members: usize) -> Option<Vec<u128>> {
         if members == 0 {
             return Some(Vec::new());
@@ -1166,12 +875,9 @@ impl FakeStaking {
         Some(vec![1u128; members])
     }
 
-    /// `getDkgQual(epoch)` paired with "is `epoch`'s committee committed at
-    /// `at`" — the two legs `beacon::CommitteeReads::dkg_qual` answers with. The
-    /// beacon projects them onto the BIT alone (`beacon::follower::changed_bit`,
-    /// Д-7) and caches the decided answer in `beacon::artifact::MintIndex`. An
-    /// uncommitted epoch reads its bit as the contract
-    /// map's default `false` over an empty committee, which is `(false, false)`.
+    /// `getDkgQual(epoch)` paired with "is `epoch`'s committee committed at `at`" —
+    /// the two legs `beacon::CommitteeReads::dkg_qual` answers with. An uncommitted
+    /// epoch reads `(false, false)`.
     pub(super) fn dkg_qual(&self, epoch: u64, at: B256) -> Result<(bool, bool), ReadError> {
         let snap = self.epoch_committee_snapshot(epoch, at)?;
         if snap.validators.is_empty() {
@@ -1195,22 +901,16 @@ impl FakeStaking {
 
 /// The two staticcalls the committee module makes, over the same fake.
 ///
-/// A separate impl from [`StakingStateRead`] because the module's port is
-/// deliberately narrower — the two reads it issues and nothing else — and
-/// because `dkg_qual` is not on `StakingStateRead` at all. The inherent
-/// `FakeStaking::dkg_qual` answers the `(bit, committed)` pair the beacon's
-/// trait wants; the module derives "committed" from having a record at all, so
-/// only the bit crosses.
+/// A separate impl from [`StakingStateRead`] because the module's port is narrower
+/// and because `dkg_qual` is not on `StakingStateRead` at all.
 impl crate::committee::EpochReads for FakeStaking {
     fn epoch_committee_snapshot(
         &self,
         epoch: u64,
         at: B256,
     ) -> Result<ValidatorSetSnapshot, ReadError> {
-        // Counted HERE and not inside the shared body: this port is the
-        // module's alone, so `StakingReads::module_snapshot` says how many
-        // snapshot calls the MODULE made, which is the countable form of "one
-        // snapshot per epoch, whatever asked".
+        // Counted here and not inside the shared body: this port is the module's
+        // alone, so the count says how many snapshot calls the module made.
         *self
             .reads
             .lock()
@@ -1233,10 +933,9 @@ impl StakingStateRead for FakeStaking {
         at: B256,
     ) -> Result<ValidatorSetSnapshot, ReadError> {
         let height = self.height_at(at)?;
-        // The revert arm, BEFORE any of the counters below: a reverting call
-        // produced no snapshot, so counting it as committed/uncommitted would
-        // be counting an answer that was never given. It is counted as what it
-        // is.
+        // Count the revert before any of the counters below: a reverting call
+        // produced no snapshot, so counting it as committed or uncommitted would be
+        // counting an answer that was never given.
         if self.reverts_for == Some(epoch) {
             *self
                 .reads
@@ -1254,10 +953,8 @@ impl StakingStateRead for FakeStaking {
             .committed_at(epoch, height)
             .then(|| self.committee(epoch, at, height, branch))
             .flatten();
-        // An uncommitted / missed-commit epoch is `Ok` with `validators: []`
-        // and `weights: Some(vec![])` — the empty `stakes` leg beside an empty
-        // `addrs` takes the equal-length arm (`reader.rs:667-680`), NOT the
-        // `weights: None` "ring has wrapped" arm.
+        // An uncommitted epoch is `Ok` with `validators: []` and
+        // `weights: Some(vec![])` — the equal-length arm, not the ring-wrapped one.
         let validators = validators.unwrap_or_default();
         let weights = self.weights_at(epoch, height, validators.len());
         let mut reads = self.reads.lock().unwrap();
@@ -1302,75 +999,46 @@ impl StakingStateRead for FakeStaking {
 /// One `ReJump::call` — one run of the production
 /// [`jump_to_target`](crate::cold_start_jump::jump_to_target).
 ///
-/// The `outcome` tag exists because EVERY non-`Landed` variant is otherwise
-/// INVISIBLE to a test: the stand wires `ReJump::rotate = None`, so
-/// `Executor::rotate_upstream` is a silent no-op, and a `Stalled` or an
-/// `InvalidTarget` leaves nothing behind but a log line. Without the tag a test
-/// asserting `rejump_calls >= 1` passes just as happily on a chain where every
-/// jump authenticated and FAILED.
+/// The `outcome` tag exists because every non-`Landed` variant is otherwise
+/// invisible: the stand wires `ReJump::rotate = None`, so a refusal leaves nothing
+/// behind but a log line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct JumpCall {
     /// The anchor the executor passed (its `ordering_finalized` cursor).
     pub from: u64,
     /// The `JumpOutcome` variant name, verbatim.
     pub outcome: &'static str,
-    /// `(height, result)` of the TARGET certificate this call consumed — since
-    /// §5.2 the `(finalization, block)` pair the EXECUTOR read out of this node's
-    /// own marshal archive at the tip it triggered on and handed to `ReJumpFn`,
-    /// recorded in the stand's callback before the jump consumes it. So the
-    /// landing can be checked against the cert it came from rather than against
-    /// the chain the landing just wrote. (It used to be teed off the jump's own
-    /// `get_latest`, which is the call §5.2 removed.)
+    /// `(height, result)` of the target certificate this call consumed — the pair
+    /// the executor read out of this node's own marshal archive, recorded before
+    /// the jump consumes it so the landing can be checked against its certificate.
     pub consumed: Option<(u64, B256)>,
     /// `(landing, hash)` on [`JumpOutcome::Landed`](crate::cold_start_jump::JumpOutcome::Landed).
     pub landed: Option<(u64, B256)>,
-    /// The `Display` text of the `eyre::Report` a refusing outcome carries
-    /// (`Stalled`, `InvalidTarget`, …) — `None` for `Landed`/`Lagging`.
-    /// Lets a test tell WHICH refusal arm fired — the landing check and a reth
-    /// `Invalid` verdict both produce `InvalidTarget`, and only the message
-    /// distinguishes them.
+    /// The `Display` text of the `eyre::Report` a refusing outcome carries — `None`
+    /// for `Landed`/`Lagging`. Only the message distinguishes the landing check
+    /// from a reth `Invalid` verdict, both of which produce `InvalidTarget`.
     pub outcome_detail: Option<String>,
 }
 
 /// Every jump call one node made, in call order.
 pub(super) type JumpCalls = Arc<Mutex<Vec<JumpCall>>>;
 
-/// Every ladder step a node's frontier probe NAMED, as `(T, last(T+1))` in call
-/// order — the stand's window into §5.2's "ступень". Recorded where the step is
-/// NAMED (the probe closure), so a test reads what was asked for rather than
-/// inferring it from what arrived.
+/// Every ladder step a node's frontier probe named, as `(T, last(T+1))` in call
+/// order. Recorded where the step is named, so a test reads what was asked for.
 ///
-/// No tip beside it: the node's own marshal tip is what the executor judges the
-/// step against, and reading it from this closure is an extra marshal message that
-/// changes the run (review A2-02, and the stand-side note in `stand.rs`). The
-/// step-vs-tip comparison is pinned in `executor::tests` instead.
+/// No tip beside it: reading the marshal tip from this closure is an extra message
+/// that changes the run.
 pub(super) type FrontierSteps = Arc<Mutex<Vec<(u64, u64)>>>;
 
-/// The jump's EL seam over [`FakeChain`] + [`ElNetwork`] — the stand's
-/// [`RethElSync`](crate::cold_start_jump::RethElSync). Same three branches as
-/// production's `sync_to`: a pre-K (`result == 0`) tip and an already-executed
-/// target both answer the LOCAL landing without touching the peer, and the real
-/// case drives the whole executed prefix out of the devp2p peer
-/// ([`FakeChain::land_jump`]) before answering `(landing, hash)`.
+/// The jump's EL seam over [`FakeChain`] and [`ElNetwork`] — the stand's
+/// [`RethElSync`](crate::cold_start_jump::RethElSync). A pre-K (`result == 0`) tip
+/// and an already-executed target answer the local landing; the real case drives
+/// the executed prefix out of the devp2p peer before answering.
 ///
-/// What lives HERE rather than in the production function, and is therefore NOT
-/// covered by driving the production jump:
-///
-/// * The `tip − K` landing arithmetic and the `result == 0` pre-K test are
-///   INSIDE `sync_to` in production too (`cold_start_jump.rs:446-454`), so they
-///   are re-stated here by the shape of the trait seam, not by choice. A change
-///   to that arithmetic in production does NOT fail a stand test.
-/// * Every non-`Landed` `JumpOutcome` is FIXTURE-DEPENDENT: on the current
-///   honest schedules the peer always serves the attested landing, so
-///   `Unservable` / `ConflictingPrefix` — and with them `StalledWithPeers` /
-///   `Invalid`, and every executor branch keyed on them — are unreached. Their
-///   code paths are written, not exercised.
-/// * The [`EL_SYNC_STALL_ESCAPE`] sleep on an unservable target freezes the
-///   node's jump for 300 VIRTUAL seconds. Nothing bounds a test's virtual clock
-///   against that today; a fixture that reaches it must budget for it.
-/// * The need-gate band is production's, but the stand only ever exercises the
-///   `threshold = min(JUMP_THRESHOLD, epoch_len)` = 32 setting and the closed
-///   `u64::MAX` one — no test lands in between.
+/// Non-`Landed` outcomes are fixture-dependent: on honest schedules the peer always
+/// serves the attested landing, so the refusal paths are written but not exercised.
+/// The `EL_SYNC_STALL_ESCAPE` sleep on an unservable target freezes the node's jump
+/// for 300 virtual seconds, which a fixture that reaches it must budget.
 pub(super) struct JumpElSync {
     chain: FakeChain,
     ctx: deterministic::Context,
@@ -1386,7 +1054,7 @@ impl JumpElSync {
         }
     }
 
-    /// Production's `RethElSync::local_landing`: the EXECUTED head clamped to
+    /// Production's `RethElSync::local_landing`: the executed head clamped to
     /// `>= activation`, with the hash of that same height.
     fn local_landing(&self) -> Result<(u64, B256), SyncFailure> {
         let tip = self.chain.executed_tip().max(self.activation);
@@ -1398,10 +1066,8 @@ impl JumpElSync {
 }
 
 impl ElSync for JumpElSync {
-    /// The stand never builds a fresh-datadir follower (`launch_follower` is not on
-    /// the stand — `testbed/mod.rs`), so the operator-checkpoint entry has no caller
-    /// here. Refuse loudly rather than model it: a silent `Ok` would let a future
-    /// fixture believe the stand covers a path it does not.
+    /// The stand never builds a fresh-datadir follower, so the operator-checkpoint
+    /// entry has no caller here. Refuse loudly rather than model it.
     async fn sync_to_checkpoint(&self, checkpoint: B256) -> Result<(u64, B256), SyncFailure> {
         panic!(
             "the testbed does not model the fresh-datadir operator-checkpoint entry \
@@ -1420,24 +1086,9 @@ impl ElSync for JumpElSync {
             // Already executed past the target (`cold_start_jump.rs:455-465`).
             return self.local_landing();
         }
-        // PRODUCTION ORDER (`cold_start_jump.rs:478-613`): FCU
-        // `head=safe=finalized=tip_hash` FIRST and let reth backfill/execute the
-        // branch whose tip is that HASH; only AFTER it reports `Valid` resolve the
-        // landing HEIGHT via `provider.block_hash(landing)`. The two steps are
-        // separable and their failures are different:
-        //   * the HASH is unservable — the peer holds no such branch, reth sits in
-        //     its FCU poll loop until the connected-but-no-progress net trips
-        //     (`StalledWithPeers`, which the executor deliberately does NOT rotate,
-        //     `executor.rs:1331-1353`);
-        //   * the served branch contradicts our executed history — reth renders an
-        //     `Invalid` verdict (`executor.rs:1297-1310`, rotate-at-once);
-        //   * the hash IS servable but the claimed landing HEIGHT resolves to no
-        //     block (a real hash paired with an inflated height, R-004) — reth
-        //     backfilled the real branch, but `block_hash(inflated) == None` →
-        //     `eyre!` → `SyncFailure::Stalled` (`cold_start_jump.rs:603-611`,
-        //     `From<eyre::Report>` at `:354-358`), which the executor counts toward
-        //     the fault streak and rotates at `MAX_UPSTREAM_FAULTS` (a no-op with
-        //     `rotate: None`).
+        // Production order: FCU `head=safe=finalized=tip_hash` first and let reth
+        // backfill the branch whose tip is that hash; only after it reports `Valid`
+        // resolve the landing height via `provider.block_hash(landing)`.
         match self.chain.land_jump(tip_hash) {
             JumpLanding::Landed => {}
             JumpLanding::Unservable => {
@@ -1453,12 +1104,10 @@ impl ElSync for JumpElSync {
                 mine,
                 served,
             } => {
-                // [ГИПОТЕЗА] Whether reth would in fact answer
-                // `PayloadStatusEnum::Invalid` (rather than unwinding and answering
-                // `SYNCING` forever, the soak-v43 shape) for a served branch
-                // conflicting with executed history is NOT verified here; the point
-                // of the split is that the stand stops folding two different
-                // conditions into one outcome.
+                // Whether reth would answer `Invalid` rather than unwind for a
+                // served branch conflicting with executed history is not verified
+                // here; the point is that the stand stops folding two conditions
+                // into one outcome.
                 return Err(SyncFailure::Invalid(eyre!(
                     "testbed EL peer served a branch that contradicts executed history at \
                      {height}: mine {mine}, served {served} (claimed tip height {})",
@@ -1466,11 +1115,8 @@ impl ElSync for JumpElSync {
                 )));
             }
         }
-        // The hash landed; now resolve the CLAIMED landing height. Clamp BEFORE
-        // resolving so the returned pair is always height-and-hash of the SAME
-        // block. A landing the backfill did not reach (an inflated height whose
-        // real block the servable hash was NOT) resolves to `None` → `Stalled`,
-        // NEVER `StalledWithPeers`.
+        // Clamp before resolving, so the returned pair is always the height and hash
+        // of the same block.
         let landing = tip_height.max(self.activation);
         let hash = self.chain.spec_hash_at(landing).ok_or_else(|| {
             SyncFailure::Stalled(eyre!(
@@ -1481,16 +1127,10 @@ impl ElSync for JumpElSync {
         Ok((landing, hash))
     }
 
-    /// Production's `RethElSync::holds` is `provider.block_number(hash)`
-    /// (`cold_start_jump.rs:614-620`), which the RETH_INTERNALS
-    /// resolution-order table marks memory→DB and BLIND to TreeState-only
-    /// blocks — so it answers the CANONICAL chain, not the executed tree. The
-    /// trait's own doc says as much ("holds `hash` canonically",
-    /// `cold_start_jump.rs:371-374`). Unreachable on the stand's path
-    /// (`l1_checkpoint` is `None`, so `jump_to_target` skips the L1 re-assert),
-    /// but the tier has to be right or the first fixture that wires a checkpoint
-    /// inherits a fake oracle. The §5.2 LANDING check calls `holds` on this same
-    /// seam with the attested `block.result`, and that one IS reached.
+    /// Production's `RethElSync::holds` reads the canonical chain, not the executed
+    /// tree; the trait's contract says "holds `hash` canonically". Unreachable when
+    /// `l1_checkpoint` is `None`, but the tier must be right for a fixture that
+    /// wires one.
     fn holds(&self, hash: B256) -> eyre::Result<bool> {
         Ok(self.chain.canonical_holds(hash))
     }
@@ -1511,9 +1151,7 @@ impl SlasherTxSink for NoSink {
 
 /// What one node's upstream plane did, counted at both ends of the production
 /// code: the client (`CertUpstream` calls and how many came back `Some`) and the
-/// serve side (`Producer::produce` requests from peers, `Consumer::deliver`
-/// results). A node that followed the chain with `latest_delivered ==
-/// finalized_delivered == 0` did not follow THROUGH the plane.
+/// serve side (`Producer::produce` requests, `Consumer::deliver` results).
 #[derive(Clone, Default)]
 pub(super) struct UpstreamCounters {
     pub latest_calls: Arc<AtomicU64>,
@@ -1524,44 +1162,29 @@ pub(super) struct UpstreamCounters {
     pub serve_requests: Arc<AtomicU64>,
     /// `deliver` calls the resolver made on this node that decoded.
     pub deliveries_decoded: Arc<AtomicU64>,
-    /// `deliver` calls that returned `false` — a SIGNAL OF A LIE on any of the
-    /// five arms (`plane_upstream.rs`: undecodable bytes, a foreign height under
-    /// `Finalized{h}`, a payload that is not the served body's digest, a height
-    /// outside the certificate's epoch, a multisig that fails under a READABLE
-    /// committee). Each one costs the sender this channel for the life of the
-    /// resolver engine.
+    /// `deliver` calls that returned `false` — a signal of a lie on any of the five
+    /// arms. Each one costs the sender this channel for the life of the resolver
+    /// engine.
     ///
-    /// Since 4.2-А this is the load-bearing observable of the three role tests
-    /// (R-001/R-004/R-009): the victim REFUSED the forgery. It is a count only —
-    /// the `reason` split lives in `metrics::counter!`, which goes to the
-    /// process-global recorder the stand does not read (journal §8.4), so no
-    /// stand assert can say WHICH arm fired.
+    /// A count only: the `reason` split lives in `metrics::counter!`, which goes to
+    /// a recorder the stand does not read, so no assertion can say which arm fired.
     pub deliveries_rejected: Arc<AtomicU64>,
-    /// Every BY-HEIGHT pull this node's upstream client made, in order.
+    /// Every by-height pull this node's upstream client made, in order.
     ///
-    /// `finalized_calls`/`finalized_delivered` count the same events but cannot
-    /// say WHICH heights, which is what a ladder assertion needs (review B1-03):
-    /// "the rung `last(T+1)` was asked for by height and served" is a different
-    /// statement from "74 by-height pulls happened", and only the first one
-    /// separates a served rung from the ordinary contiguous repair traffic
-    /// running beside it.
-    ///
-    /// The ladder step and the marshal's ordinary gap repair are the SAME verb on
-    /// this seam (`get_finalization`), so a reader cannot tell them apart by the
-    /// call — only by the height, which is what the ladder test matches on.
+    /// `finalized_calls`/`finalized_delivered` count the same events without the
+    /// heights, which is what a ladder assertion needs: the ladder step and the
+    /// marshal's ordinary gap repair are the same verb on this seam, so only the
+    /// height tells them apart.
     pub served_heights: Arc<Mutex<Vec<Pull>>>,
-    /// `ReJump::call` invocations — each one runs the PRODUCTION
-    /// [`crate::cold_start_jump::jump_to_target`] over
-    /// [`JumpElSync`]. Stays 0 while `StandConfig::re_jump_threshold` is `None`
-    /// (the gate is then `u64::MAX`, so `Executor::maybe_re_jump` never arms the
-    /// waiter). A COUNT ONLY: what each call did is [`JumpCall`], and asserting on
-    /// this number alone cannot tell a landing from a refusal.
+    /// `ReJump::call` invocations, each running the production
+    /// [`crate::cold_start_jump::jump_to_target`]. Stays 0 while
+    /// `StandConfig::re_jump_threshold` is `None`, because the gate is then
+    /// `u64::MAX`. A count only: [`JumpCall`] says what each call did.
     pub rejump_calls: Arc<AtomicU64>,
 }
 
 /// One by-height pull the upstream client made: the height asked for and whether
-/// the answer came back. `finalized_calls`/`finalized_delivered` count the same
-/// events without the height, which is the one thing a ladder assertion needs.
+/// the answer came back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Pull {
     pub height: u64,
@@ -1646,57 +1269,44 @@ impl<U: CertUpstream> CertUpstream for CountingUpstream<U> {
     }
 }
 
-/// What one node's byzantine wrappers did — the tamper's own witness.
-///
-/// Every field is written by a wrapper and read by a test. A wrapper that never
-/// fired leaves the counters at zero, which is what makes "the branch I asserted
-/// is the branch the run took" checkable instead of assumed.
-/// One broadcast `ShareConfirm` as the wire saw it: the ceremony epoch it was
-/// framed under, the confirming member's committee seat, and the `(seat, log
-/// hash)` set it claims to hold.
+/// One broadcast `ShareConfirm` as the wire saw it: the ceremony epoch, the
+/// confirming member's seat, and the `(seat, log hash)` set it claims to hold.
 #[cfg(feature = "dpos-devnet-byzantine")]
 pub(super) type SentConfirm = (u64, u8, Vec<(u8, B256)>);
 
+/// What one node's byzantine wrappers did — the tamper's own witness. A wrapper
+/// that never fired leaves the counters at zero, which is what makes "the branch I
+/// asserted is the branch the run took" checkable instead of assumed.
 #[cfg(feature = "dpos-devnet-byzantine")]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct ByzFacts {
-    // ---- R-002, `Role::TwoReveals` ----
     /// `DkgBody::Reveal` broadcasts this node's wrapper intercepted.
     pub reveals_seen: u64,
-    /// Of those, the ones it actually split (original to the others, forged to
-    /// the victim).
+    /// Of those, the ones it actually split (original to the others, forged to the
+    /// victim).
     pub reveals_swapped: u64,
     /// `keccak256(encode(L1))` — the log every honest member but the victim got.
     pub log1_hash: Option<B256>,
     /// `keccak256(encode(L2))` — the log the victim got instead.
     pub log2_hash: Option<B256>,
-    /// Both logs `check` against the epoch's `Info` AND name this node as the
-    /// dealer — the production predicate a receiver applies
-    /// (`ceremony.rs::handle`'s `Reveal` arm).
+    /// Both logs `check` against the epoch's `Info` and name this node as the
+    /// dealer.
     pub both_logs_check: bool,
     /// The victim the forged log was addressed to.
     pub victim: Option<PeerPubkey>,
-    /// Every `ShareConfirm` this node BROADCAST: the ceremony epoch it was framed
-    /// under, its own committee seat, and the `(seat, log hash)` set it claims to
-    /// hold. The EPOCH is carried because a reader must be able to scope the claim
-    /// — a longer run mints a confirmation per target epoch, and "the last one" is
-    /// then a property of the run's length. Recorded on EVERY node, the
-    /// honest ones included, because it is the only place the stand can read a
-    /// node's `recorded_dkg_logs` index: the confirmation is minted from that index
-    /// alone (`beacon/confirmations.rs::mint`), which is written only by the
-    /// ceremony's `record_checked_log`. A victim whose confirm names the FORGED
-    /// hash at the dealer's seat is a direct observation that the second log was
-    /// recorded — not an inference from the share it ends up without.
+    /// Every `ShareConfirm` this node broadcast: ceremony epoch, its own seat, and
+    /// the `(seat, log hash)` set it claims. Recorded on every node, because a
+    /// victim's confirm naming the forged hash at the dealer's seat is a direct
+    /// observation that the second log was recorded.
     pub confirms_sent: Vec<SentConfirm>,
     /// Signer schemes this node's `Beacon` wrapper rebuilt over the
     /// verify-only oracle.
     pub schemes_withheld: u64,
-    /// `(the honest scheme signs a probe subject, the withheld one does)` at the
-    /// last rebuild — the withholding's own witness. `Some((true, false))` is the
-    /// only shape that proves the partial is being withheld rather than absent.
+    /// `(the honest scheme signs a probe subject, the withheld one does)` at the last
+    /// rebuild — `Some((true, false))` is the only shape that proves the partial is
+    /// being withheld rather than absent.
     pub withhold_probe: Option<(bool, bool)>,
 
-    // ---- R-008, `Role::ForgedSeedUpstream` ----
     /// `Finalized{h}` answers this node served inside the window with a σ slot
     /// present.
     pub certs_seen: u64,
@@ -1706,22 +1316,17 @@ pub(super) struct ByzFacts {
     pub forged_heights: Vec<u64>,
     /// Every forged answer decoded back to `Some(σ')` with `σ' != σ`.
     pub forged_seed_differs: bool,
-    /// Every forged answer's multisig half re-encoded byte-identically — the
-    /// certificate bitmap and aggregate were NOT touched (and are not compared
-    /// as bytes anywhere else: this is the one place the stand knows both
-    /// versions of the same certificate).
+    /// Every forged answer's multisig half re-encoded byte-identically: the bitmap
+    /// and aggregate were not touched.
     pub forged_vote_half_intact: bool,
-    /// ARCHIVE-POISONING WITNESS, kept by every node that is NOT forging: the
-    /// heights it served whose σ had already been served under a DIFFERENT round.
-    /// A σ is unique per `(round, PK)` (`seed.rs`), so an honest archive can never
-    /// produce one — a non-empty list means this node relayed a forgery it had
-    /// itself accepted.
+    /// The heights this non-forging node served whose σ had already been served under
+    /// a different round. A σ is unique per `(round, PK)`, so an honest archive can
+    /// never produce one.
     pub served_seed_replays: Vec<u64>,
 
-    // ---- R-004, `Role::InflatedProbe` ----
-    /// `Latest` answers this serve side inflated (height += `LATEST_INFLATION`).
+    /// `Latest` answers this serve side inflated by `LATEST_INFLATION`.
     pub latest_inflated: u64,
-    /// The last real / forged tip height — `inflate_to == inflate_from +
+    /// The last real / forged tip height; `inflate_to == inflate_from +
     /// LATEST_INFLATION` is the delta witness.
     pub inflate_from: Option<u64>,
     pub inflate_to: Option<u64>,
@@ -1731,7 +1336,6 @@ pub(super) struct ByzFacts {
     /// re-pointed to the new digest).
     pub inflate_structural_ok: bool,
 
-    // ---- R-001 var Б, `Role::LyingUpstream` ----
     /// `Latest` answers this serve side forged the `result` of.
     pub result_forged: u64,
     /// The last real / forged tip `result`.
@@ -1742,16 +1346,12 @@ pub(super) struct ByzFacts {
     /// Every forged answer still passed `verify_jump_structural`.
     pub result_structural_ok: bool,
 
-    // ---- R-009, `Role::WrongHeightFinalized` ----
     /// `Finalized{h}` by-height pulls this serve side answered with the `h − 1` pair.
     pub wrong_height_served: u64,
-    /// `(requested h, served height)` for each substitution — the witness that the
-    /// served height is EXACTLY `requested − 1` (asserted per serve, kept for the log).
+    /// `(requested h, served height)` for each substitution.
     pub wrong_height_pairs: Vec<(u64, u64)>,
-    /// Every substitution served a wholly real, self-consistent finalization
-    /// (`payload == block.digest()`) of height `requested − 1` — NOTHING was mutated,
-    /// only the wrong height was sent. The one property that separates R-009 from the
-    /// mutating forgers.
+    /// Every substitution served a wholly real, self-consistent finalization of
+    /// height `requested − 1`: nothing was mutated, only the wrong height was sent.
     pub wrong_height_valid: bool,
 }
 
@@ -1776,8 +1376,8 @@ impl ByzReport {
 /// frontier resolver engine gets as producer and consumer.
 #[derive(Clone)]
 pub(super) struct CountingHandler {
-    /// The PRODUCTION handler, over the stand's one runtime context — nothing
-    /// about `deliver`'s five checks is re-implemented here.
+    /// The production handler, over the stand's one runtime context — nothing about
+    /// `deliver`'s five checks is re-implemented here.
     inner: FrontierHandler<deterministic::Context>,
     counters: UpstreamCounters,
 }
@@ -1822,12 +1422,9 @@ impl Consumer for CountingHandler {
 }
 
 /// Distinct payloads one node's `BROADCAST_CHANNEL` receiver saw, keyed by
-/// `(mux sub-channel, sender)` — what the buffered body engine's per-sender
-/// deque would have to hold to keep every body of one sub-channel resident. The
-/// DKG agreement instances take the sub-channels at and above
-/// `DKG_SUBCHANNEL_BASE`; the per-epoch `OrderBlock` bodies ride the epoch's own
-/// number. Payloads are keyed by their keccak, so a re-broadcast of the same
-/// body (a `Plan::Forward`) counts once, as it does in the engine's deque.
+/// `(mux sub-channel, sender)` — what the buffered body engine's per-sender deque
+/// would have to hold. Payloads are keyed by their keccak, so a re-broadcast of the
+/// same body counts once, as it does in the engine's deque.
 #[derive(Clone, Debug, Default)]
 pub(super) struct BodyTap(Arc<Mutex<BodiesBySender>>);
 
@@ -1856,9 +1453,8 @@ impl BodyTap {
 }
 
 /// A `Receiver` that hands every frame through unchanged and, when it carries a
-/// [`BodyTap`], records the frame's sub-channel and payload first. Every one of
-/// a node's five plane channels is wrapped in it (the mux brokers share one
-/// receiver type), and only the broadcast channel's carries a tap.
+/// [`BodyTap`], records the frame's sub-channel and payload first. Every plane
+/// channel is wrapped in it; only the broadcast channel's carries a tap.
 #[derive(Debug)]
 pub(super) struct TapReceiver<R> {
     inner: R,

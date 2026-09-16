@@ -1,13 +1,12 @@
 //! A `tracing::Subscriber` that collects WARN/ERROR events for the test on the
-//! current thread. `tracing-subscriber` is not a dev-dependency and is not added
-//! for this: the crate's tests never installed a global subscriber before, and a
-//! ~50-line implementation is enough to see `SafetyHalt` and `LOG ERROR` lines.
+//! current thread. `tracing-subscriber` is not a dev-dependency, and a ~50-line
+//! implementation is enough to see `SafetyHalt` and `LOG ERROR` lines.
 //!
 //! One global subscriber serves every test in the process (tracing allows a
-//! single `set_global_default`); the deterministic runner is single-threaded,
-//! so an event belongs to whichever test thread it is emitted on, and each
-//! thread routes to its own sink through a thread-local. Events on a thread
-//! with no sink (another test module's) are dropped.
+//! single `set_global_default`); the deterministic runner is single-threaded, so
+//! an event belongs to whichever test thread it is emitted on, and each thread
+//! routes to its own sink through a thread-local. Events on a thread with no sink
+//! (another test module's) are dropped.
 
 use std::{
     cell::RefCell,

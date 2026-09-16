@@ -1,6 +1,3 @@
-//! [`CommitteeStore`] — the production [`Committee`]: one map, one anchor, one
-//! producer.
-
 use super::{
     Anchor, Committee, CommitteeError, CommitteeRecord, EpochReads, EpochVerifier, Geometry,
     GeometryRx, Member,
@@ -18,18 +15,14 @@ use tracing::error;
 
 use crate::SCHEME_RETENTION_EPOCHS;
 
-/// A committee read that will never succeed, by cause (`reason` label). One
-/// counter rather than one per cause, because the interesting alert is "this
-/// node refused an epoch permanently" and the cause is what the operator reads
-/// next; the `error!` beside it carries the detail.
+/// Counts committee reads that can never succeed, labelled by `reason`; the
+/// `error!` beside it has the detail.
 pub(crate) const READ_PERMANENT: &str = "dpos_committee_read_permanent_total";
 /// An epoch refused by the window predicate, by `side` (`above`/`below`). The
-/// two sides mean opposite things — see [`CommitteeError::is_transient`] — so
-/// one counter without the label would be unreadable.
+/// label is load-bearing: the two sides differ in whether a retry can help.
 pub(crate) const OUT_OF_WINDOW: &str = "dpos_committee_out_of_window_total";
-/// An epoch inside the window this node cannot see yet. Expected while a node
-/// catches up; a rate that does not fall is the empty-committee case §5.4 names
-/// (the chain committed nothing, i.e. it halted).
+/// An epoch inside the window this node cannot see yet; expected while catching
+/// up, so a rate that never falls means the chain committed nothing.
 pub(crate) const NOT_READABLE: &str = "dpos_committee_not_readable_total";
 
 /// `weights: None` — the contract's ring wrapped past an in-window epoch.
@@ -45,22 +38,13 @@ pub(crate) const REASON_READ_ERROR: &str = "read_error";
 /// The anchor's own state probe faulted at a materialized height.
 pub(crate) const REASON_ANCHOR_FAULT: &str = "anchor_fault";
 
-/// Ticks once per [`Committee::upgrade_scheme`] refused for replacing a
-/// beacon-active scheme with an oracle-less one. Its normal value is zero: a
-/// non-zero rate means some path is upgrading a beacon-active epoch without an
-/// oracle, and the epoch would have returned to vote-only certificate admission
-/// without the guard.
+/// Counts scheme upgrades refused for dropping the beacon oracle.
 pub(crate) const ORACLE_DROP_REFUSED: &str = "dpos_epoch_scheme_oracle_drop_refused_total";
 
-/// One epoch's slot in the store's single map: the frozen record and the
-/// certificate scheme built from it.
-///
-/// ONE slot and not two maps, because the two have one lifetime and one
-/// retention — an epoch the window has dropped must not keep a scheme the
-/// marshal would still verify under, and a scheme must not exist for an epoch
-/// whose committee this node never read. `scheme` is `None` only while the
-/// [`EpochVerifier`] cannot build one yet (the beacon is younger than the
-/// store); it is filled by the first [`Committee::scheme`] after that.
+/// One epoch's slot in the store's single map: the frozen record and the scheme
+/// built from it. One slot rather than two maps, because a scheme must not
+/// outlive the record's window nor exist for an epoch never read; `scheme` is
+/// `None` until the [`EpochVerifier`] can build one.
 struct EpochEntry {
     record: Arc<CommitteeRecord>,
     scheme: Option<Arc<BlsScheme>>,
@@ -69,18 +53,9 @@ struct EpochEntry {
 /// One epoch's slot after the contract answered something no committed epoch
 /// can answer ([`ReadClass::Impossible`]).
 ///
-/// The refusal is MEMOISED, which the first version of this store deliberately
-/// did not do — and that was the defect: an impossible answer was re-derived by
-/// every consumer on every call, so the two staticcalls of a read that cannot
-/// succeed were paid again on the marshal actor's own task, for as long as the
-/// epoch stayed in the window. Keeping the verdict costs one entry, bounded by
-/// the window like everything else here, and makes the second `committee(E)`
-/// free.
-///
-/// `reason` rides along so the refusal is still COUNTED under the cause that
-/// produced it: an operator watching
-/// `dpos_committee_read_permanent_total{reason}` sees the same rate as before,
-/// with the contract reads gone from underneath it.
+/// Memoised so the two staticcalls of a read that cannot succeed are paid once
+/// per epoch instead of on every `committee(E)`; `reason` keeps the refusal
+/// counted under the cause that produced it.
 struct Poison {
     error: ReadError,
     reason: &'static str,
@@ -88,80 +63,45 @@ struct Poison {
 
 /// Everything the store mutates, behind one lock.
 ///
-/// The lock is NEVER held across a staking read: an `eth_call` into reth is a
+/// The lock is never held across a staking read: an `eth_call` into reth is a
 /// blocking state read, and holding the map across it would serialize every
 /// consumer behind the slowest reader.
 #[derive(Default)]
 struct State {
     records: BTreeMap<u64, EpochEntry>,
-    /// Epochs whose PERMANENT failure has already been logged.
+    /// Epochs whose permanent failure has already been logged.
     ///
-    /// A [`ReadClass::Permanent`] failure is re-derived on every call (a revert
-    /// can start answering once an operator repairs its cause, so it is not
-    /// memoised), so without this the first reverting contract would produce one
-    /// `error!` per consumer per tick. An impossible answer is memoised in
-    /// `poisoned` below and logged once through this same set. It is
-    /// pruned by the same window floor as `records` ([`CommitteeStore::prune`]),
-    /// which is what makes "once per epoch" true: an epoch is only ever
-    /// forgotten together with the window that could still ask about it, and an
-    /// epoch below the floor is refused by the window before any read is
-    /// attempted. Bounded by the window's width for the same reason.
+    /// A [`ReadClass::Permanent`] failure is re-derived on every call, so
+    /// without this the first reverting contract would log one `error!` per
+    /// consumer per tick. Pruned by the same window floor as `records` — which
+    /// is what makes "once per epoch" true — and bounded by the window's width.
     reported: BTreeSet<u64>,
-    /// Epochs the contract answered IMPOSSIBLY, with the verdict to repeat —
-    /// see [`Poison`].
-    ///
-    /// A map beside `records` rather than a variant inside `EpochEntry`,
-    /// because the two are not alternatives in the type's other direction: an
-    /// entry carries a record AND a scheme, and a poisoned epoch has neither
-    /// and never will. It is pruned by the same window floor, so a poisoned
-    /// epoch is forgotten exactly when the window stops admitting it — at which
-    /// point the window predicate refuses it anyway, before any read.
-    ///
-    /// It takes PRECEDENCE over `records`, which matters in one case only: the
-    /// contract fork found by [`CommitteeStore::install`], where a record for
-    /// the epoch already exists. The epoch is refused from then on rather than
-    /// answered from the record that happened to get there first — the chain
-    /// has stated two different committees for it, and serving either is
-    /// serving a guess.
+    /// Epochs the contract answered impossibly, with the verdict to repeat —
+    /// see [`Poison`]. A map beside `records` because a poisoned epoch has
+    /// neither a record nor a scheme, and it takes precedence over `records`:
+    /// a forked epoch is refused rather than answered from whichever read won.
     poisoned: BTreeMap<u64, Poison>,
 }
 
-/// The committee module's production store.
-///
-/// Generic over the reads rather than over a concrete reader so the tests can
-/// count staticcalls and branch an answer by hash — the two properties the
-/// module is actually asserting are properties of the CALLER, not of the
-/// contract.
+/// The production [`Committee`] store, generic over the reads so tests can
+/// count staticcalls and branch an answer by hash.
 pub struct CommitteeStore<R> {
     reads: R,
     anchor: Arc<dyn Anchor>,
     geometry: GeometryRx,
-    /// The ONE producer of a verify-only scheme — see [`EpochVerifier`].
+    /// The single producer of a verify-only scheme — see [`EpochVerifier`].
     verifier: EpochVerifier,
     state: Mutex<State>,
-    /// Highest readable epoch, published as a wake-up. See
-    /// [`CommitteeStore::anchor_advanced`].
+    /// Highest readable epoch, published as a wake-up.
     readable: tokio::sync::watch::Sender<u64>,
 }
 
 impl<R: EpochReads> CommitteeStore<R> {
-    /// `geometry` carries the FROZEN `(activation, interval)` pair once its
-    /// single in-process source has frozen it — in production the beacon
-    /// plane's `EpochTransition::frozen_geometry()`, republished on a watch.
-    ///
-    /// LAZY rather than by value, and that is a wiring fact rather than a
-    /// preference: the store is built where the anchor is (before the plane's
-    /// poller has seen a finalized block), while the geometry is frozen by the
-    /// first readable, DPoS-scheduled block that poller reaches. Taking it by
-    /// value would have forced the store to be built later than the cursor it
-    /// anchors on — i.e. a second cursor — or the node to block its startup on
-    /// a chain read. Until the first `Some`, every read answers
-    /// [`CommitteeError::NotReadable`] with `ready_at: 0` and touches nothing.
-    /// `verifier` is the ONE producer of a verify-only scheme (see
-    /// [`EpochVerifier`]): it runs on the record this store just installed, so
-    /// no caller can register a scheme for an epoch whose committee the module
-    /// has not read, and no epoch can end up with a scheme over a committee
-    /// other than the one in its record.
+    /// `geometry` arrives lazily, because the store is built before the plane
+    /// freezes `(activation, interval)`: until the watch holds a pair, every read
+    /// answers [`CommitteeError::NotReadable`] with `ready_at: 0` and touches
+    /// nothing. `verifier` runs on the record this store just installed, so no
+    /// scheme can be built for a committee the module has not read.
     pub fn new(
         reads: R,
         anchor: Arc<dyn Anchor>,
@@ -192,22 +132,16 @@ impl<R: EpochReads> CommitteeStore<R> {
         Self::geometry_of(&self.geometry)
     }
 
-    /// `epoch(anchor) + MAX_COMMITTEE_LOOKAHEAD_EPOCHS` — the top of the window.
     fn highest_readable(&self, geometry: &Geometry) -> u64 {
         geometry.epoch_of(self.anchor.height()) + MAX_COMMITTEE_LOOKAHEAD_EPOCHS
     }
 
     /// Drop what the window no longer admits. Called with the lock held.
     ///
-    /// Retention is the window FLOOR, not a count. The map is therefore bounded
-    /// by the WIDTH of the window — `SCHEME_RETENTION_EPOCHS +
-    /// MAX_COMMITTEE_LOOKAHEAD_EPOCHS + 1` entries — and, more importantly,
-    /// every epoch the module can still answer keeps its first value. A count
-    /// of `SCHEME_RETENTION_EPOCHS` would have evicted the bottom of its own
-    /// window, and the next, DIFFERENT answer for such an epoch would have
-    /// found a vacant slot and been installed silently: the contract fork
-    /// write-once exists to catch, missing exactly where §5.4 puts the
-    /// slasher's oldest evidence.
+    /// Retention is the window floor, not a count: a count would evict epochs
+    /// the module still answers for, so a later, different answer would install
+    /// into the vacant slot unnoticed — the very fork the write-once check
+    /// exists to catch.
     fn prune(state: &mut State, lo: u64) {
         state.records.retain(|epoch, _| *epoch >= lo);
         state.reported.retain(|epoch| *epoch >= lo);
@@ -223,24 +157,14 @@ impl<R: EpochReads> CommitteeStore<R> {
         )
     }
 
-    /// A permanent read failure: counted every time, logged ONCE for as long as
-    /// the epoch stays inside the window, then returned. (Leaving the window is
-    /// the only way an epoch is forgotten, and an epoch below the floor is
-    /// refused before any read — so "once" is once.) A transient failure is
-    /// counted nowhere and returned silently: it is the normal shape of a node
-    /// that is still catching up.
+    /// A permanent read failure: counted every time, logged once while the epoch
+    /// stays in the window, then returned; a transient failure is returned
+    /// uncounted, the normal shape of a node still catching up.
     ///
-    /// The two permanent classes part company here, and only here:
-    /// [`ReadClass::Impossible`] POISONS the epoch's slot — the verdict is kept
-    /// and every later `committee(E)` answers it without a staticcall — while
-    /// [`ReadClass::Permanent`] (a revert, a storage fault at the anchor) is
-    /// re-derived as before. The asymmetry is the split itself: an impossible
-    /// answer is a statement the chain makes about ITSELF and cannot take back,
-    /// whereas a revert can start answering the moment an operator repairs what
-    /// produced it, and memoising that would need a restart to clear.
-    ///
-    /// Every caller is past the window predicate, so "in the window" is a
-    /// property of the call site, not a condition re-checked here.
+    /// [`ReadClass::Impossible`] poisons the epoch's slot — the chain cannot take
+    /// that answer back — while a [`ReadClass::Permanent`] revert is re-derived,
+    /// since repairing its cause must not need a restart. Every caller is past
+    /// the window predicate, so the window is not re-checked here.
     fn failed(&self, epoch: u64, error: ReadError, reason: &'static str) -> CommitteeError {
         let class = error.class();
         if class != ReadClass::Transient {
@@ -256,9 +180,8 @@ impl<R: EpochReads> CommitteeStore<R> {
                 state.reported.insert(epoch)
             };
             if first {
-                // One prefix for both classes — an operator greps for the
-                // refusal, not for its taxonomy — and two tails, because the
-                // two demand different things of them.
+                // Both messages below share the prefix "committee read failed PERMANENTLY
+                // inside the read window", so an operator greps one string.
                 if class == ReadClass::Impossible {
                     error!(
                         epoch,
@@ -283,22 +206,16 @@ impl<R: EpochReads> CommitteeStore<R> {
         CommitteeError::Read(error)
     }
 
-    /// Build the record from the two answers, or classify why it cannot be one.
     fn build(
         &self,
         epoch: u64,
         snap: ValidatorSetSnapshot,
         changed: bool,
     ) -> Result<CommitteeRecord, CommitteeError> {
-        // The BLS projection is the one derivation that can fail: the reader
-        // rejects duplicate PEER keys (`check_committee_ordering`) but nothing
-        // on chain enforces cross-validator uniqueness of the BLS half, so the
-        // `BiMap` can still refuse. It belongs to the §5.4 "the contract
-        // answered something impossible" class, which is permanent.
-        //
-        // It is taken through the PRODUCTION constructor and before the
-        // snapshot is taken apart, so this module cannot grow a second
-        // derivation of a committee from a snapshot.
+        // The BLS projection is the one derivation that can fail: the reader rejects
+        // duplicate peer keys, but nothing on chain enforces uniqueness of the BLS
+        // half. Taken through the production constructor, so there is no second
+        // derivation here.
         let bls = crate::scheme::epoch_committee_from_snapshot(&snap).map_err(|e| {
             self.failed(
                 epoch,
@@ -309,12 +226,10 @@ impl<R: EpochReads> CommitteeStore<R> {
             )
         })?;
 
-        // `weights: None` means the contract's ring has wrapped past this
-        // epoch. Inside the window that is impossible — see
-        // `WINDOW_FITS_THE_WEIGHT_RING` — so it is a contract fork, not a
-        // missing optional. Absent is NOT a vector of zeros: the leader elector
-        // reads these, and a uniform lottery nobody asked for is a per-node
-        // leader split rather than a visible failure.
+        // `weights: None` inside the window is impossible (see
+        // `WINDOW_FITS_THE_WEIGHT_RING`), so it means a contract fork, not a
+        // missing optional; defaulting to zeros would give the leader elector a
+        // uniform lottery, i.e. a per-node leader split rather than a failure.
         let Some(weights) = snap.weights else {
             return Err(self.failed(
                 epoch,
@@ -337,11 +252,9 @@ impl<R: EpochReads> CommitteeStore<R> {
             })
             .collect();
 
-        // One weight per member, same order — `CommitteeRecord::weights` says
-        // so and the leader elector indexes them positionally. The production
-        // reader forces the length, but the module is generic over
-        // `EpochReads` precisely so another implementation can be substituted,
-        // and an unwritten precondition of a port is not a guarantee.
+        // Weights are positional — one per member, in the member order the leader
+        // elector indexes — and the module is generic over the read port, so the
+        // length is a checked precondition rather than an assumption.
         if weights.len() != members.len() {
             return Err(self.failed(
                 epoch,
@@ -354,10 +267,8 @@ impl<R: EpochReads> CommitteeStore<R> {
             ));
         }
 
-        // ONE duplicate policy for one impossible input: `from_pairs` above
-        // already refused a repeated key, so the participant projection refuses
-        // it too rather than silently de-duplicating and handing the peer-set a
-        // roster shorter than the committee.
+        // A repeated peer key is refused rather than de-duplicated: the peer-set
+        // projection must not hand out a roster shorter than the committee.
         let participants =
             commonware_utils::ordered::Set::try_from_iter(members.iter().map(|m| m.peer.clone()))
                 .map_err(|e| {
@@ -383,15 +294,10 @@ impl<R: EpochReads> CommitteeStore<R> {
 
     /// Install the record, or reconcile with one that got there first.
     ///
-    /// The occupied arm is NOT dead code and NOT a `debug_assert`: two
-    /// consumers asking for the same uncached epoch both miss the map, both
-    /// issue their own pair of staticcalls (the lock is not held across them —
-    /// see [`State`]) and both arrive here. Agreeing is the normal case.
-    /// DISAGREEING means one anchor's state and another's answered two
-    /// different committees for one epoch, which no honest chain can do; the
-    /// FIRST record stands and the second is refused, because silently taking
-    /// the newer one is exactly how a node would end up with two authoritative
-    /// versions of one epoch.
+    /// The occupied arm is reachable, not dead code: the lock is not held across
+    /// the staticcalls, so two consumers can miss the map together and both
+    /// arrive here. Agreeing is the normal case; disagreeing means the chain
+    /// answered two committees for one epoch, and the first record stands.
     fn install(
         &self,
         epoch: u64,
@@ -399,13 +305,6 @@ impl<R: EpochReads> CommitteeStore<R> {
         lo: u64,
     ) -> Result<Arc<CommitteeRecord>, CommitteeError> {
         let record = Arc::new(record);
-        // The epoch's verify-only scheme, built BEFORE the lock and stored in
-        // the same slot as the record: there is no observable moment where an
-        // epoch has a committee here but no scheme, and no other producer that
-        // could put a different committee's scheme in that slot. Outside the
-        // lock because the verifier asks the beacon for the epoch's oracle, and
-        // holding the map across another subsystem's read is what the `State`
-        // doc forbids.
         let scheme = (self.verifier)(&record).map(Arc::new);
         let mut state = self.state.lock().unwrap();
         if let Some(entry) = state.records.get(&epoch) {
@@ -417,11 +316,9 @@ impl<R: EpochReads> CommitteeStore<R> {
             let forked = ReadError::AbiDecode(format!(
                 "epoch {epoch} committee was already read with a different value"
             ));
-            // The epoch is poisoned even though a record for it is sitting
-            // right here: two different committees for one epoch means the
-            // chain contradicted itself, and answering from whichever read won
-            // the race would hand a consumer one of the two guesses. From here
-            // on the epoch answers the refusal, at no further cost.
+            // Poisoned even though a record sits right here: the chain stated two
+            // different committees for this epoch, and serving whichever read won
+            // the race would be serving a guess.
             state.poisoned.entry(epoch).or_insert_with(|| Poison {
                 error: forked.clone(),
                 reason: REASON_FORK,
@@ -440,11 +337,9 @@ impl<R: EpochReads> CommitteeStore<R> {
             }
             return Err(CommitteeError::Read(forked));
         }
-        // Prune BEFORE the insert, so what this call returns is what the map
-        // holds: the record just read was inside the window when it was read —
-        // `lo` is the floor THAT read was gated on, not a fresher one — and an
-        // anchor that jumped past it mid-read drops it on the next advance
-        // rather than on the way out of here.
+        // Prune before the insert, so what this call returns is what the map
+        // holds: `lo` is the floor this read was gated on, and a record an
+        // anchor jump has since passed stays until the next advance.
         Self::prune(&mut state, lo);
         state.records.insert(
             epoch,
@@ -467,10 +362,9 @@ impl<R: EpochReads> CommitteeStore<R> {
             }
             entry.record.clone()
         };
-        // The install-time verifier answered `None` — the beacon did not exist
-        // yet. Retry it here rather than remembering the absence: the SAME one
-        // producer, run later, so the epoch is not pinned to "no scheme" for the
-        // life of the process by the order in which the plane was built.
+        // The install-time verifier answered `None` because the beacon did not
+        // exist yet; retrying here rather than caching the absence keeps the
+        // epoch from being pinned to no scheme by the order the plane was built.
         let built = Arc::new((self.verifier)(&record)?);
         let mut state = self.state.lock().unwrap();
         let entry = state.records.get_mut(&epoch)?;
@@ -490,7 +384,7 @@ impl<R> CommitteeStore<R> {
         self.state.lock().unwrap().records.keys().copied().collect()
     }
 
-    /// The epochs whose slot is POISONED — the memoised-refusal observation.
+    /// The epochs whose slot is poisoned — the memoised-refusal observation.
     pub(super) fn poisoned_epochs(&self) -> Vec<u64> {
         self.state
             .lock()
@@ -518,20 +412,17 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
     fn committee(&self, epoch: u64) -> Result<Arc<CommitteeRecord>, CommitteeError> {
         let anchor_height = self.anchor.height();
 
-        // 0. GEOMETRY. Without `(activation, interval)` there is no epoch
-        //    arithmetic at all — no window, no commit height — so there is
-        //    nothing this node could read and no EVM call it could justify.
-        //    `ready_at: 0` says so honestly: the retry is gated on the plane
-        //    freezing the geometry, not on any height.
+        // Without geometry there is no epoch arithmetic — no window, no commit
+        // height — so nothing can be read and no EVM call is justified;
+        // `ready_at: 0` says the retry waits on the freeze, not on a height.
         let Some(geometry) = self.geometry() else {
             metrics::counter!(NOT_READABLE).increment(1);
             return Err(CommitteeError::NotReadable { epoch, ready_at: 0 });
         };
 
-        // 1. WINDOW — a predicate on the request. No EVM, no lock, no anchor
-        //    hash: an epoch outside the window is refused whatever the chain
-        //    says, which is what makes a p2p frame naming an arbitrary epoch
-        //    free to reject.
+        // A predicate on the request, checked before any EVM call or lock: an
+        // epoch outside the window is refused whatever the chain says, which is
+        // what makes a p2p frame naming an arbitrary epoch free to reject.
         let (lo, hi) = Self::window(&geometry, anchor_height);
         if epoch < lo || epoch > hi {
             let side = if epoch > hi { "above" } else { "below" };
@@ -539,29 +430,19 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
             return Err(CommitteeError::OutOfWindow { epoch, lo, hi });
         }
 
-        // 2. READABLE — is the epoch committed in a state this anchor covers?
-        //    Also no EVM: on backfill, and in the first blocks after a start,
-        //    the answer is arithmetic.
+        // Answered by arithmetic, so backfill and the first blocks after a start
+        // cost no EVM call.
         let ready_at = geometry.commit_height(epoch);
         if anchor_height < ready_at {
             metrics::counter!(NOT_READABLE).increment(1);
             return Err(CommitteeError::NotReadable { epoch, ready_at });
         }
 
-        // 3. CACHE. A hit is the final answer because the record is write-once
-        //    and the anchor that produced it is irrelevant inside the window.
-        //    The window is checked FIRST on purpose: an epoch that has dropped
-        //    under the floor is refused, not answered from a leftover entry —
-        //    and there is no such entry anyway, since retention IS the floor.
-        //
-        //    A POISONED slot is a hit too, and it is consulted first: an
-        //    impossible answer is as final as a record, and repeating it here
-        //    is what keeps the two staticcalls of a read that cannot succeed
-        //    off the hot path (the marshal actor's own task asks for exactly
-        //    this through `CertProvider::scoped`). The counter still ticks, so
-        //    the refusal rate an operator watches is unchanged; the `error!` is
-        //    not repeated, because `failed` already logged it once for as long
-        //    as the epoch stays in the window.
+        // A hit is final: the record is write-once and the anchor that produced it
+        // does not matter inside the window; the window is checked first so an epoch
+        // under the floor is refused rather than served from a leftover. A poisoned
+        // slot is a hit too and is consulted first — the counter still ticks, but the
+        // `error!` is not repeated, since `failed` logged it once.
         let cached = {
             let state = self.state.lock().unwrap();
             match state.poisoned.get(&epoch) {
@@ -581,11 +462,9 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
             None => {}
         }
 
-        // 4. ANCHOR HASH. `Ok(None)` is "the height is not executed yet" — a
-        //    park, not a fault. `Err` is a fault at a materialized height, and
-        //    `failed` routes it by its own class: a header-index miss is
-        //    permanent (`Backend`), a torn static-file read of the same storage
-        //    is transient and costs this epoch one retry, not the epoch itself.
+        // `Ok(None)` parks: the height is not executed yet. `Err` is a fault at a
+        // materialized height, routed by its own class — a torn static-file read
+        // is transient, a header-index miss is not.
         let at = match self.anchor.executed_hash(anchor_height) {
             Ok(Some(hash)) => hash,
             Ok(None) => {
@@ -598,17 +477,16 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
             Err(e) => return Err(self.failed(epoch, e, REASON_ANCHOR_FAULT)),
         };
 
-        // 5. THE TWO STATICCALLS, at ONE hash. The snapshot does not carry the
-        //    qual bit, so the bit is a second call — but at the same `at`, so
-        //    the two halves of one question cannot describe two blocks.
+        // The snapshot does not carry the qual bit, so it takes a second call at
+        // the same `at` — the two halves of one question cannot describe two blocks.
         let snap = self
             .reads
             .epoch_committee_snapshot(epoch, at)
             .map_err(|e| self.failed(epoch, e, REASON_READ_ERROR))?;
         if snap.validators.is_empty() {
             // An uncommitted epoch is `Ok` with an empty committee, never an
-            // error — the contract only ever skips a commit together with
-            // halting the chain, so this is "not yet", never "never".
+            // error: the contract only skips a commit together with halting the
+            // chain, so this is "not yet", never "never".
             metrics::counter!(NOT_READABLE).increment(1);
             return Err(CommitteeError::NotReadable {
                 epoch,
@@ -620,7 +498,6 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
             .dkg_qual(epoch, at)
             .map_err(|e| self.failed(epoch, e, REASON_READ_ERROR))?;
 
-        // 6. BUILD + INSTALL.
         let record = self.build(epoch, snap, changed)?;
         self.install(epoch, record, lo)
     }
@@ -630,17 +507,15 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
     }
 
     fn is_member(&self, epoch: u64, peer: &PeerPubkey) -> Result<bool, CommitteeError> {
-        // Over `participants`, which the record derived once and keeps sorted,
-        // rather than a scan of `members` in contract order: the record already
-        // carries the structure that answers this in a binary search.
+        // `participants` is sorted, so this is a binary search; a scan of
+        // `members` would be linear and in contract order.
         Ok(self.committee(epoch)?.participants.position(peer).is_some())
     }
 
     fn scheme(&self, epoch: u64) -> Option<Arc<BlsScheme>> {
-        // Reading the committee is what PRODUCES the scheme, so ask for it
-        // first. Everything expensive about that is already gated: an epoch
-        // outside the window or below its commit height costs no EVM call at
-        // all, and a hit is a map lookup.
+        // Reading the committee is what produces the scheme, so ask for it
+        // first; outside the window or below the commit height that costs no EVM
+        // call, and a hit is a map lookup.
         self.committee(epoch).ok()?;
         self.resolve_scheme(epoch)
     }
@@ -649,11 +524,10 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
         use commonware_cryptography::certificate::Scheme as _;
         let mut state = self.state.lock().unwrap();
         let Some(entry) = state.records.get_mut(&epoch) else {
-            // No record ⇒ no committee this node has read ⇒ nothing to raise
-            // the strength OF. Unreachable from the one caller (the engine
-            // spawn reads the record to build the scheme in the first place),
-            // and loud rather than silent because reaching it would mean a
-            // scheme was built from something other than the module's record.
+            // No record means no committee this node has read, so there is no
+            // strength to raise. Unreachable from the one production caller, which
+            // upgrades a committee it holds — loud because reaching it would mean a
+            // scheme came from somewhere else.
             error!(
                 epoch,
                 "refused a scheme upgrade for an epoch with no committee record — the scheme \
@@ -723,16 +597,15 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
     }
 
     fn geometry(&self) -> Option<Geometry> {
-        // The SAME accessor the window, `commit_height` and the retention floor
-        // read — not a second copy of `(activation, interval)`.
+        // Delegates to the one accessor, so the window, `commit_height` and the
+        // retention floor cannot disagree about `(activation, interval)`.
         Self::geometry_of(&self.geometry)
     }
 
     fn anchor_advanced(&self) {
-        // No geometry yet ⇒ no window to prune to and no readable epoch to
-        // publish. Nothing is lost: the map is empty (every read so far
-        // answered `NotReadable` before touching it) and the next advance after
-        // the freeze publishes the real value.
+        // No geometry means no window to prune to and no readable epoch to
+        // publish; nothing is lost, since every read so far answered
+        // `NotReadable` before touching the map.
         let Some(geometry) = self.geometry() else {
             return;
         };
@@ -743,24 +616,11 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
             Self::prune(&mut state, lo);
         }
 
-        // ALWAYS a notification, not only when the VALUE grew. The value is a
-        // hint — the highest epoch this node could read — but the two things a
-        // parked consumer is waiting for are not both epoch-shaped: an epoch
-        // below its commit height opens when the anchor passes that height (the
-        // value moves), while an epoch whose anchor height is not EXECUTED yet
-        // opens when execution catches up at the SAME height, and the value does
-        // not move at all. Publishing only on growth left the second class with
-        // no wake-up, which is a park with no retry — the exact defect
-        // `subscribe` exists to remove.
-        //
-        // The rate is the anchor's own: one per finalized derive, the edge the
-        // executor already fires `spawn_unblocked` on.
-        //
-        // The VALUE is still monotone, and that is kept by hand rather than by
-        // the publish condition: the anchor is monotone in production but the
-        // store recomputes the ceiling from it on every advance, so a hint that
-        // went backwards would be a hint a consumer could act on wrongly. `max`
-        // costs nothing and makes the two properties independent.
+        // Publish on every advance, not only on growth: an epoch below its commit
+        // height opens when the anchor passes that height, while one whose anchor
+        // height is not executed yet opens when execution catches up at the same
+        // height — the value does not move. The published value stays monotone
+        // through the `max`, so a consumer never sees the hint go backwards.
         let highest = self.highest_readable(&geometry);
         self.readable.send_if_modified(|current| {
             *current = (*current).max(highest);
@@ -776,46 +636,20 @@ impl<R: EpochReads> Committee for CommitteeStore<R> {
     }
 }
 
-/// The production [`Anchor`]: the executor's ordering-finalized cursor and
-/// reth's own finalized tag for the height, reth's materialized-state probe for
-/// the hash.
+/// The production [`Anchor`]: the executor's ordering-finalized cursor for the
+/// height, reth's own finalized tag as a floor under it, and reth's
+/// materialized-state probe for the hash.
 ///
-/// SOURCE (a) of the two the design offered, and the reason is that it is not a
-/// source at all — it is the cursor the executor already keeps. Every site that
-/// raises `Executor::ordering_finalized` raises this same
-/// [`FinalizedCursor`](crate::FinalizedCursor) with the same value in the same
-/// arm (`executor.rs:1085`/`:1149`, `:2441`/`:2451`, `:3291`/`:3566`), so
-/// introducing a second atomic here would have created a number that can
-/// disagree with the one the rest of the executor acts on. See
-/// [`FinalizedCursor::height`](crate::FinalizedCursor::height) for the one
-/// window where the two differ and why lagging is the safe direction.
+/// The tag matters because the cursor is only a process quantity: on a fresh
+/// consensus datadir beside an already-synced reth the cursor reads 0 while the
+/// node has finalized height N, and the window would be `[0, 2]` until the first
+/// finalized derive. The `max` is safe and monotone: the tag is
+/// `ordering_finalized − K` of a height this node finalized, so it can never name
+/// an unfinalized height, and it only moves forward, so the window never shrinks.
+/// An absent tag reads as 0.
 ///
-/// ## Why the reth tag is taken as a FLOOR
-///
-/// The cursor is a PROCESS quantity: it is born at zero and seeded inside
-/// `OuterBuilder::build`, from the marshal's durable acked cursor
-/// (`outer.rs` → `executor.rs` `Actor::init`). Reth's `finalized` tag is the
-/// same node's DURABLE one: this node's executor set it, from certified data,
-/// at `result_final_height(ordering_finalized, floor) = ordering_finalized − K`
-/// (`executor.rs` `update_finalized`, the result tier), and reth carries it
-/// across a restart. So on a fresh consensus datadir beside an already-synced
-/// reth — a follower after a cold-start jump, a node whose consensus store was
-/// wiped, any process between its plane being built and `build` running — the
-/// cursor says 0 while the node demonstrably finalized height N. Anchoring on
-/// the cursor alone makes the window `[0, 2]` there and every mid-chain epoch
-/// unreadable until the first finalized derive.
-///
-/// `max` of the two is therefore the height, and it is safe in both directions:
-/// the tag is `ordering_finalized − K` of a height THIS node finalized, so it
-/// can never name a height the node has not finalized (the property
-/// [`FinalizedCursor::height`](crate::FinalizedCursor::height) is chosen for),
-/// and it can never exceed the cursor once the cursor is seeded. It is also
-/// monotone — reth's tag only moves forward — so the window never shrinks.
-/// `None` (no tag yet: a genuinely fresh EL) reads as 0 and changes nothing.
-///
-/// The cursor itself is NOT touched: it is the executor's Tier-F cursor, and
-/// raising it from an EL tag would let a committee read move the tier the
-/// result gate samples.
+/// The cursor is left untouched: raising it from an EL tag would move the tier the
+/// executor's result gate samples.
 #[derive(Clone, Debug)]
 pub struct RethAnchor<P> {
     cursor: crate::FinalizedCursor,

@@ -13,24 +13,22 @@ use commonware_utils::Participant;
 
 use crate::BlsSignature;
 
-/// Outcome of verifying an assembled seed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SeedCheck {
     Valid,
     Invalid,
     /// The epoch key is not resolvable locally yet. The caller admits the
     /// certificate on its multisig half alone and nobody consumes its σ. The
-    /// oracle takes NO custody of the value.
+    /// oracle takes no custody of the value.
     NoKey,
 }
 
 /// The beacon's synchronous face for everything threshold.
 ///
-/// SYNC BY CONTRACT: every method is called inline from the simplex batcher
+/// Sync by contract: every method is called inline from the simplex batcher
 /// (`verify_attestations` loops per attestation) and from the sign/assemble
-/// paths. An implementation MUST NOT block on I/O and MUST NOT await; it reads
-/// locally held material under a lock and answers. Acquisition happens
-/// elsewhere, out of band.
+/// paths. An implementation must not block on I/O or await; it reads locally held
+/// material under a lock and answers. Acquisition happens elsewhere, out of band.
 ///
 /// Every method takes a [`Round`], which carries the epoch: the caller checks
 /// the epoch binding before delegating, so an implementation may trust
@@ -39,18 +37,17 @@ pub trait SeedOracle: std::fmt::Debug + Send + Sync + 'static {
     /// This node's partial for `round`. `None` ⇒ no usable share for the epoch.
     fn sign_partial(&self, round: Round) -> Option<BlsSignature>;
 
-    /// Verify one partial from participant `index`.
     fn verify_partial(&self, round: Round, index: Participant, value: &BlsSignature) -> bool;
 
-    /// Recover σ from `partials`. `threshold` is computed by the CALLER from the
+    /// Recover σ from `partials`. `threshold` is computed by the caller from the
     /// same `M: Faults` the vote quorum used — that is what keeps the seed
     /// threshold and the vote quorum in lockstep (see
     /// [`crate::beacon::recover_seed_with_threshold`]).
     ///
     /// Takes no `Round`, unlike its siblings, and cannot: `CertScheme::assemble`
     /// is handed attestations alone — no subject, hence no round. Recovery does
-    /// not need one either, being interpolation over the partials; only SIGNING
-    /// and VERIFYING a partial are message-bound.
+    /// not need one either, being interpolation over the partials; only signing
+    /// and verifying a partial are message-bound.
     fn recover(
         &self,
         partials: &[(Participant, BlsSignature)],

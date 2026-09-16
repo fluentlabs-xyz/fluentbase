@@ -1,6 +1,6 @@
 //! Per-epoch DKG ceremony orchestration over commonware Joint-Feldman.
 //!
-//! The committee active in epoch E-1 deals a FRESH threshold key (`previous =
+//! The committee active in epoch E-1 deals a fresh threshold key (`previous =
 //! None`) to committee[E]: each dealer broadcasts its public commitment, sends
 //! each player a private share, collects acks, and finalizes a signed dealer
 //! log; players/observers aggregate the logs into the group `Output` (`PK_E` +
@@ -12,22 +12,17 @@
 //! the test oracle — `#[cfg(test)]`-only (the networked `DkgActor`/`DkgCeremony`
 //! path is what runs in production); see the module gate in `beacon/mod.rs`.
 //
-// NOTE (share-less-on-join heal — §8.11.1): a seated committee[E] member that landed
-// WITHOUT E's share (missed the E-1 window) is now healed by the LOCAL recompute-from-
-// journal path (`beacon::actor::try_recompute` + `ceremony::recompute_scoped`), NOT by
-// a reshare: the member's share is a deterministic function of the consensus-agreed QUAL
-// dealer-log set (each log self-carries the recipient's point as ack-or-reveal,
-// `dkg.rs` `get_reveal`/`Player::finalize`), so retaining the durable journal + the
-// persistent resolver + a `dealers()`-scoped, `PK_E`-self-checked recompute repairs the
-// observer once it catches up — no new ceremony, no consensus-agreed trigger. This is a
-// HEAL (repairs after catch-up), not a PREVENTION of the transient observers>f stall.
+// A seated `committee[E]` member that landed without E's share is healed by the local
+// recompute-from-journal path, not by a reshare: its share is a deterministic
+// function of the agreed dealer-log set, so retaining the journal and recomputing
+// scoped to the pinned set repairs it once it catches up.
 //
 // TODO(dpos_beacon_share_reshare, v2 — secret-rotation / forward-secrecy ONLY): a
 // RESHARE (`Dealer::start(previous = Some(existing))`, NOT a fresh key) re-distributes
 // the SAME secret to the full player set while keeping `PK_E` identical. With the
 // recompute-heal above, reshare is NO LONGER the cure for share-less-on-join; it remains
 // only for genuine secret rotation / forward secrecy (bounding exposure of a leaked
-// share), and for the DIFFERENT churn>f "whole-DKG-fails" liveness class (tempo's
+// share), and for the different churn>f "whole-DKG-fails" liveness class (tempo's
 // reuse-previous-key-on-ceremony-failure belt). Deferred.
 
 use crate::beacon::outcome::DkgOutcome;
@@ -47,7 +42,7 @@ use std::collections::BTreeMap;
 
 /// Run a full Joint-Feldman DKG to completion (fresh key, `previous = None`),
 /// returning the agreed group [`DkgOutcome`] (== `PK_epoch`) and each player's
-/// secret [`Share`]. Every player computes the SAME outcome by construction.
+/// secret [`Share`]. Every player computes the same outcome by construction.
 pub fn run_local_dkg<R: CryptoRngCore>(
     rng: &mut R,
     namespace: &[u8],
@@ -71,7 +66,6 @@ pub fn run_local_dkg<R: CryptoRngCore>(
         player_objs.insert(k.public_key(), Player::new(info.clone(), k.clone())?);
     }
 
-    // Dealing round: each dealer distributes, collects acks, finalizes a log.
     let mut logs = Logs::<MinSig, PeerPubkey, N3f1>::new(info.clone());
     for dk in dealer_keys {
         let (mut dealer, pub_msg, priv_msgs) =
@@ -90,7 +84,6 @@ pub fn run_local_dkg<R: CryptoRngCore>(
         }
     }
 
-    // Finalize: each player derives its share + the agreed group output.
     let mut shares = BTreeMap::new();
     let mut outcome = None;
     for (pk, player) in player_objs {
@@ -140,16 +133,10 @@ mod tests {
         );
     }
 
-    // Item F: PK_E + seed determinism at the PRODUCTION committee size (n=51,
-    // f=16, MAX_PEER_SET_SIZE). The threshold seed is UNIQUE — any two distinct
-    // n−f (=35) seed-quorum subsets of the 51 partials recover the byte-identical signature
-    // — which is exactly why every deriving node computes the same prev_randao
-    // regardless of which quorum it observed. (Cross-player PK_E agreement is a
-    // commonware DKG guarantee; this asserts OUR seed machinery + quorum math at
-    // scale, not the library internals.) The n=51 ceremony completing in this
-    // unit confirms DKG feasibility at scale; the per-block gossip reachability
-    // within DKG_MARGIN_BLOCKS=10 is exercised by the rotation smoke at the real
-    // committee size, so the margin constant is left at 10.
+    /// PK_E and seed determinism at the production committee size (n=51, f=16): any two
+    /// distinct n-f seed-quorum subsets recover the byte-identical signature, which is
+    /// why every deriving node computes the same prev_randao regardless of which quorum
+    /// it observed.
     #[test]
     fn seed_is_threshold_unique_at_n51() {
         use commonware_codec::Encode as _;
@@ -169,7 +156,7 @@ mod tests {
             .map(|s| sign_seed_partial(s, &ns, round))
             .collect();
 
-        // Two DISTINCT seed-quorum subsets (n−f = 51−16 = 35) must recover the SAME
+        // Two distinct seed-quorum subsets (n−f = 51−16 = 35) must recover the same
         // signature. [0..35] and [16..51] are different 35-member sets.
         let seed_all = recover_seed::<N3f1>(outcome.public(), &partials).expect("recover all");
         let seed_a =

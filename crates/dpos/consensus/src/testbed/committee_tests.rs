@@ -1,15 +1,9 @@
-//! The committee module (`crate::committee`) as the stand sees it: one frozen
-//! record per epoch, read at ONE anchor, over a contract that can answer
-//! DIFFERENTLY on a branch the node only speculated on.
+//! The committee module as the stand sees it: one frozen record per epoch, read
+//! at one anchor, over a contract that answers differently on a branch the node
+//! only speculated on.
 //!
-//! Same form as [`super::preconditions`]: every test states its PREMISE first —
-//! the two branches really differ, the nodes really stood at different heights,
-//! the epoch really was outside what the node could see — and only then the
-//! property. A premise that stops holding turns the test RED instead of leaving
-//! it quietly vacuous, which matters more here than anywhere else in the
-//! testbed: before [`super::fakes::BranchCommittees`] the committee was a pure
-//! function of the epoch, so "two nodes hold the same record" was a statement
-//! about the FAKE and not about the code reading it.
+//! Every test asserts its premise before its property, so a fixture that stops
+//! discriminating fails rather than leaving the test quietly vacuous.
 
 use super::{
     fakes::{Branch, BranchCommittees, ElEvent},
@@ -25,11 +19,10 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 const EPOCH_LEN: u64 = 32;
 
-/// The height the record test tombstones node 0 from — chosen because the five
-/// nodes' anchors for epoch 3 STRADDLE it, so the contract's live flag is
-/// `true` for some nodes' read of that epoch and `false` for the others'. The
-/// test asserts that straddle rather than assuming it: a fixture that stops
-/// discriminating must say so.
+/// The height the record test tombstones node 0 from: the five nodes' anchors
+/// for epoch 3 straddle it, so the contract's live flag is true for some reads
+/// of that epoch and false for others. The test asserts that straddle rather
+/// than assuming it.
 const TOMBSTONE_FROM: u64 = 64;
 
 fn last(epoch: u64) -> u64 {
@@ -40,14 +33,9 @@ fn reached(h: u64) -> impl Fn(&Progress) -> bool + Send + 'static {
     move |p| p.min_height() >= h
 }
 
-/// True once every node's `SafetyHalt` has been engaged for `ticks` CONSECUTIVE
-/// driver samples.
-///
-/// Not "all halted" on its own, and the difference is the whole observation: a
-/// halt is asserted by what stops happening after it, so the run has to keep
-/// going past the edge or there is nothing standing still to look at. The
-/// counter resets on any tick where a node is not halted, so a single sample
-/// taken mid-engage cannot satisfy it.
+/// True once every node's `SafetyHalt` has been engaged for `ticks` consecutive
+/// driver samples: a halt is asserted by what stops happening after it, so the
+/// run has to keep going past the edge.
 fn halted_for(ticks: usize) -> impl Fn(&Progress) -> bool + Send + 'static {
     let seen = std::cell::Cell::new(0usize);
     move |p: &Progress| {
@@ -60,10 +48,8 @@ fn halted_for(ticks: usize) -> impl Fn(&Progress) -> bool + Send + 'static {
     }
 }
 
-/// The (B2)/(C9) rotation `super::tests` and `super::preconditions` share:
-/// 4 → 3 → 4, node 3 out for epochs 3 and 4. Reproduced here rather than
-/// imported because the two modules are siblings, and because the branching
-/// twin below has to agree with it member for member.
+/// The 4 → 3 → 4 rotation shared with `super::tests` and `super::preconditions`,
+/// node 3 out for epochs 3 and 4.
 fn rotate_four_three_four() -> Committees {
     Committees::Schedule(Arc::new(|epoch, n| {
         Some(match epoch {
@@ -74,14 +60,11 @@ fn rotate_four_three_four() -> Committees {
 }
 
 /// The record test's rotation: 5 → 4 → 5, node 3 out for epochs 3 and 4, node 0
-/// (the tombstoned one) in every epoch. [`rotate_four_three_four`] with one
-/// more seat, and the extra seat is load-bearing: since 5.3-В+Г1 the stand
-/// applies its own tombstone to the beacon gate the way production does, so a
-/// tombstoned member does NOT take part in the ceremony it sits in, and the
-/// epoch-3/4 DKG has to reach `quorum(4) = 3` out of the members that remain
-/// once node 0 (tombstoned) and node 3 (rotated out AND cut) are gone — nodes
-/// 1, 2 and 4. On the four-node roster that count was 2 < 3 and the chain
-/// parked at `last(2)` for want of `PK_3`.
+/// (the tombstoned one) in every epoch. The fifth seat is load-bearing: the
+/// tombstoned member takes no part in the ceremony it sits in, so the epoch-3/4
+/// DKG has to reach `quorum(4) = 3` from the members left once node 0 is
+/// tombstoned and node 3 is rotated out, i.e. nodes 1, 2 and 4; on the four-node
+/// roster that count was 2.
 fn rotate_five_four_five() -> Committees {
     Committees::Schedule(Arc::new(|epoch, n| {
         Some(match epoch {
@@ -91,23 +74,14 @@ fn rotate_five_four_five() -> Committees {
     }))
 }
 
-/// [`rotate_five_four_five`] on the CANONICAL branch, and a committee nobody
-/// elected on every other hash of the reading node's own tree.
+/// [`rotate_five_four_five`] on the canonical branch, and a rotation of the
+/// seats on every other hash of the reading node's own tree.
 ///
-/// The canonical half is not a copy of that schedule, it IS that schedule: the
-/// stand builds its peer-set expectations from the plain `Committees`, so the
-/// two must agree member for member, and reproducing the `3 | 4 => [0, 1, 2, 4]`
-/// table here would have made that agreement a comment. `n` comes from the
-/// caller because [`BranchCommittees`] — unlike [`Committees`] — is not handed
-/// the roster size, and hard-coding `0..5` would drift silently the first time
-/// a fixture runs a different `n`.
-///
-/// The speculative half is a ROTATION of the seats, not a subset: it has the
-/// same size, so a consumer that read it would still build a working committee
-/// and a working certificate scheme — just the wrong one, silently, which is
-/// the failure this fake exists to make visible. A smaller set would have been
-/// caught by the committee-floor guards long before any record was compared,
-/// and would therefore have pinned those guards instead of the read cursor.
+/// The canonical half is built from the same closure as the plain schedule, so
+/// the two agree member for member. The speculative half rotates rather than
+/// subsets: a consumer that read it would still build a working committee and
+/// scheme, just the wrong one, so the mismatch is only visible where the records
+/// are compared.
 fn branching_rotation(n: usize) -> BranchCommittees {
     let Committees::Schedule(flat) = rotate_five_four_five() else {
         unreachable!("rotate_five_four_five is a Schedule");
@@ -123,7 +97,7 @@ fn branching_rotation(n: usize) -> BranchCommittees {
     )
 }
 
-/// Every `(epoch, facts)` node `i` holds a RECORD for.
+/// Every `(epoch, facts)` node `i` holds an `Ok` record for.
 fn records(out: &Outcome, i: usize) -> BTreeMap<u64, CommitteeFacts> {
     out.committee_records[i]
         .iter()
@@ -131,10 +105,9 @@ fn records(out: &Outcome, i: usize) -> BTreeMap<u64, CommitteeFacts> {
         .collect()
 }
 
-/// The first hash that lived in a node's EXECUTED TREE while its canonical
-/// chain did not hold it — the state a reader on a speculative cursor would
-/// land on, and the premise of anything asserted about `Branch::Speculative`.
-/// `None` when every derive was canonicalized by the very next EL event.
+/// The first hash that lived in a node's executed tree while its canonical
+/// chain did not hold it, the state a reader on a speculative cursor would land
+/// on; `None` when every derive was canonicalized by the very next EL event.
 fn tree_only_hash(events: &[ElEvent]) -> Option<(u64, B256)> {
     events.iter().enumerate().find_map(|(i, event)| {
         let ElEvent::Derived(height, hash) = event else {
@@ -152,85 +125,29 @@ fn tree_only_hash(events: &[ElEvent]) -> Option<(u64, B256)> {
     })
 }
 
-/// (4.1, record) Five nodes at five different heights hold ONE committee record
-/// per epoch — over a contract whose answer depends on the BRANCH the reading
-/// hash sits on.
+/// Five nodes at five different heights hold one committee record per epoch,
+/// over a contract whose answer depends on the branch the reading hash sits on.
 ///
-/// The fixture is (C9) on a five-node roster: node 3 rotates out at epoch 3,
-/// falls behind, and the production re-jump carries it back, so at every moment
-/// of the run the nodes' anchors are different heights — which the records
-/// themselves then say, because each one carries the `(height, hash)` it was
-/// read at.
+/// The fixture rotates node 3 out at epoch 3 and cuts it physically, so it falls
+/// behind and is carried back by the re-jump; a consensus-plane-only cut would
+/// leave the frontier probe feeding it and produce no tree-only derive, which the
+/// speculative-branch premise needs. Five seats are required because the
+/// tombstoned node 0 takes no part in the epoch-3/4 ceremony, so `quorum(4) = 3`
+/// has to come from nodes 1, 2 and 4. Node 0 is tombstoned from
+/// [`TOMBSTONE_FROM`], and the five anchors straddle that height, so the live
+/// flag differs across reads while the records still have to agree.
 ///
-/// WHY FIVE NODES (5.3-В+Г1). The tombstoned member takes no part in the plan
-/// any more: the stand fills its `TombstoneSet` from the finalized feed the way
-/// production does, so node 0's dealings, acks and confirms are refused at the
-/// beacon gate as `untracked` from [`TOMBSTONE_FROM`] on, and node 0 still has
-/// to SIT in every committee for the flag to reach every read (PREMISE 4). The
-/// ceremonies for epochs 3 and 4 therefore have to reach quorum without node 0
-/// and without node 3, which is rotated out and cut — on `C[3] = C[4] =
-/// {0, 1, 2}` that left 2 < `quorum(3) = 3` and the chain parked at `last(2)`
-/// (`too few members confirm they hold the pinned dealer logs`). With
-/// `C[3] = C[4] = {0, 1, 2, 4}` nodes 1, 2 and 4 are `quorum(4) = 3`, and
-/// epoch 5's five-member ceremony (`quorum(5) = 4`) runs after node 3 has
-/// healed. The four premises and three observations are the four-node ones.
-///
-/// WHAT MAKES IT FALL BEHIND (5.1). Not the rotation: since П-3 a rotated-out
-/// node fetches the epoch key as an artifact over `BEACON_RESOLVER_CHANNEL`
-/// (R-121/R-122) and stays in lockstep, which left this run with one anchor and
-/// no re-jump (measured: every node at 168 and `tree_only=[None, None, None,
-/// None]`). The lag is therefore built by a PHYSICAL cut of node 3
-/// ([`Stand::partition`], both planes) inside epoch 2, healed an epoch later, and
-/// the cut has to be physical: a consensus-plane-only cut leaves the frontier
-/// probe feeding the node, which then climbs the whole way by JUMPS and DERIVES
-/// nothing above its park — and with no derive of its own there is no hash for a
-/// landing to arrive over, which is the state PREMISE 2 needs (measured on that
-/// variant: `jump_calls[3]` non-empty, `tree_only` still all `None`). Under the
-/// physical cut it comes back the way a restarted node does — a burst of
-/// certificates its executor derives against while the fork-choice updates trail
-/// — and the derive the landing arrives over is the tree-only hash.
-///
-/// What makes it a test and not a tautology: [`branching_rotation`] hands a
-/// DIFFERENT committee of the same size to any read taken off the reading
-/// node's canonical chain. So "every node holds the same record" now means
-/// "every node read on its own canonical chain", and the three observations
-/// below say that three different ways — the values agree, no read resolved on
-/// a speculative hash, and every record's anchor hash is the one that node's
-/// canonical chain really holds at that height (read out of `Outcome::hashes`,
-/// not out of the fake). Of the three only the first and the third can catch a
-/// module-level regression: the speculative counter is zero BY CONSTRUCTION for
-/// this reader and guards the fake and 4.2's future ones instead — the comment
-/// on observation (b) says why.
-///
-/// The TOMBSTONE is the second half of the same claim, and the reason the run
-/// sets one at all: the contract's equivocation flag is read LIVE at the call's
-/// own block while everything beside it is frozen, so with the five anchors
-/// straddling [`TOMBSTONE_FROM`] the same epoch is read `tombstoned` by some
-/// nodes and not by others. The records still have to agree — which is exactly
-/// what `CommitteeRecord` carrying no `tombstoned` leg buys, and what folding
-/// the flag into the frozen record would break.
-///
-/// Falsifier: the two branches answering the same thing (then the fake is the
-/// pre-step one and the equality is vacuous); no node ever holding a tree-only
-/// hash (then `Branch::Speculative` is unreachable state and the counter proves
-/// nothing); every node reading at the same anchor (then the equality is
-/// "one hash, one answer"); the anchors no longer straddling the tombstone
-/// height (then the live flag is the same for everyone and proves nothing);
-/// any node's record differing in members, weights or the `dkgQual` bit; any
-/// read resolving on a speculative hash; a record whose anchor hash is not the
-/// node's canonical hash at that height.
+/// The result is not a tautology: [`branching_rotation`] gives every read off
+/// the reading node's canonical chain a different committee of the same size, so
+/// agreeing records mean every node read on its own canonical chain.
 #[test]
 fn five_nodes_at_five_heights_hold_one_committee_record_per_epoch() {
     let mut cfg = StandConfig::live(5, 1);
     let roster = cfg.n;
-    // The canonical branch and `committees` agree member for member BY
-    // CONSTRUCTION — `branching_rotation` is built out of the same closure.
     cfg.committees = rotate_five_four_five();
     cfg.committees_by_branch = Some(branching_rotation(roster));
-    // Node 0 sits in every epoch's committee, so the flag reaches every read
-    // above the height; node 3 is rotated out of epochs 3 and 4 and would not.
-    // Node 0 is also OUT of every ceremony from the height on (see the
-    // docstring), which is what the fifth seat pays for.
+    // Node 0 sits in every epoch's committee, so its tombstone reaches every
+    // read above the height.
     cfg.tombstoned = vec![(0, TOMBSTONE_FROM)];
     cfg.re_jump_threshold = Some(crate::cold_start_jump::JUMP_THRESHOLD.min(EPOCH_LEN));
     let mut stand = Stand::new(cfg);
@@ -244,10 +161,6 @@ fn five_nodes_at_five_heights_hold_one_committee_record_per_epoch() {
     assert!(out.halted.is_empty(), "{:?}", out.halted);
     assert!(out.errors().is_empty(), "{:?}", out.errors());
 
-    // PREMISE 1: the contract really does answer two different committees. The
-    // schedule is asserted here, on the closure itself, so a future edit that
-    // collapses the two branches fails HERE rather than turning every
-    // assertion below into a truth about nothing.
     let schedule = branching_rotation(roster);
     for epoch in 0..=5u64 {
         let canonical = schedule(epoch, &B256::ZERO, 0, Branch::Canonical);
@@ -259,9 +172,6 @@ fn five_nodes_at_five_heights_hold_one_committee_record_per_epoch() {
         );
     }
 
-    // PREMISE 2a: the fixture's own two halves — the cut fired and healed, and the
-    // gate carried node 3 back by a re-jump. Without both there is no catching-up
-    // node and every observation below is about five nodes in lockstep.
     let part = &out.partitions[0];
     assert!(
         !part.heights_at_heal.is_empty(),
@@ -273,9 +183,6 @@ fn five_nodes_at_five_heights_hold_one_committee_record_per_epoch() {
         out.heights
     );
 
-    // PREMISE 2: `Branch::Speculative` is REACHABLE state on this run — the
-    // catching-up node really did hold a hash in its executed tree that its
-    // canonical chain never took (the derive the re-jump landed over).
     let tree_only: Vec<Option<(u64, B256)>> =
         (0..n).map(|i| tree_only_hash(&out.el_events[i])).collect();
     assert!(
@@ -284,8 +191,6 @@ fn five_nodes_at_five_heights_hold_one_committee_record_per_epoch() {
          cannot produce: {tree_only:?}"
     );
 
-    // PREMISE 3: the nodes read at DIFFERENT anchors. Without this the records
-    // would agree because they came from ONE state, which is not the property.
     let per_node: Vec<BTreeMap<u64, CommitteeFacts>> = (0..n).map(|i| records(&out, i)).collect();
     let epochs: Vec<u64> = per_node[0].keys().copied().collect();
     let split_anchors: Vec<u64> = epochs
@@ -310,10 +215,6 @@ fn five_nodes_at_five_heights_hold_one_committee_record_per_epoch() {
             .collect::<Vec<_>>()
     );
 
-    // PREMISE 4: the contract's LIVE tombstone really split the nodes — the same
-    // epoch was read with the flag by some of them and without it by the
-    // others, which is the only arrangement under which a frozen record
-    // carrying the flag would differ across nodes.
     let straddled: Vec<u64> = epochs
         .iter()
         .copied()
@@ -342,16 +243,8 @@ fn five_nodes_at_five_heights_hold_one_committee_record_per_epoch() {
             .collect::<Vec<_>>()
     );
 
-    // OBSERVATION (a): one record per epoch, byte for byte, across every node
-    // that holds one — everything the contract froze, and nothing about WHERE
-    // it was read.
-    //
-    // Over `split_anchors` and NOT over every epoch: an epoch every node read
-    // at the SAME anchor is one hash and one contract answer, so its equality
-    // is arithmetic and would hold for a reader that resolved its hash any way
-    // at all (epoch 0 is read at `(0, 0x00…)` by everyone, and the top epoch at
-    // the common tip). PREMISE 3 is what makes this set non-empty; the same cut
-    // is what `read_back` does in the backfill test below.
+    // Compared only over `split_anchors`: an epoch every node read at the same
+    // anchor is one hash and one contract answer, so its equality is arithmetic.
     for epoch in &split_anchors {
         let held: Vec<(usize, &CommitteeFacts)> = (0..n)
             .filter_map(|i| per_node[i].get(epoch).map(|f| (i, f)))
@@ -369,23 +262,10 @@ fn five_nodes_at_five_heights_hold_one_committee_record_per_epoch() {
         }
     }
 
-    // OBSERVATION (b): not one read resolved on a hash off the reading node's
-    // canonical chain — counted inside the fake, so it is what the node ASKED
-    // and not what the stand arranged.
-    //
-    // For the COMMITTEE MODULE this is unreachable by construction, and saying
-    // so is the honest reading of a zero here. The module's only source of a
-    // read hash is `Anchor::executed_hash` (`committee/store.rs:467-477`),
-    // which the stand answers out of `FakeChain::spec_hash_at` — the canonical
-    // map `branch_of` compares against (`fakes.rs:1085-1090`) — and production
-    // answers out of `provider.block_hash` (`executed.rs:57-72`), canonical
-    // too. So the counter is not a regression detector for the module: it
-    // guards the FAKE (a `by_branch` schedule that started answering off the
-    // canonical map would show up here) and the consumers 4.2 introduces, which
-    // resolve their own hash off a cursor — the jump's `build_at`
-    // (`fakes.rs:1369`) and the tree-only marker a replayed node is handed
-    // (`FakeChain::note_hash`). A reader that took a different CANONICAL height
-    // would still read `Canonical` and is caught by observation (c), not here.
+    // Unreachable by construction for this module: its only read hash comes from
+    // `Anchor::executed_hash`, which the stand and production both answer off
+    // the canonical chain. The counter therefore guards the fake rather than the
+    // module.
     for i in 0..n {
         assert!(
             out.staking_reads[i].speculative.is_empty(),
@@ -395,9 +275,6 @@ fn five_nodes_at_five_heights_hold_one_committee_record_per_epoch() {
         );
     }
 
-    // OBSERVATION (c): the same claim from OUTSIDE the fake — every anchor a
-    // record names is the hash this node's finalized-executed chain holds at
-    // that height.
     for (i, held) in per_node.iter().enumerate() {
         for (epoch, facts) in held {
             let (height, hash) = facts.anchor;
@@ -431,81 +308,44 @@ fn five_nodes_at_five_heights_hold_one_committee_record_per_epoch() {
     );
 }
 
-/// (4.1, backfill) A node below the chain refuses the epochs it cannot see
-/// WITHOUT an EVM call, and pays exactly one snapshot per epoch it can.
+/// A node below the chain refuses the epochs it cannot see without an EVM call,
+/// and pays exactly one snapshot per epoch it can.
 ///
-/// Two runs over one schedule, because "before the catch-up" and "after it" are
-/// two different chains and not two moments of one: with the re-jump gate shut
-/// (the stand default) the rotated-out node parks at `last(2)` for good, and
-/// with the gate at production's own value the same node comes back.
+/// Two runs over one schedule: with the re-jump gate shut the rotated-out node
+/// parks at `last(2)` for good, and with the gate at production's value it comes
+/// back. Both take the lag from a consensus-plane cut inside epoch 2, because
+/// since the epoch key became a fetchable artifact the rotation alone leaves a
+/// node following the chain.
 ///
-/// WHAT HOLDS THE PARK (5.1). The rotation alone no longer does. Since П-3 the
-/// epoch key is an artifact any node may ASK a member for over
-/// `BEACON_RESOLVER_CHANNEL` (R-121/R-122), and the tracked peer set is
-/// `committee[E-1] ∪ committee[E] ∪ committee[E+1]`, so a node rotated out at
-/// epoch 3 keeps its consensus links through epoch 3, fetches `PK_3` and follows
-/// the chain (measured: `heights=[168, 168, 168, 168]`). Both runs therefore take
-/// the lag from a CONSENSUS-PLANE cut instead
-/// ([`super::stand::CutPlanes::ConsensusOnly`]),
-/// inside epoch 2 so node 3 still holds every key up to `PK_2`: its frontier
-/// probe keeps feeding its marshal — which is what the window refusals below are
-/// asked about — while its execution cannot cross into epoch 3. Run A never
-/// heals the cut (the park is "for good"); run B heals it two epochs later, which
-/// is what "the same node comes back" means now.
+/// `commit_height(E) = start(E − 2)` and the window top is `epoch(anchor) + 2`,
+/// so `NotReadable` is unreachable for an in-window epoch once the geometry is
+/// frozen and a parked node asking about the live chain gets `OutOfWindow`; the
+/// one anchor where `NotReadable` fires is height 0, where epochs 1 and 2 are
+/// committed by the first executed block and not by genesis. Both arms answer
+/// without touching the contract, which the test asserts separately so neither
+/// can stand in for the other.
 ///
-/// WHICH refusal arm a backfilling node takes is arithmetic, and it is not the
-/// one the plan named. `commit_height(E) = start(E − 2)` and the window top is
-/// `epoch(anchor) + 2`, so every epoch INSIDE the window has
-/// `commit_height(E) <= start(epoch(anchor)) <= anchor` — the
-/// `NotReadable{below its commit height}` arm is unreachable for an in-window
-/// epoch once the geometry is frozen, and the only thing left for a parked node
-/// asking about the live chain is `OutOfWindow{above}`. `NotReadable` still
-/// fires on this run, at the ONE anchor where it can: height 0, where epochs 1
-/// and 2 are committed by the first executed block and not by genesis. Both
-/// arms answer without touching the contract, which is the property; the test
-/// asserts them separately so neither can stand in for the other.
-///
-/// Both counters come out of `Outcome::metrics_before_collect` — the snapshot
-/// the stand takes before it polls every module for `committee_records` — so
-/// they say what the RUN asked and not what asserting on the run happened to
-/// ask. The post-run poll's own share is printed at the end and asserted on
-/// nowhere.
-///
-/// `dpos_committee_not_readable_total` is ONE name over four sites
-/// (`committee/store.rs:429, 449, 470, 490`), so the count alone cannot name an
-/// arm. The arm is identified by price instead — see the comment on
-/// observation (b).
-///
-/// Falsifier: the parked node not parked at `last(2)`; the members not running
-/// past it; a single contract read for an epoch the parked node was refused
-/// (then the refusal cost an EVM call after all); a zero `out_of_window{above}`
-/// counter over the run (then nobody ever ASKED, and "no read" is vacuous); a
-/// zero `not_readable` counter with epoch 1 nonetheless readable at height 0;
-/// a snapshot paid for epoch 1 or 2 while the anchor was still below their
-/// commit height; a second snapshot for an epoch already held; the caught-up
-/// node not holding the epochs it was refused, or holding a different record
-/// for them.
+/// The counters come from `Outcome::metrics_before_collect`, the snapshot taken
+/// before the stand polls every module for `committee_records`, so they say what
+/// the run asked rather than what asserting asked.
 #[test]
 fn a_node_below_the_chain_refuses_what_it_cannot_see_without_an_evm_call() {
     let members = [0usize, 1, 2];
     let end = 5 * EPOCH_LEN + 8;
-    /// Inside epoch 2: node 3 holds every key up to `PK_2` and nothing above it.
+    /// Inside epoch 2, so node 3 holds every key up to `PK_2` and nothing above.
     const CUT_AT: u64 = 2 * EPOCH_LEN + 4;
-    /// Longer than either run's virtual deadline — the cut never heals.
+    /// Longer than either run's virtual deadline, so the cut never heals.
     const NEVER: u32 = 4096;
-    /// Two epochs of cut: at the heal node 3 is far enough behind for
-    /// production's own gate to arm, which is what run B is about.
+    /// Two epochs of cut, far enough behind for production's gate to arm.
     const HELD_FOR: u32 = 2 * EPOCH_LEN as u32 + 8;
 
-    // Run A — the gate shut: node 3 parks at the last block of epoch 2.
     let recorder = DebuggingRecorder::new();
     let snap = recorder.snapshotter();
     let parked = metrics::with_local_recorder(&recorder, || {
         let mut cfg = StandConfig::live(4, 1);
         cfg.committees = rotate_four_three_four();
-        // The counters the two refusal assertions below stand on are taken by
-        // the stand itself, BEFORE it polls every node's module for
-        // `committee_records` — see `StandConfig::metrics_snapshotter`.
+        // Taken by the stand before it polls every node's module for
+        // `committee_records`.
         cfg.metrics_snapshotter = Some(snap.clone());
         assert_eq!(cfg.re_jump_threshold, None, "the gate must stay shut here");
         let mut stand = Stand::new(cfg);
@@ -519,16 +359,14 @@ fn a_node_below_the_chain_refuses_what_it_cannot_see_without_an_evm_call() {
             Duration::from_secs(400),
         )
     });
-    // What the RUN counted, and — separately — what the post-run poll added on
-    // top of it. The second is reported and never asserted on: it is the number
-    // this test would have been measuring if it drained once, at the end.
+    // What the run counted, and separately what the post-run poll added on top
+    // of it; the second is reported and never asserted on.
     let drained = &parked.metrics_before_collect;
     let by_collect = drain_counters(&snap);
     assert!(!parked.timed_out, "heights {:?}", parked.heights);
     assert!(parked.halted.is_empty(), "{:?}", parked.halted);
     assert!(parked.errors().is_empty(), "{:?}", parked.errors());
 
-    // PREMISE: node 3 is parked at `last(2)` and the chain is two epochs past it.
     assert_eq!(
         parked.heights[3],
         last(2),
@@ -557,8 +395,6 @@ fn a_node_below_the_chain_refuses_what_it_cannot_see_without_an_evm_call() {
         parked.committee_records[3]
     );
 
-    // OBSERVATION (a): the refusals cost NOTHING. Not one contract read — of
-    // any kind, by any consumer of this node — named an unseen epoch.
     let reads = &parked.staking_reads[3];
     for epoch in &unseen {
         assert_eq!(
@@ -579,12 +415,9 @@ fn a_node_below_the_chain_refuses_what_it_cannot_see_without_an_evm_call() {
             parked.committee_records[3][epoch]
         );
     }
-    // …and they really HAPPENED, IN THE RUN. `drained` is the stand's
-    // pre-collect snapshot precisely for this assertion: `committee_records`
-    // above is itself produced by calling `committee(e)` for `0..=max+2` on
-    // every node, which refuses the parked node's epochs 5, 6 and 7 all over
-    // again. Counted at the end of everything, this number can never be zero,
-    // and the assertion would have been a statement about its own evidence.
+    // `drained` is the pre-collect snapshot precisely here: `committee_records`
+    // above re-asks the parked node's epochs during collection, so a count taken
+    // at the end can never be zero.
     let above = counter_of(
         drained,
         "dpos_committee_out_of_window_total",
@@ -596,10 +429,8 @@ fn a_node_below_the_chain_refuses_what_it_cannot_see_without_an_evm_call() {
          EVM call' is vacuous: {drained:?}"
     );
 
-    // OBSERVATION (b): the OTHER no-EVM arm, at the one anchor that reaches it.
-    // Epoch 1 is committed by the first EXECUTED block and not by genesis, so a
-    // node whose anchor is still 0 is refused it arithmetically — and the
-    // record it eventually holds proves the anchor had to move first.
+    // Epoch 1 is committed by the first executed block and not by genesis, so an
+    // anchor still at 0 refuses it arithmetically.
     let not_readable = counter_of(drained, "dpos_committee_not_readable_total", None);
     assert!(
         not_readable > 0,
@@ -612,15 +443,10 @@ fn a_node_below_the_chain_refuses_what_it_cannot_see_without_an_evm_call() {
         "committee[1] was read at genesis, so the not-readable arm was never on the path: {:?}",
         epoch_one.anchor
     );
-    // WHICH not-readable arm. The counter is one name over four sites
-    // (`committee/store.rs:429, 449, 470, 490`), so it alone says "some arm",
-    // not "the arithmetic one". What separates them is PRICE: the commit-height
-    // arm (`:449`) refuses before the anchor hash is even resolved, while the
-    // empty-contract-answer arm (`:490`) refuses AFTER both staticcalls. So if
-    // the refusal of epoch 1 at anchor 0 had gone through `:490`, the module
-    // would have paid a snapshot there and another one after the anchor moved,
-    // and `module_snapshot[1]` would be at least 2. It is exactly 1 — the read
-    // that produced the record asserted just above.
+    // The refusals share one counter, so the arm is identified by price: the
+    // commit-height arm refuses before resolving the anchor hash, while the
+    // empty-answer arm pays the snapshot staticcall. A refusal through the latter
+    // would make `module_snapshot[1]` at least 2; it is exactly 1.
     for i in 0..parked.heights.len() {
         for epoch in 1..=MAX_COMMITTEE_LOOKAHEAD_EPOCHS {
             let paid = parked.staking_reads[i].module_snapshot.get(&epoch);
@@ -633,9 +459,6 @@ fn a_node_below_the_chain_refuses_what_it_cannot_see_without_an_evm_call() {
         }
     }
 
-    // OBSERVATION (c): ONE snapshot per epoch held, on every node. The refusals
-    // above are free and the successes are paid for exactly once — write-once
-    // memoisation, counted at the module's own port.
     for i in 0..parked.heights.len() {
         for epoch in records(&parked, i).keys() {
             let calls = parked.staking_reads[i].module_snapshot.get(epoch).copied();
@@ -647,9 +470,6 @@ fn a_node_below_the_chain_refuses_what_it_cannot_see_without_an_evm_call() {
         }
     }
 
-    // Run B — the same schedule with production's gate: the node comes back,
-    // and the epochs it was refused turn into records with the same one-call
-    // price and the same value the members hold.
     let caught_up = {
         let mut cfg = StandConfig::live(4, 1);
         cfg.committees = rotate_four_three_four();
@@ -684,10 +504,9 @@ fn a_node_below_the_chain_refuses_what_it_cannot_see_without_an_evm_call() {
             "the caught-up node's committee[{epoch}] is not the members'"
         );
     }
-    // The epochs it was refused and then really READ — the tail of `unseen`
-    // sits above where this run ever went, and the record the collection phase
-    // took for those is not a read the RUN made. Epoch 5 is asserted to be in
-    // the set so the price below is not a price of nothing.
+    // The refused epochs this run really read: the tail of `unseen` sits above
+    // where the run went, and a collection-phase record is not a read the run
+    // made.
     let read_back: Vec<u64> = unseen
         .iter()
         .copied()
@@ -724,56 +543,34 @@ fn a_node_below_the_chain_refuses_what_it_cannot_see_without_an_evm_call() {
     );
 }
 
-/// (4.1, impossible answer, R-128) `weights: None` inside the read window is a
-/// PERMANENT refusal that STOPS the node: no record, no certificate scheme, one
-/// `error!` from the module, the epoch's slot poisoned so no further staticcall
-/// is spent on it, and — the part this test exists for since R-128 — the
-/// `SafetyHalt` latch engaged with `ContractFork` on every node that had to
-/// enter the epoch, after which nothing moves.
+/// `weights: None` inside the read window is a permanent refusal that stops the
+/// node: no record or certificate scheme for the epoch, one `error!` from the
+/// module, the slot poisoned so no further staticcall is spent on it, and a
+/// `SafetyHalt` with `ContractFork`, after which nothing moves.
 ///
 /// The contract's frozen weights live in a ring of `WEIGHT_RING_EPOCHS` frames
-/// and go missing 14 epochs below the reading height — far outside the module's
-/// own window (`committee/mod.rs::WINDOW_FITS_THE_WEIGHT_RING`), so a stand
-/// cannot reach this arm by running long enough. `StandConfig::weights_none_for`
-/// is the switch that makes the contract answer it anyway, which is the whole
-/// point: the module treats it as "the contract answered something no committed
-/// epoch can answer", not as a missing optional to fall back from.
-///
-/// Every node halts, and that is the DESIGNED outcome rather than a stand
-/// artifact: all four read the same contract, so an impossible answer is
-/// correlated by construction — which is exactly why the old behaviour (skip
-/// the epoch, keep running, one log line) was the defect. `run_until` therefore
-/// waits past the halt with [`halted_for`], so the standing still below can be
-/// observed rather than assumed.
-///
-/// Falsifier: the chain not reaching the end of epoch 1 (then "the chain ran up
-/// to the epoch it refused" is untested); the contract not actually answering
-/// `weights: None` (then the switch is inert); a record, or a scheme of ANY
-/// strength, for the epoch; a refusal that is TRANSIENT (then a consumer would
-/// spin on it for ever); a silent refusal, or one logged more than once per
-/// node; a node that keeps finalizing after its latch engaged; a second
-/// staticcall for the poisoned epoch.
+/// and go missing far below the reading height, outside the module's window, so
+/// running the stand longer cannot reach this arm; `StandConfig::weights_none_for`
+/// makes the contract answer it anyway. Every node halts, and that is the
+/// designed outcome: all four read the same contract, so an impossible answer is
+/// correlated by construction. `run_until` therefore waits past the halt with
+/// [`halted_for`], so the standing still can be observed rather than assumed.
 #[test]
 fn a_weightless_committee_inside_the_window_stops_every_node_that_must_enter_it() {
     let epoch = 2u64;
-    // How many driver ticks the run stays up after the last node halted — the
-    // window the marshal tip is then asserted to stand still in. Ten ticks is
-    // one virtual second (`stand::POLL`), several block times at the stand's
-    // pace, so a chain that was still finalizing would move inside it.
+    // Driver ticks the run stays up after the last halt, the window the marshal
+    // tip is asserted to stand still in; ten ticks is one virtual second
+    // (`stand::POLL`).
     const AFTER_HALT_TICKS: usize = 10;
     let recorder = DebuggingRecorder::new();
     let snap = recorder.snapshotter();
     let out = metrics::with_local_recorder(&recorder, || {
         let mut cfg = StandConfig::honest(4, 1);
         cfg.weights_none_for = Some(epoch);
-        // The run's own counters, snapshotted before the post-run poll of
-        // `committee_records` — which re-reads the refused epoch on every node.
-        // Since R-128 that re-read is answered from the poisoned slot and costs
-        // no contract call, but it still TICKS the refusal counter, which is
-        // what this snapshot keeps out of the numbers below.
+        // Snapshotted before the post-run poll of `committee_records`, which
+        // re-reads the refused epoch on every node: the re-read is answered from
+        // the poisoned slot but still ticks the refusal counter.
         cfg.metrics_snapshotter = Some(snap.clone());
-        // The marshal tip, sampled once per driver tick — the "and then nothing
-        // moved" half of the halt.
         cfg.marshal_tip_series = true;
         Stand::new(cfg).run_until(halted_for(AFTER_HALT_TICKS), Duration::from_secs(200))
     });
@@ -786,16 +583,9 @@ fn a_weightless_committee_inside_the_window_stops_every_node_that_must_enter_it(
         out.halted, out.heights
     );
 
-    // PREMISE 1: the chain RAN THROUGH the epoch below the refused one, and
-    // every node was OWED the refused epoch — the halt is the end of a working
-    // chain reaching a boundary it must cross, not a node that never started.
-    //
-    // The ORDERING plane is the one asserted to have completed epoch 1: the
-    // boundary that asks for `committee[2]` is delivered off a finalized
-    // ORDER block, and execution trails it by `K` under deferred execution, so
-    // a node that halts at the boundary stops with its executed tier up to `K`
-    // blocks short of `last(1)`. Asserting the executed tier alone would be
-    // asserting the lag, not the premise.
+    // The ordering plane, not the executed tier, completed epoch 1: execution
+    // trails a finalized order block by `K`, so asserting the executed tier would
+    // assert the lag.
     for i in 0..n {
         let tip = *out.marshal_tip_series[i]
             .last()
@@ -819,8 +609,6 @@ fn a_weightless_committee_inside_the_window_stops_every_node_that_must_enter_it(
     }
     out.assert_lockstep_except(&[]);
 
-    // PREMISE 2: the contract really answered `weights: None` for that epoch and
-    // for no other, on every node.
     for i in 0..n {
         let weightless: Vec<u64> = out.staking_reads[i].weights_none.keys().copied().collect();
         assert_eq!(
@@ -831,7 +619,6 @@ fn a_weightless_committee_inside_the_window_stops_every_node_that_must_enter_it(
         );
     }
 
-    // OBSERVATION (a): EVERY node is safety-halted, with the typed reason.
     assert_eq!(
         out.halted.len(),
         n,
@@ -845,9 +632,6 @@ fn a_weightless_committee_inside_the_window_stops_every_node_that_must_enter_it(
         );
     }
 
-    // OBSERVATION (b): and then nothing moved. The marshal tip — the node's own
-    // VERIFIED frontier — is identical across the last `AFTER_HALT_TICKS`
-    // samples, which are the ticks taken after the last latch engaged.
     for i in 0..n {
         let tips = &out.marshal_tip_series[i];
         assert!(
@@ -861,8 +645,6 @@ fn a_weightless_committee_inside_the_window_stops_every_node_that_must_enter_it(
         );
     }
 
-    // OBSERVATION (c): no record, and no scheme either — the epoch is absent
-    // from the ONE map, so nothing downstream can be built over it.
     for i in 0..n {
         let refusal = out.committee_records[i][&epoch]
             .as_ref()
@@ -880,16 +662,14 @@ fn a_weightless_committee_inside_the_window_stops_every_node_that_must_enter_it(
             "node {i} built a certificate scheme for an epoch it holds no committee for: {:?}",
             out.committee_verifier_epochs[i]
         );
-        // `verifier_epochs` lists VERIFY-ONLY schemes alone (`store.rs` filters
-        // on `me().is_none()`), so on its own it would miss a SIGNER scheme for
-        // the refused epoch — the one an engine spawn installs. Ask the module
-        // directly for both.
+        // `verifier_epochs` lists verify-only schemes, so it would miss the
+        // signer scheme an engine spawn installs; ask the module for both.
         assert!(
             out.committees[i].scheme(epoch).is_none(),
             "node {i} holds a certificate scheme for the epoch it refused"
         );
-        // The epoch BELOW it is held, so the absence above is this answer and
-        // not a node that read nothing at all.
+        // The epoch below is held, so the absence above is this answer and not a
+        // node that read nothing.
         assert!(
             out.committee_records[i][&(epoch - 1)].is_ok(),
             "node {i} holds no record for epoch {} either: {:?}",
@@ -898,11 +678,8 @@ fn a_weightless_committee_inside_the_window_stops_every_node_that_must_enter_it(
         );
     }
 
-    // OBSERVATION (d): the slot is POISONED — the epoch cost the contract
-    // EXACTLY ONE snapshot call on each node, for the whole run plus the
-    // post-run poll of every consumer's question. `==`, not `>=`: the
-    // memoisation is the property (B3-12), and a second call would mean the
-    // refusal is being re-derived on the hot path again.
+    // `==`, not `>=`: the memoisation is the property, and a second call would
+    // mean the refusal is re-derived on the hot path.
     for i in 0..n {
         assert_eq!(
             out.staking_reads[i].module_snapshot.get(&epoch),
@@ -912,11 +689,8 @@ fn a_weightless_committee_inside_the_window_stops_every_node_that_must_enter_it(
         );
     }
 
-    // OBSERVATION (e): LOUD, and exactly once per node for each of the two
-    // lines this failure owes — the module's refusal and the manager's halt.
-    // The stand's capture carries no node label (`super::mod`'s doc), so "once
-    // per node" is a count over one process, which is why the ERROR set must
-    // contain nothing else.
+    // The capture carries no node label, so "once per node" is a count over one
+    // process and the ERROR set must contain nothing else.
     let permanent: Vec<&super::capture::Captured> = out
         .errors()
         .into_iter()
@@ -939,8 +713,6 @@ fn a_weightless_committee_inside_the_window_stops_every_node_that_must_enter_it(
         "expected one halt ERROR per node, got {:?}",
         halts.iter().map(|l| &l.text).collect::<Vec<_>>()
     );
-    // The third line each node owes, and the one that says the halt REACHED
-    // execution: the executor parks instead of deriving.
     let parked: Vec<&super::capture::Captured> = out
         .errors()
         .into_iter()
@@ -972,7 +744,6 @@ fn a_weightless_committee_inside_the_window_stops_every_node_that_must_enter_it(
         );
     }
 
-    // OBSERVATION (f): counted under its own cause, at least once per node.
     let weights_none = counter_of(
         drained,
         "dpos_committee_read_permanent_total",
@@ -1003,22 +774,13 @@ fn a_weightless_committee_inside_the_window_stops_every_node_that_must_enter_it(
     );
 }
 
-/// (4.1, revert, R-128) A committee read that REVERTS inside the window is the
-/// OTHER permanent class: the epoch is refused loudly and is not registered,
-/// and the node does NOT stop.
+/// A committee read that reverts inside the window is the other permanent class:
+/// the epoch is refused loudly and not registered, and the node does not stop.
 ///
-/// The contrast is the point. A revert says the read could not be served — a
-/// staking-module code error, a read of a module that is not there — and an
-/// operator repairs it and restarts; it is not the chain stating a committee
-/// that cannot exist, so it does not carry the one thing that justifies
-/// stopping a node. The design writes the two lines separately
-/// (`E4-CORE-DESIGN.md` §5.4: revert ⇒ `error!`, the epoch is not registered;
-/// impossible ⇒ the node stands), and before R-128 the code could not tell them
-/// apart because it only ever had the weaker outcome.
-///
-/// Falsifier: the contract not actually reverting (then the switch is inert); a
-/// record for the epoch; a halted node; a run that never reached the epoch
-/// below; more than one `error!` per node.
+/// A revert says the read could not be served — a staking-module code error, a
+/// read of a module that is not there — which an operator repairs and restarts;
+/// it is not the chain stating a committee that cannot exist, so it does not
+/// carry what justifies stopping a node.
 #[test]
 fn a_reverting_committee_read_inside_the_window_refuses_the_epoch_and_leaves_the_node_up() {
     let epoch = 2u64;
@@ -1030,7 +792,6 @@ fn a_reverting_committee_read_inside_the_window_refuses_the_epoch_and_leaves_the
     let n = out.heights.len();
     assert!(!out.timed_out, "heights {:?}", out.heights);
 
-    // PREMISE 1: the chain ran up to the epoch whose read reverts.
     for i in 0..n {
         assert!(
             out.heights[i] >= last(epoch - 1),
@@ -1040,8 +801,6 @@ fn a_reverting_committee_read_inside_the_window_refuses_the_epoch_and_leaves_the
         );
     }
 
-    // PREMISE 2: the contract really reverted, for that epoch and no other, on
-    // every node.
     for i in 0..n {
         let reverted: Vec<u64> = out.staking_reads[i].reverted.keys().copied().collect();
         assert_eq!(
@@ -1052,15 +811,12 @@ fn a_reverting_committee_read_inside_the_window_refuses_the_epoch_and_leaves_the
         );
     }
 
-    // OBSERVATION (a): NOBODY halted. This is the line that separates the two
-    // permanent classes, and it is the whole reason this fixture exists.
     assert!(
         out.halted.is_empty(),
         "a revert stopped a node: {:?}",
         out.halted
     );
 
-    // OBSERVATION (b): the epoch is not registered — no record, no scheme.
     for i in 0..n {
         let refusal = out.committee_records[i][&epoch]
             .as_ref()
@@ -1079,7 +835,6 @@ fn a_reverting_committee_read_inside_the_window_refuses_the_epoch_and_leaves_the
         );
     }
 
-    // OBSERVATION (c): one `error!` per node, and no halt line among them.
     let permanent: Vec<&super::capture::Captured> = out
         .errors()
         .into_iter()

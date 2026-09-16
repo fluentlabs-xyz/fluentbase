@@ -28,19 +28,18 @@ impl OriginEpocher {
         }
     }
 
-    /// The largest epoch-TERMINAL height at or below `floor`, or `None` when no
+    /// The largest epoch-terminal height at or below `floor`, or `None` when no
     /// terminal exists there (a `floor` below the origin, or inside epoch 0 before
     /// its own terminal — nothing has ended yet).
     ///
     /// This is the height `Inline::genesis(E)` needs before a per-epoch engine can
-    /// spawn for the epoch that follows it, and after a jump raises the floor it is
-    /// the one height no repair path will ever fetch: repair starts at `floor + 1`
-    /// and `store_finalization` drops anything at or below the floor. The boundary
-    /// seeding at both `SetFloor` producers keys off exactly this value.
+    /// spawn for the following epoch, and after a jump raises the floor it is the
+    /// one height no repair path will ever fetch: repair starts at `floor + 1` and
+    /// `store_finalization` drops anything at or below the floor.
     ///
-    /// `last(E_of(floor))` is NOT the same thing and is wrong in general position:
-    /// it returns the terminal of the epoch the floor sits INSIDE, which is above
-    /// the floor whenever the floor is not itself a terminal.
+    /// `last(E_of(floor))` is not the same thing: it returns the terminal of the
+    /// epoch the floor sits inside, which is above the floor whenever the floor is
+    /// not itself a terminal.
     pub fn terminal_at_or_below(&self, floor: Height) -> Option<Height> {
         let info = self.containing(floor)?;
         if info.last() == floor {
@@ -63,9 +62,8 @@ impl OriginEpocher {
 impl Epocher for OriginEpocher {
     fn containing(&self, height: Height) -> Option<EpochInfo> {
         // Heights below the origin predate DPoS and have no relative epoch. That
-        // `None` is this type's own rule and is NOT the shared function's — it
-        // clamps such a height to epoch 0 — so the gate stays here and only the
-        // arithmetic below is shared with the staking module and the reader.
+        // `None` is this type's own rule, not the shared function's (which clamps
+        // such a height to epoch 0), so the gate stays here.
         height.get().checked_sub(self.origin)?;
         let epoch = Epoch::new(fluentbase_types::staking_protocol::epoch_at_block(
             height.get(),
@@ -134,7 +132,7 @@ mod tests {
         let ep = OriginEpocher::new(64, NZU64!(32));
 
         // General position: the floor sits inside epoch 2, so the answer is epoch 1's
-        // terminal — NOT epoch 2's, which is above the floor.
+        // terminal — not epoch 2's, which is above the floor.
         assert_eq!(
             ep.terminal_at_or_below(Height::new(140)),
             Some(Height::new(127))

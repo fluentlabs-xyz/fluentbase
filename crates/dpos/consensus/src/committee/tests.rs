@@ -1,13 +1,6 @@
-//! Module tests.
-//!
-//! The fakes here are deliberately NOT `testbed::fakes::FakeStaking`. That one
-//! answers a committee as a pure function of the EPOCH — the hash only decides
-//! "is it committed yet" — so "two nodes at different heights read the same
-//! committee" would be a tautology over it. The reader below BRANCHES ON THE
-//! HASH, can withhold weights, can answer empty, can fail transiently or
-//! permanently, and counts every staticcall by `(epoch, at)`. Those are the
-//! properties of the CALLER this module is asserting, so the fake has to be able
-//! to break each of them.
+//! The fakes here are deliberately not `testbed::fakes::FakeStaking`: the properties under
+//! test are properties of the caller, so the fake has to be able to break each of them —
+//! branch on the read hash, withhold weights, answer empty, fail, and count every staticcall.
 
 use super::*;
 use crate::beacon::CommitteeReads as _;
@@ -32,9 +25,8 @@ fn geometry() -> Geometry {
     Geometry::new(0, INTERVAL).expect("non-zero interval")
 }
 
-/// `n` validators in CONTRACT ORDER (ascending on the raw peer pubkey), which
-/// is the order `commitEpochCommittee` sorts its array in and therefore the
-/// only order a real snapshot can arrive in.
+/// `n` validators in the contract's order (ascending raw peer pubkey): the only order a real
+/// snapshot can arrive in.
 fn validators(n: usize) -> Vec<ValidatorWithKeys> {
     let mut rng = StdRng::seed_from_u64(0xC0FFEE);
     let mut out: Vec<ValidatorWithKeys> = (0..n)
@@ -60,18 +52,12 @@ fn hash(byte: u8) -> B256 {
     B256::repeat_byte(byte)
 }
 
-// ---------------------------------------------------------------- the anchor
-
-/// A movable ordering-finalized cursor plus a movable executed-state probe.
-/// The two are independent on purpose: "the height advanced" and "the state at
-/// that height is materialized" are exactly the two things the production
-/// anchor keeps apart.
+/// A movable ordering-finalized cursor plus a movable state probe, kept independent because
+/// the production anchor keeps those two apart.
 struct FakeAnchor {
     height: AtomicU64,
-    /// height → executed hash. A height ABSENT from here is the
-    /// `executed_state_hash` park (`Ok(None)`).
+    /// Height → executed hash; a height absent here is the `executed_state_hash` park.
     executed: Mutex<BTreeMap<u64, B256>>,
-    /// Force the probe to answer a real fault instead.
     fault: AtomicBool,
 }
 
@@ -84,7 +70,6 @@ impl FakeAnchor {
         })
     }
 
-    /// An anchor whose height is set but whose state is NOT materialized.
     fn unexecuted(height: u64) -> Arc<Self> {
         Arc::new(Self {
             height: AtomicU64::new(height),
@@ -112,22 +97,16 @@ impl Anchor for FakeAnchor {
     }
 }
 
-// ---------------------------------------------------------------- the reader
-
 /// What the contract answers for one `(epoch, at)`.
 #[derive(Clone)]
 enum Answer {
-    /// A committed committee of these member slots, with frozen weights.
     Committee(Vec<usize>),
-    /// A committed committee whose frozen weights are handed over VERBATIM —
-    /// the only way to hand the module a weight vector whose length does not
-    /// match the member array.
+    /// A committed committee whose weights are handed over verbatim — the only way to give the
+    /// module a weight vector whose length does not match the member array.
     CommitteeWeighted(Vec<usize>, Vec<u128>),
     /// Committed, but the contract's weight ring has wrapped past this epoch.
     WeightsWrapped(Vec<usize>),
-    /// Not committed in the state at `at`.
     Uncommitted,
-    /// The read itself fails.
     Failed(&'static str),
 }
 
@@ -140,7 +119,6 @@ impl Answer {
     }
 }
 
-/// Every staticcall the module made, as `(epoch, hash)` in call order.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Calls {
     snapshot: Vec<(u64, B256)>,
@@ -158,30 +136,25 @@ impl Calls {
 
 type Plan = Box<dyn Fn(u64, B256, usize) -> Answer + Send + Sync>;
 
-/// What `getDkgQual(epoch)` answers at `at`. A leg of its own, and a FALLIBLE
-/// one: by the time the module asks for the bit it has already paid for the
-/// snapshot call, and it branches on the hash like the other leg, so a test
-/// that asserts two anchors agree on the bit is asserting something the fake
-/// could have contradicted.
+/// What `getDkgQual(epoch)` answers at `at`: a fallible leg of its own, asked only after the
+/// snapshot call is paid for, and free to branch on the hash like the other leg.
 type QualPlan = Box<dyn Fn(u64, B256) -> Result<bool, ReadError> + Send + Sync>;
 
-/// The everyday bit: the contract writes it in the same call that commits the
-/// committee, so on any in-window anchor it is a function of the epoch alone.
+/// The everyday bit: the contract writes it in the same call that commits the committee, so
+/// in-window it is a function of the epoch alone.
 fn qual_by_epoch() -> QualPlan {
     Box::new(|epoch, _| Ok(epoch % 2 == 1))
 }
 
 struct FakeReads {
     validators: Vec<ValidatorWithKeys>,
-    /// `(epoch, at, how many snapshot reads of this epoch came before)`.
+    /// `(epoch, at, snapshot reads of this epoch that came before)`.
     plan: Plan,
-    /// hash → block number, so the snapshot can report the height it was taken
-    /// at the way the real reader does (from the header it already read).
+    /// Hash → block number, so a snapshot reports its height the way the real reader does.
     heights: BTreeMap<B256, u64>,
-    /// The second staticcall, answered independently of the first.
     qual: QualPlan,
     calls: Mutex<Calls>,
-    /// Held by the two-thread write-once test so both readers miss the map.
+    /// Barrier held so both concurrent readers miss the map before either installs.
     gate: Option<Arc<Barrier>>,
 }
 
@@ -251,25 +224,18 @@ impl EpochReads for FakeReads {
     }
 }
 
-/// The everyday plan: every epoch is a committed four-member committee.
 fn four_members() -> Plan {
     Box::new(|_, _, _| Answer::Committee(vec![0, 1, 2, 3]))
 }
 
-/// A watch already carrying the frozen pair — the state the store spends its
-/// whole life in once the plane has frozen the geometry. The sender is leaked
-/// into the receiver by `watch::channel` semantics only while it lives, so it
-/// is kept alive by the returned receiver's own channel (a `Sender` dropped
-/// here would make `borrow()` still read the last value, which is all the store
-/// ever does).
+/// A watch already carrying the frozen pair. Dropping the temporary sender is fine: `borrow()`
+/// still reads the last value, and that is all the store does with it.
 fn frozen_geometry_rx() -> crate::committee::GeometryRx {
     tokio::sync::watch::Sender::new(Some((0, INTERVAL))).subscribe()
 }
 
-/// The module's one scheme producer, as a fixture: a verify-only scheme over
-/// the record's own BLS projection, bound to no oracle (this module's tests are
-/// about the map, not about beacon-activeness — the two tests that ARE about
-/// verification strength build their own).
+/// A verify-only scheme over the record's own BLS projection, bound to no oracle: these tests
+/// are about the map, and the two about verification strength build their own.
 fn test_verifier() -> EpochVerifier {
     Arc::new(|record: &CommitteeRecord| {
         Some(fluentbase_bls::scheme::build_verifier(
@@ -281,7 +247,6 @@ fn test_verifier() -> EpochVerifier {
     })
 }
 
-/// The chain id every scheme in these tests is namespaced under.
 const CHAIN_ID: u64 = 1;
 
 fn new_store(anchor: Arc<FakeAnchor>, reads: FakeReads) -> Arc<CommitteeStore<FakeReads>> {
@@ -293,15 +258,10 @@ fn new_store(anchor: Arc<FakeAnchor>, reads: FakeReads) -> Arc<CommitteeStore<Fa
     ))
 }
 
-// --------------------------------------------------------- 0. no geometry yet
-
 #[test]
 fn without_a_frozen_geometry_every_epoch_is_not_readable_without_a_single_read() {
-    // The startup state of a real node: the store is built beside the anchor,
-    // BEFORE the beacon plane's EpochTransition has reached a readable,
-    // DPoS-scheduled block and frozen `(activation, interval)`. With no epoch
-    // arithmetic there is no window and no commit height, so there is nothing
-    // to read and nothing to ask the EVM.
+    // A real node starts this way: the store is built beside the anchor, before the beacon
+    // plane has frozen `(activation, interval)`, so there is no epoch arithmetic to read with.
     let (tx, rx) = tokio::sync::watch::channel(None);
     let anchor = FakeAnchor::at(400, hash(7));
     let store = Arc::new(CommitteeStore::new(
@@ -326,8 +286,6 @@ fn without_a_frozen_geometry_every_epoch_is_not_readable_without_a_single_read()
         Calls::default(),
         "an unfrozen geometry must not cost a staticcall"
     );
-    // The wake-up is seeded at 0 rather than at a bogus epoch, and an advance
-    // taken before the freeze publishes nothing (there is nothing to publish).
     let mut readable = store.subscribe();
     assert_eq!(*readable.borrow_and_update(), 0);
     store.anchor_advanced();
@@ -336,8 +294,7 @@ fn without_a_frozen_geometry_every_epoch_is_not_readable_without_a_single_read()
         "no geometry, no readable epoch"
     );
 
-    // The freeze lands and the SAME store starts answering — no rebuild, no
-    // second cursor.
+    // The freeze lands: the same store answers, with no rebuild.
     tx.send_replace(Some((0, INTERVAL)));
     store
         .committee(5)
@@ -350,15 +307,9 @@ fn without_a_frozen_geometry_every_epoch_is_not_readable_without_a_single_read()
     );
 }
 
-// ------------------------------------------------------------------- 1. gate
-
 #[test]
 fn an_epoch_below_its_commit_height_is_not_readable_without_a_single_read() {
-    // `commit_height(E) = start(E−2)` EXCEPT for the first three epochs, which
-    // `start` cannot express: genesis is not executed by the ahead-commit
-    // drain, the bootstrap commits epoch 0 alone, and epochs 1 and 2 are first
-    // committed by the first EXECUTED block — height 1, not 0. So an anchor
-    // still at height 0 can read epoch 0 and must refuse 1 and 2.
+    // Epochs 1 and 2 are first committed by the first executed block, height 1, not at genesis.
     let anchor = FakeAnchor::at(0, hash(1));
     let store = new_store(anchor, FakeReads::new(four_members(), BTreeMap::new()));
 
@@ -380,14 +331,10 @@ fn an_epoch_below_its_commit_height_is_not_readable_without_a_single_read() {
     assert_eq!(geometry().commit_height(5), geometry().start(3));
 }
 
-// ------------------------------------------------------- 2. unexecuted anchor
-
 #[test]
 fn an_anchor_whose_state_is_not_materialized_is_not_readable_without_a_single_read() {
-    // The backfill case (R-123): reth wrote the header but not the state. The
-    // probe answers `Ok(None)` and the module parks WITHOUT a staticcall —
-    // which is the whole reason the anchor is a state probe and not
-    // `block_hash`.
+    // Backfill: reth wrote the header but not the state, so the probe answers `Ok(None)` and
+    // the module parks without a staticcall — the reason the anchor probes state at all.
     let anchor = FakeAnchor::unexecuted(320);
     let store = new_store(anchor, FakeReads::new(four_members(), BTreeMap::new()));
 
@@ -398,11 +345,8 @@ fn an_anchor_whose_state_is_not_materialized_is_not_readable_without_a_single_re
     assert_eq!(store.reads().calls(), Calls::default());
 }
 
-// ------------------------------------------------------------- 3. the window
-
 #[test]
 fn an_epoch_outside_the_window_is_refused_without_a_single_read_and_the_borders_are_inside() {
-    // anchor in epoch 10 ⇒ window [10 − SCHEME_RETENTION_EPOCHS, 10 + 2] = [2, 12].
     let at = hash(3);
     let anchor = FakeAnchor::at(325, at);
     let store = new_store(
@@ -410,6 +354,7 @@ fn an_epoch_outside_the_window_is_refused_without_a_single_read_and_the_borders_
         FakeReads::new(four_members(), BTreeMap::from([(at, 325)])),
     );
 
+    // Anchor 325 is epoch 10 ⇒ window [10 − SCHEME_RETENTION_EPOCHS, 10 + 2] = [2, 12].
     for outside in [1u64, 13] {
         match store.committee(outside) {
             Err(CommitteeError::OutOfWindow { epoch, lo, hi }) => {
@@ -424,8 +369,7 @@ fn an_epoch_outside_the_window_is_refused_without_a_single_read_and_the_borders_
         "the window is a predicate on the REQUEST — it must not touch the EVM"
     );
 
-    // Both borders are INSIDE, so the refusals above are the window and not an
-    // off-by-one that would have refused a legitimate epoch too.
+    // Both borders are inside, so the refusals above are the window and not an off-by-one.
     for border in [2u64, 12] {
         assert!(
             store.committee(border).is_ok(),
@@ -433,8 +377,6 @@ fn an_epoch_outside_the_window_is_refused_without_a_single_read_and_the_borders_
         );
     }
 }
-
-// ------------------------------------------------ 4. one pair of staticcalls
 
 #[test]
 fn the_first_read_is_one_snapshot_and_one_qual_at_one_hash_and_the_second_is_free() {
@@ -463,18 +405,14 @@ fn the_first_read_is_one_snapshot_and_one_qual_at_one_hash_and_the_second_is_fre
     );
 }
 
-// --------------------------------------------- 5. two anchors, one record
-
 #[test]
 fn two_anchors_on_different_branches_produce_the_same_record() {
-    // The fake genuinely branches on the hash — epoch 7 answers a DIFFERENT
-    // committee per branch — so the equality asserted for epoch 5 is a property
-    // of this module and not of a fake that could not have disagreed.
+    // The fake branches on the hash — epoch 7 answers a different committee per branch — so the
+    // epoch-5 equality is a property of the module, not of a fake that cannot disagree.
     let (a, b) = (hash(0xAA), hash(0xBB));
     let heights = BTreeMap::from([(a, 200u64), (b, 260u64)]);
 
-    // epoch(200) = 6 ⇒ window [0, 8]; epoch(260) = 8 ⇒ window [0, 10].
-    // Epochs 5 and 7 are inside both.
+    // Anchor 200 is epoch 6 ⇒ window [0, 8]; anchor 260 is epoch 8 ⇒ [0, 10].
     let left = new_store(
         FakeAnchor::at(200, a),
         FakeReads::new(branching(a, b), heights.clone()).with_qual(branching_qual(a)),
@@ -512,8 +450,7 @@ fn two_anchors_on_different_branches_produce_the_same_record() {
     );
 }
 
-/// The qual leg of the same contract: epoch 7 answers a different BIT per
-/// branch, every other epoch answers the same one on both.
+/// The qual leg of the same contract: only epoch 7 answers a different bit per branch.
 fn branching_qual(a: B256) -> QualPlan {
     Box::new(move |epoch, at| match epoch {
         7 => Ok(at == a),
@@ -521,8 +458,7 @@ fn branching_qual(a: B256) -> QualPlan {
     })
 }
 
-/// A contract whose epoch-7 answer DEPENDS ON THE BRANCH and whose epoch-5
-/// answer does not — rebuilt per store so each gets its own boxed closure.
+/// A contract whose epoch-7 answer depends on the branch and whose epoch-5 answer does not.
 fn branching(a: B256, b: B256) -> Plan {
     Box::new(move |epoch, at, _| match (epoch, at) {
         (7, x) if x == a => Answer::Committee(vec![0, 1, 2, 3]),
@@ -531,15 +467,10 @@ fn branching(a: B256, b: B256) -> Plan {
     })
 }
 
-// -------------------------------------------------------------- 6. write-once
-
 #[test]
 fn a_second_answer_for_one_epoch_is_refused_and_the_first_record_stands() {
-    // The occupied arm is reached the ONLY way production can reach it: two
-    // consumers miss the map for one epoch and both issue their own pair of
-    // staticcalls, because the map lock is deliberately NOT held across a
-    // blocking state read. The barrier makes that race deterministic; the plan
-    // hands the two readers two DIFFERENT committees, i.e. a contract fork.
+    // Two consumers can miss the map for one epoch and both read, because the lock is not held
+    // across the blocking state read; the barrier makes that race deterministic.
     let at = hash(6);
     let gate = Arc::new(Barrier::new(2));
     let plan: Plan = Box::new(|epoch, _, nth| {
@@ -572,11 +503,8 @@ fn a_second_answer_for_one_epoch_is_refused_and_the_first_record_stands() {
         "a contract fork is permanent, not a retry"
     );
 
-    // The epoch is POISONED from here on. Not "the first record stands and
-    // answers": the chain stated two different committees for one epoch, and
-    // serving whichever read won the race would be serving one of two guesses.
-    // What the record is still good for is the write-once comparison above —
-    // the module knows which answer it kept — not for a consumer.
+    // The epoch is poisoned from here on: the chain stated two different committees for one
+    // epoch, and serving whichever read won the race would serve one of two guesses.
     let refusal = store
         .committee(10)
         .expect_err("a forked epoch answers the refusal, not a record");
@@ -596,13 +524,8 @@ fn a_second_answer_for_one_epoch_is_refused_and_the_first_record_stands() {
     );
 }
 
-// ---------------------------------------------------------- 7. absent weights
-
-/// `weights: None` inside the window is the IMPOSSIBLE class, and an impossible
-/// answer is memoised: the epoch's slot is poisoned, so the same refusal comes
-/// back without a second staticcall (R-128 / B3-12 — before it, every consumer
-/// re-derived the refusal on every call, two blocking reads at a time, on the
-/// marshal actor's own task).
+/// `weights: None` inside the window is the impossible class, and an impossible answer is
+/// memoised: the epoch is poisoned, so the same refusal comes back without a second staticcall.
 #[test]
 fn absent_weights_inside_the_window_are_permanent_and_poison_the_epoch() {
     let at = hash(7);
@@ -630,8 +553,6 @@ fn absent_weights_inside_the_window_are_permanent_and_poison_the_epoch() {
     );
     assert_eq!(store.reads().calls().snapshots_of(10), 1);
 
-    // The verdict was kept: the next call answers the SAME error and the
-    // contract is not asked again.
     let again = store.committee(10).expect_err("the epoch stays refused");
     assert_eq!(again.to_string(), err.to_string());
     assert_eq!(
@@ -646,8 +567,6 @@ fn absent_weights_inside_the_window_are_permanent_and_poison_the_epoch() {
     );
     assert!(store.scheme(10).is_none(), "and no scheme");
 }
-
-// --------------------------------------------------------- 8. transient error
 
 #[test]
 fn a_transient_read_error_caches_nothing_and_is_retried() {
@@ -681,8 +600,7 @@ fn a_transient_read_error_caches_nothing_and_is_retried() {
         "the failed read cached nothing, so the retry really went to the contract"
     );
 
-    // The other half of the same predicate: a revert is the contract SPEAKING,
-    // and it will say the same thing on every retry.
+    // The other half: a revert is the contract speaking, and it will say the same thing again.
     let reverting = new_store(
         FakeAnchor::at(325, at),
         FakeReads::new(
@@ -695,11 +613,8 @@ fn a_transient_read_error_caches_nothing_and_is_retried() {
     assert!(!err.is_transient(), "CallReverted is not a retry");
     assert!(reverting.cached_epochs().is_empty());
 
-    // And it is NOT the impossible class, so nothing is memoised: a revert is
-    // the contract refusing to answer, and the moment an operator repairs what
-    // produced it the next read must be able to succeed without a restart. The
-    // node is not stopped by it either — `epoch_manager::reconcile_roles` routes
-    // on exactly this predicate.
+    // A revert is not the impossible class, so nothing is memoised: an operator can repair the
+    // cause, and the next read succeeds without a restart.
     assert!(
         !err.is_contract_impossible(),
         "a revert is the contract refusing to answer, not an impossible answer"
@@ -716,14 +631,10 @@ fn a_transient_read_error_caches_nothing_and_is_retried() {
     );
 }
 
-// -------------------------------------------------------- 9. empty committee
-
 #[test]
 fn an_empty_committee_is_not_readable_and_never_permanent() {
-    // The contract answers an uncommitted epoch with `Ok` and an empty array.
-    // It only ever skips a commit together with halting the chain (E4-25), so
-    // this is "not yet", never "never" — folding it into a permanent error
-    // would refuse an epoch that is about to exist.
+    // The contract answers an uncommitted epoch with `Ok` and an empty array — "not yet", never
+    // "never", so folding it into a permanent error would refuse an epoch about to exist.
     let at = hash(9);
     let store = new_store(
         FakeAnchor::at(325, at),
@@ -746,15 +657,10 @@ fn an_empty_committee_is_not_readable_and_never_permanent() {
     );
 }
 
-// ------------------------------------------------------------- 10. retention
-
 #[test]
 fn the_map_keeps_every_epoch_the_window_still_admits() {
-    // Retention is the window FLOOR, not a count. The window is 11 epochs deep
-    // and the map holds all of them, so the write-once value — and with it the
-    // contract-fork detector — covers every epoch the module will ever answer
-    // from. A count of SCHEME_RETENTION_EPOCHS would have evicted the bottom of
-    // its own window.
+    // Retention is the window floor, not a count: the map holds every epoch the window still
+    // admits, so write-once covers every epoch the module will ever answer from.
     let (at, higher) = (hash(10), hash(15));
     let anchor = FakeAnchor::at(325, at);
     let store = new_store(
@@ -765,8 +671,7 @@ fn the_map_keeps_every_epoch_the_window_still_admits() {
         ),
     );
 
-    // Window at epoch 10 is [2, 12]; read 2..=10, i.e. more epochs than
-    // SCHEME_RETENTION_EPOCHS.
+    // Anchor 325 is epoch 10 ⇒ window [2, 12]; anchor 416 is epoch 13 ⇒ [5, 15].
     for epoch in 2..=10u64 {
         store.committee(epoch).expect("inside the window");
     }
@@ -784,9 +689,6 @@ fn the_map_keeps_every_epoch_the_window_still_admits() {
         );
     }
 
-    // Raise the anchor into epoch 13. The floor becomes 5, epochs 2..=4 leave
-    // the window for good, and the map drops exactly them — nothing that is
-    // still answerable, nothing that is not.
     anchor.advance(416, higher);
     store.anchor_advanced();
     assert_eq!(
@@ -804,15 +706,10 @@ fn the_map_keeps_every_epoch_the_window_still_admits() {
     ));
 }
 
-// ------------------------------------------- 10b. write-once at the floor
-
 #[test]
 fn an_epoch_at_the_window_floor_keeps_its_first_value() {
-    // What retention-by-count actually cost: the OLDEST epoch of the window was
-    // evicted while still readable, and a second, DIFFERENT answer for it found
-    // a VACANT slot and was installed silently — the exact contract fork
-    // write-once exists to refuse. With the floor rule the epoch is never
-    // re-read at all.
+    // The floor epoch must keep its first value: retention by count would evict it while it is
+    // still readable, and the next, different answer would land in the vacant slot unchecked.
     let at = hash(16);
     let plan: Plan = Box::new(|epoch, _, nth| {
         if epoch == 2 && nth > 0 {
@@ -845,8 +742,6 @@ fn an_epoch_at_the_window_floor_keeps_its_first_value() {
     );
 }
 
-// ------------------------------------------------------------- 11. subscribe
-
 #[test]
 fn the_wake_up_carries_the_highest_readable_epoch_as_the_anchor_grows() {
     let anchor = FakeAnchor::at(0, hash(11));
@@ -858,7 +753,6 @@ fn the_wake_up_carries_the_highest_readable_epoch_as_the_anchor_grows() {
     let mut rx = store.subscribe();
     assert_eq!(*rx.borrow_and_update(), 2, "epoch(0) + 2");
 
-    // Raise the anchor to the height that first commits epoch 5.
     let target = geometry().commit_height(5);
     assert_eq!(target, geometry().start(3));
     anchor.advance(target, hash(12));
@@ -867,14 +761,8 @@ fn the_wake_up_carries_the_highest_readable_epoch_as_the_anchor_grows() {
     assert!(rx.has_changed().unwrap(), "the wake-up fired");
     assert_eq!(*rx.borrow_and_update(), 5, "epoch(anchor) + 2");
 
-    // The EVENT fires on every advance, including one that does not move the
-    // value — and that is the contract, not an accident. A consumer can be parked
-    // for two different reasons: the epoch's commit height is above the anchor
-    // (the value moves when that changes) or the anchor's own height is not
-    // EXECUTED yet (it never does). Publishing only on growth left the second
-    // class with no retry at all: a restarted node whose cursor is already at its
-    // finalized height but whose state is still materialising would wait for an
-    // epoch boundary that its own stalled reconcile is what prevents.
+    // Every advance fires the event even when the value does not move: the other way a
+    // consumer parks is an unexecuted anchor, and only a later advance can wake it.
     store.anchor_advanced();
     assert!(
         rx.has_changed().unwrap(),
@@ -886,15 +774,12 @@ fn the_wake_up_carries_the_highest_readable_epoch_as_the_anchor_grows() {
         "and the VALUE is still monotone — the hint never goes backwards"
     );
 
-    // Monotone in the value, proved against a LOWER anchor rather than an equal
-    // one: `highest_readable` is recomputed from the anchor on every advance, so
-    // a value that could regress would regress here.
+    // Monotone in the value, proved against a lower anchor rather than an equal one: the hint
+    // is recomputed from the anchor on every advance, so a regression would show here.
     anchor.advance(geometry().start(1), hash(13));
     store.anchor_advanced();
     assert!(*rx.borrow_and_update() >= 5, "the hint never decreases");
 }
-
-// ------------------------------------------------- 12. membership + the facade
 
 #[test]
 fn membership_and_the_facade_answer_from_the_same_record() {
@@ -933,27 +818,19 @@ fn membership_and_the_facade_answer_from_the_same_record() {
         Some((record.changed, true))
     );
 
-    // The ignored `at` really is ignored: a hash this chain never sealed still
-    // answers the record, because the record does not depend on it.
+    // The ignored `at` really is ignored: a hash this chain never sealed still answers.
     assert_eq!(
         facade.committee(10, hash(0xEE)),
         Some(record.participants.clone())
     );
 
-    // Every CommitteeError folds to `None`, including the two that never touch
-    // the EVM.
     assert_eq!(facade.committee(99, B256::ZERO), None);
     assert!(facade.committee_bls(99, B256::ZERO).is_none());
     assert_eq!(facade.dkg_qual(99, B256::ZERO), None);
 }
 
-// -------------------------------------------------------------- 13. geometry
-
 #[test]
 fn a_zero_epoch_interval_has_no_geometry() {
-    // What makes every method on `Geometry` total: the undefined division is
-    // refused at CONSTRUCTION, so no read path has to carry a "what if the
-    // interval is zero" arm.
     assert!(Geometry::new(100, 0).is_none());
 
     let g = Geometry::new(100, 32).unwrap();
@@ -965,13 +842,10 @@ fn a_zero_epoch_interval_has_no_geometry() {
     assert_eq!(g.commit_height(4), g.start(2));
 }
 
-// ----------------------------------------------------- 14. anchor probe fault
-
 #[test]
 fn a_header_index_fault_at_the_anchor_is_permanent_not_a_park() {
-    // `executed_state_hash` documents a `block_hash` miss at a MATERIALIZED
-    // height as a real fault rather than a park. Folding it into `NotReadable`
-    // would strand a corruption behind a retry that can never succeed.
+    // The anchor documents a probe fault at a materialized height as a real fault, not a park:
+    // folding it into `NotReadable` would strand a corruption behind a retry that cannot succeed.
     let at = hash(14);
     let anchor = FakeAnchor::at(325, at);
     anchor.fault.store(true, Ordering::Release);
@@ -990,23 +864,16 @@ fn a_header_index_fault_at_the_anchor_is_permanent_not_a_park() {
     );
 }
 
-// -------------------------------------------------- 15. the window has a side
-
 #[test]
 fn an_epoch_above_the_window_is_worth_a_retry_and_one_below_never_is() {
-    // `OutOfWindow` is two different answers behind one variant. ABOVE the
-    // window the anchor simply has not got there yet and moves up on its own;
-    // BELOW it the contract's weight ring has wrapped and no anchor will ever
-    // bring the epoch back. A consumer routing on the predicate (§5.4 says the
-    // slasher does) would otherwise refuse forever an epoch that becomes
-    // readable in a block or two.
+    // `OutOfWindow` is two answers behind one variant: above the window the anchor has not
+    // reached the epoch yet, below it the weight ring has wrapped for good.
     let at = hash(17);
     let store = new_store(
         FakeAnchor::at(325, at),
         FakeReads::new(four_members(), BTreeMap::from([(at, 325u64)])),
     );
 
-    // Window at epoch 10 is [2, 12].
     let above = store.committee(13).expect_err("above the window");
     assert!(matches!(
         above,
@@ -1038,14 +905,9 @@ fn an_epoch_above_the_window_is_worth_a_retry_and_one_below_never_is() {
     );
 }
 
-// ------------------------------------------------- 16. one weight per member
-
 #[test]
 fn a_weight_vector_that_does_not_match_the_members_is_permanent() {
-    // `CommitteeRecord::weights` is documented as one weight per member in the
-    // same order, and the leader elector indexes it positionally. The reader
-    // forces the length for the production reader, but the module is generic
-    // over `EpochReads` on purpose, so the unwritten precondition of the port
+    // The module is generic over `EpochReads`, so the port's one-weight-per-member precondition
     // has to be a check rather than a hope.
     let at = hash(18);
     let store = new_store(
@@ -1070,13 +932,10 @@ fn a_weight_vector_that_does_not_match_the_members_is_permanent() {
     );
 }
 
-// ------------------------------------------------------- 17. the second leg
-
 #[test]
 fn a_failing_qual_leg_throws_the_snapshot_away_and_classifies_by_the_error() {
-    // The one branch where the module has already paid for a staticcall and
-    // drops it. Nothing is cached, so the retry costs the snapshot again, and
-    // the transient/permanent split is the SAME split as on the first leg.
+    // The one branch where the module drops a staticcall it already paid for: nothing is
+    // cached, so the retry pays the snapshot again, and the split matches the first leg.
     let at = hash(19);
     let parked = new_store(
         FakeAnchor::at(325, at),
@@ -1119,13 +978,10 @@ fn a_failing_qual_leg_throws_the_snapshot_away_and_classifies_by_the_error() {
     );
 }
 
-// ------------------------------------------- 18. the facade folds every error
-
 #[test]
 fn the_facade_folds_every_committee_error_to_none() {
-    // The trait has no room for a reason and all three of its consumers read
-    // `None` as "undecided, ask again", so every variant has to arrive there —
-    // not just the one a single test happened to produce.
+    // The facade trait has no room for a reason and its consumers read `None` as "undecided,
+    // ask again", so every variant has to arrive there.
     let at = hash(20);
     let anchor = FakeAnchor::at(325, at);
     let store = new_store(
@@ -1140,7 +996,6 @@ fn the_facade_folds_every_committee_error_to_none() {
         ),
     );
 
-    // The three variants really are three different variants.
     assert!(matches!(
         store.committee(99),
         Err(CommitteeError::OutOfWindow { .. })
@@ -1159,17 +1014,12 @@ fn the_facade_folds_every_committee_error_to_none() {
     }
 }
 
-// ------------------------------------------------- 19. the production anchor
-
-/// A reth provider carrying a persisted `finalized` tag — the one number a
-/// restarted node knows before its consensus layer has re-derived anything.
+/// A reth provider carrying a persisted `finalized` tag, the one height a restarted node knows.
 struct TaggedProvider {
-    /// `finalized_block_number()`: reth's own tag, `None` on a genuinely fresh
-    /// execution layer.
+    /// `finalized_block_number()`: `None` on a genuinely fresh execution layer.
     tag: Option<u64>,
-    /// `best_block_number()`: the materialized head.
     best: u64,
-    /// What `block_hash` resolves to at any height at or below `best`.
+    /// The one hash `block_hash` answers, whatever height it is asked for.
     hash: B256,
 }
 
@@ -1231,12 +1081,8 @@ impl reth_storage_api::BlockIdReader for TaggedProvider {
 
 #[test]
 fn a_persisted_finalized_tag_anchors_the_window_before_the_cursor_is_seeded() {
-    // The startup state this exists for: reth carries a finalized tag from an
-    // earlier run (or from the cold-start jump that just landed), while the
-    // `FinalizedCursor` — a PROCESS quantity, seeded inside
-    // `OuterBuilder::build` — is still zero. Anchoring on the cursor alone puts
-    // the window at `[0, 2]` and blinds the node to every epoch of the chain it
-    // is demonstrably following.
+    // Reth carries a finalized tag from an earlier run while the process-local `FinalizedCursor`
+    // is still zero; anchoring on the cursor alone would put the window at `[0, 2]`.
     const TAG: u64 = 400;
     let tag_epoch = geometry().epoch_of(TAG);
     let at = hash(19);
@@ -1261,8 +1107,6 @@ fn a_persisted_finalized_tag_anchors_the_window_before_the_cursor_is_seeded() {
         frozen_geometry_rx(),
         test_verifier(),
     );
-    // The WINDOW is the tag's, which is the observable that matters: every
-    // consumer's refusal is a function of it.
     match store.committee(9_999).expect_err("far above any window") {
         CommitteeError::OutOfWindow { lo, hi, .. } => assert_eq!(
             (lo, hi),
@@ -1275,17 +1119,14 @@ fn a_persisted_finalized_tag_anchors_the_window_before_the_cursor_is_seeded() {
         .committee(tag_epoch)
         .expect("the epoch the tag sits in is readable at the tag's own state");
 
-    // And the tag is a FLOOR, not a replacement: once the executor seeds and
-    // raises the cursor past it, the cursor is the anchor again.
+    // The tag is a floor, not a replacement: once the cursor passes it, the cursor wins again.
     cursor.advance(TAG + 3 * INTERVAL);
     assert_eq!(anchor.height(), TAG + 3 * INTERVAL);
 }
 
 #[test]
 fn an_execution_layer_with_no_finalized_tag_leaves_the_cursor_alone() {
-    // The other startup: a genuinely fresh node, no tag at all. `None` reads as
-    // 0 and the anchor is exactly the cursor — the floor adds nothing and, in
-    // particular, does not invent a height.
+    // A genuinely fresh node: no tag reads as 0, so the anchor is exactly the cursor.
     let at = hash(21);
     let cursor = crate::FinalizedCursor::default();
     let anchor = RethAnchor::new(
@@ -1301,10 +1142,8 @@ fn an_execution_layer_with_no_finalized_tag_leaves_the_cursor_alone() {
     assert_eq!(anchor.height(), 64);
 }
 
-// ------------------------------------------------- 14. the scheme in the slot
-
-/// The narrowest thing that satisfies [`SeedOracle`]. The map only ever asks
-/// whether an oracle is THERE, so nothing here needs to answer.
+/// The narrowest [`SeedOracle`]: the map only asks whether an oracle is there, never for an
+/// answer.
 #[derive(Debug)]
 struct StubOracle;
 
@@ -1339,9 +1178,8 @@ impl fluentbase_bls::oracle::SeedOracle for StubOracle {
     }
 }
 
-/// `n` validators in CONTRACT ORDER, WITH the keypairs that produced them —
-/// [`validators`] discards those, and a signer scheme needs one the committee
-/// actually contains.
+/// `n` validators in the contract's order, with the keypairs that produced them: a signer
+/// scheme needs a keypair the committee actually contains.
 fn validators_with_keys(n: usize) -> (Vec<ValidatorWithKeys>, Vec<ValidatorBlsKeypair>) {
     let mut rng = StdRng::seed_from_u64(0x5164);
     let mut pairs: Vec<(ValidatorWithKeys, ValidatorBlsKeypair)> = (0..n)
@@ -1366,9 +1204,8 @@ fn validators_with_keys(n: usize) -> (Vec<ValidatorWithKeys>, Vec<ValidatorBlsKe
     pairs.into_iter().unzip()
 }
 
-/// A store whose records are the given committee and whose ONE producer builds
-/// a verify-only scheme with (or without) an oracle, so a test can set up each
-/// of the three refusals from the outside.
+/// A store over the given committee whose producer builds a verify-only scheme with or without
+/// an oracle, so a test can drive each refusal from the outside.
 fn store_over(
     members: Vec<ValidatorWithKeys>,
     beacon_active: bool,
@@ -1396,12 +1233,8 @@ fn store_over(
     ))
 }
 
-/// The direction guard, moved here with the map it guards. It used to live on
-/// `EpochSchemeProvider::register`; the per-epoch registry is gone and its three
-/// refusals are [`Committee::upgrade_scheme`]'s.
-///
-/// Reds if a signer can be replaced by a verifier, or if the verifier→signer
-/// upgrade — the whole reason the method exists — stops landing.
+/// A signer is never replaced by a verifier, while the verifier→signer upgrade — the whole
+/// reason `upgrade_scheme` exists — still lands.
 #[test]
 fn a_scheme_upgrade_refuses_a_signer_to_verifier_downgrade_but_accepts_the_upgrade() {
     use commonware_cryptography::certificate::Scheme as _;
@@ -1412,28 +1245,20 @@ fn a_scheme_upgrade_refuses_a_signer_to_verifier_downgrade_but_accepts_the_upgra
 
     let record = store.committee(EPOCH).expect("in the window");
     let bimap = record.bls.bimap.clone();
-    // `Answer::Committee(vec![0,1,2,3])` takes member slots 0..3, so slot 0's
-    // keypair is in this committee.
+    // The plan takes member slots 0..3, so slot 0's keypair is in this committee.
     let signer =
         fluentbase_bls::scheme::build_signer(&ns, bimap.clone(), &keypairs[0], EPOCH, None)
             .expect("keypair is a committee member");
     let verifier = || fluentbase_bls::scheme::build_verifier(&ns, bimap.clone(), EPOCH, None);
     let is_signer = || store.scheme(EPOCH).expect("installed").me().is_some();
 
-    // The module installed a verify-only scheme WITH the record — nothing had to
-    // register it — and the signer half lands on top of it.
     assert!(!is_signer(), "the module's own entry is verify-only");
     assert!(store.upgrade_scheme(EPOCH, signer));
     assert!(is_signer());
 
-    // signer → verifier is refused: an engine's own scheme is never replaced by a
-    // weaker one underneath it.
     assert!(!store.upgrade_scheme(EPOCH, verifier()));
     assert!(is_signer());
 
-    // A different committee is refused outright. It is structurally impossible
-    // now — the record IS the committee — which is exactly why the refusal is a
-    // loud one rather than a branch that can be reasoned away.
     let (other_members, _) = validators_with_keys(5);
     let other = EpochCommittee::from_pairs(
         EPOCH,
@@ -1451,27 +1276,20 @@ fn a_scheme_upgrade_refuses_a_signer_to_verifier_downgrade_but_accepts_the_upgra
     assert!(is_signer());
 }
 
-/// Upgrades are MONOTONE in verification strength, and the oracle is the only
-/// strength neither `participants()` nor `me()` can see: `oracle: Some` and
-/// `oracle: None` over one committee verify DIFFERENTLY — the beacon-active
-/// scheme refuses a certificate whose seed slot was cleared, the oracle-less one
-/// admits it.
-///
-/// Reds if the oracle-drop refusal is removed, or if it is widened into a
-/// blanket freeze that also blocks the upgrade.
+/// Upgrades are monotone in verification strength, and the oracle is the only strength neither
+/// `participants()` nor `me()` can see: over one committee, an oracle-less scheme admits a
+/// certificate whose seed slot was cleared where the beacon-active one refuses it.
 #[test]
 fn a_scheme_upgrade_refuses_a_replacement_that_drops_the_beacon_oracle() {
     const EPOCH: u64 = 10;
     let (members, _) = validators_with_keys(6);
     let ns = fluentbase_bls::fluent_namespace(CHAIN_ID);
 
-    // The module's producer built a BEACON-ACTIVE entry.
     let store = store_over(members.clone(), true);
     let record = store.committee(EPOCH).expect("in the window");
     let bimap = record.bls.bimap.clone();
     assert!(store.scheme(EPOCH).expect("installed").is_beacon_active());
 
-    // The `RotatedKey` shape: same committee, same direction, no oracle.
     assert!(!store.upgrade_scheme(
         EPOCH,
         fluentbase_bls::scheme::build_verifier(&ns, bimap.clone(), EPOCH, None)
@@ -1482,8 +1300,7 @@ fn a_scheme_upgrade_refuses_a_replacement_that_drops_the_beacon_oracle() {
          slot where the entry it would replace refuses one"
     );
 
-    // And the UPGRADE still lands: an entry built before any oracle existed is
-    // replaced by the beacon-active one. Monotone means one-way, not frozen.
+    // The other direction still lands: an oracle-less entry is replaced by the beacon-active one.
     let cold = store_over(members, false);
     let cold_record = cold.committee(EPOCH).expect("in the window");
     assert!(!cold.scheme(EPOCH).expect("installed").is_beacon_active());
@@ -1499,15 +1316,8 @@ fn a_scheme_upgrade_refuses_a_replacement_that_drops_the_beacon_oracle() {
     assert!(cold.scheme(EPOCH).expect("installed").is_beacon_active());
 }
 
-/// The FOURTH refusal, and the only one this map did not inherit from the
-/// registry it replaced: `upgrade_scheme` cannot CREATE an entry.
-///
-/// It is what makes "a scheme exists exactly when this node read the committee
-/// it verifies under" structural rather than a convention the one caller happens
-/// to follow. Reds if the no-record arm starts installing, which would let a
-/// scheme built from something the module never read sit in the map — the
-/// second-authority defect, re-entering through the one writer that is not the
-/// module's own verifier.
+/// `upgrade_scheme` cannot create an entry, which is what makes "a scheme exists exactly when
+/// this node read the committee it verifies under" structural rather than a convention.
 #[test]
 fn a_scheme_upgrade_refuses_an_epoch_with_no_committee_record() {
     const READ: u64 = 10;
@@ -1516,8 +1326,7 @@ fn a_scheme_upgrade_refuses_an_epoch_with_no_committee_record() {
     let store = store_over(members, false);
     let ns = fluentbase_bls::fluent_namespace(CHAIN_ID);
 
-    // One epoch read, so the map is non-empty and the refusal below cannot be
-    // confused with "this store answers nothing".
+    // One epoch read, so the refusal below cannot be confused with "this store answers nothing".
     let bimap = store
         .committee(READ)
         .expect("in the window")
@@ -1526,9 +1335,8 @@ fn a_scheme_upgrade_refuses_an_epoch_with_no_committee_record() {
         .clone();
     assert_eq!(store.cached_epochs(), vec![READ]);
 
-    // `UNREAD` is INSIDE the read window — `epoch(anchor) = 10`, so the window is
-    // `[2, 12]` — and would be readable on demand. The refusal is therefore about
-    // the absence of a RECORD, not about the epoch being out of reach.
+    // `UNREAD` is inside the window and would be readable on demand, so the refusal is about
+    // the absence of a record, not about the epoch being out of reach.
     assert!(
         !store.upgrade_scheme(
             UNREAD,

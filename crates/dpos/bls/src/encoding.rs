@@ -9,13 +9,10 @@
 //! # Byte-order facts
 //!
 //! blst `serialize` emits **G1 = `X || Y`** and
-//! **G2 = `X.c1 || X.c0 || Y.c1 || Y.c0`** (imaginary coefficient first,
-//! z-cash convention), each Fp 48 B big-endian.
-//!
-//! EIP-2537 expects each Fp left-padded with 16 zero bytes to 64 B, and G2
-//! ordered **`x.c0, x.c1, y.c0, y.c1`** (real coefficient first). Therefore
-//! G2 conversion swaps the two halves of each Fp2 coordinate in addition to
-//! padding; G1 conversion only pads.
+//! **G2 = `X.c1 || X.c0 || Y.c1 || Y.c0`** (imaginary coefficient first, z-cash
+//! convention), each Fp 48 B big-endian. EIP-2537 expects each Fp left-padded
+//! with 16 zero bytes to 64 B, and G2 ordered **`x.c0, x.c1, y.c0, y.c1`** (real
+//! coefficient first) — hence the swap of each Fp2 coordinate's halves.
 //!
 //! Infinity is rejected (`Err`): a validator key/signature is never the
 //! identity point (mirrors Commonware `G1/G2::Read`).
@@ -45,8 +42,8 @@ pub fn signature_compressed_to_eip2537(
     point.validate(true).map_err(|_| Error::InvalidSignature)?;
     let ser = point.serialize(); // [u8;96] = X(48) || Y(48)
     let mut out = [0u8; SIGNATURE_EIP2537_BYTES];
-    put_padded(&mut out, 0, &ser[0..FP]); // x
-    put_padded(&mut out, 1, &ser[FP..2 * FP]); // y
+    put_padded(&mut out, 0, &ser[0..FP]);
+    put_padded(&mut out, 1, &ser[FP..2 * FP]);
     Ok(out)
 }
 
@@ -95,7 +92,6 @@ mod tests {
         for seed in 0..16u64 {
             let k = kp(seed);
             let comp = k.public_bytes();
-            // blst raw serialize as oracle
             let pt = blst::min_sig::PublicKey::uncompress(&comp).unwrap();
             let expected = reference_g2_to_eip2537(&pt.serialize());
             let got = pubkey_compressed_to_eip2537(&comp).unwrap();

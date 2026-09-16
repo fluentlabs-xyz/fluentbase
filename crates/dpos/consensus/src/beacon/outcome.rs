@@ -1,12 +1,12 @@
 //! Decode + inspect the per-epoch DKG outcome. The aggregated commonware
-//! [`Output`] (group key `PK_epoch` + public polynomial + dealer/player sets)
-//! is stored as opaque bytes wherever it travels, because `Output`'s decode
-//! needs the committee-size config; this module supplies that config and
-//! extracts the group public key the seed sub-protocol verifies against and the
-//! system call publishes to L2.
+//! [`Output`] (group key `PK_epoch` + public polynomial + dealer/player sets) is
+//! stored as opaque bytes wherever it travels, because `Output`'s decode needs
+//! the committee-size config; this module supplies that config and extracts the
+//! group public key the seed sub-protocol verifies against and the system call
+//! publishes to L2.
 //!
 //! Its one carrier is the epoch-key agreement plane's artifact
-//! ([`crate::beacon::artifact`]); it used to also ride a boundary block.
+//! ([`crate::beacon::artifact`]).
 
 use commonware_codec::{Encode as _, Read as _};
 use commonware_cryptography::bls12381::{
@@ -29,8 +29,8 @@ pub(crate) const MAX_BEACON_OUTCOME_SIZE: usize = 64 * 1024;
 pub(crate) type DkgOutcome =
     Output<commonware_cryptography::bls12381::primitives::variant::MinSig, PeerPubkey>;
 
-/// Errors decoding an embedded outcome — any of these means the boundary block
-/// does not carry a well-formed agreed beacon key.
+/// Errors decoding an embedded outcome — any of these means the carrier does not
+/// hold a well-formed agreed beacon key.
 #[derive(Debug)]
 pub(crate) enum OutcomeError {
     /// Bytes are not a valid encoded `Output` for a committee ≤ MAX_COMMITTEE_SIZE.
@@ -63,46 +63,29 @@ pub fn group_public_key(outcome: &DkgOutcome) -> &GroupPublic {
     outcome.public().public()
 }
 
-/// The boundary qualification gate ("C", share-on-polynomial): a SHARE-HOLDER
+/// The boundary qualification gate ("C", share-on-polynomial): a share-holder
 /// accepts a proposer-asserted DKG `outcome` for epoch E iff (a) its players are
-/// exactly `committee` (committee[E]) AND the sharing's participant `total` is the
-/// committee size (so the polynomial index domain is exactly the committee), and
-/// (b) this node's OWN secret share lies on the asserted aggregate polynomial at
-/// its index (`g^{sk_j} == outcome.public().partial_public(j)`).
+/// exactly `committee` and the sharing's participant `total` is the committee
+/// size, and (b) this node's own secret share lies on the asserted polynomial at
+/// its index.
 ///
-/// What C alone guarantees: a forged polynomial that does NOT pass through the
-/// honest shares is rejected — to be accepted by a quorum it must agree with the
-/// real aggregate at ≥ `quorum` player points. For a polynomial of degree
-/// `quorum−1` (the honest aggregate's degree) that pins it to the real aggregate
-/// (a degree-`d` poly is determined by `d+1` points) ⟹ the real `PK_E`.
+/// C alone rejects a forged polynomial that does not pass through the honest
+/// shares: to be accepted by a quorum it must agree with the real aggregate at
+/// `≥ quorum` player points, which pins a degree-`quorum−1` polynomial to the real
+/// aggregate. It is not standalone-sufficient: `Sharing` does not pin the
+/// polynomial degree to `quorum−1`, so a high-degree forged polynomial can be
+/// fitted through the honest points while carrying an arbitrary constant term.
+/// The per-round seed verify the always-active verify path runs alongside C closes
+/// that: a seed recovered from the committee's real shares will not verify against
+/// a forged `PK_E`, by BLS uniqueness. Callers must run both.
 ///
-/// IMPORTANT CAVEAT — C is NOT standalone-sufficient: commonware `Sharing` does
-/// not expose, nor does its decoder pin, the polynomial degree (`Sharing::Read`
-/// bounds the coefficient count only to `≤ MAX_COMMITTEE_SIZE`), and the quorum
-/// `q = n−f ≈ 2n/3 < n`. So a HIGH-degree forged poly (degree up to `n−1`) can be
-/// fitted through the `q` honest public share points while carrying an ARBITRARY
-/// constant term (a forged `PK_E`). C cannot detect that here. It is closed by the
-/// per-round SEED-VERIFY that the always-active verify path runs ALONGSIDE C at the
-/// boundary: the seed `σ₀` recovered from the committee's REAL shares is the unique
-/// threshold signature under the real secret and will NOT verify against a forged
-/// `PK_E = poly.constant()` (BLS uniqueness). So the COMBINED gate (C ∧
-/// `verify_seed(σ₀, PK_E)`) is sound: C cheaply rejects polys that miss the honest
-/// shares; seed-verify rejects a high-degree poly with a forged constant. Callers
-/// MUST run both — C is necessary, not sufficient. A pure `verify_seed` gate alone
-/// would be forgeable (a proposer mints its own keypair `(x, g^x)`); C binds the
-/// poly to the validators' own (uncontrolled) shares. `outcome.dealers()` is the
-/// quorum-sized qualified set `Q` (a SUBSET of the committee), so it is
-/// intentionally NOT required to equal `committee`.
-///
-/// Observers (no share) cannot run this — the caller must WITHHOLD the qualifying
+/// Observers (no share) cannot run this — the caller must withhold the qualifying
 /// vote for them, never accept on shape alone.
 ///
-/// THE INDEX IS `me`'s SEAT, not the share's word for it: a share is checked at
-/// the point `my_share.index` names, so a share of ANOTHER member — its own
-/// point, on this very polynomial — passes the point check at that member's
-/// index. It is a share this node cannot sign with (every partial it makes is
-/// attributed to `committee.position(me)` and verified there), so the seat is
-/// bound here: `my_share.index` must be `me`'s position in `committee`.
+/// The index is `me`'s seat, not the share's word for it: a share is checked at
+/// the point `my_share.index` names, so another member's share would pass the
+/// point check at that member's index. It is a share this node cannot sign with,
+/// so `my_share.index` must be `me`'s position in `committee`.
 pub(crate) fn validate_share_on_poly(
     outcome: &DkgOutcome,
     committee: &Set<PeerPubkey>,
@@ -189,7 +172,7 @@ mod tests {
         let committee: Set<PeerPubkey> = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
 
         let (out_a, shares_a) = run_local_dkg(&mut rng, b"ns", 0, &keys, &keys).expect("dkg a");
-        // A DIFFERENT ceremony over the SAME committee -> a different aggregate poly.
+        // A different ceremony over the same committee -> a different aggregate poly.
         let (_out_b, shares_b) = run_local_dkg(&mut rng, b"ns", 1, &keys, &keys).expect("dkg b");
 
         for pk in committee.iter() {
@@ -205,7 +188,7 @@ mod tests {
             );
         }
 
-        // Outcome asserted for a DIFFERENT committee -> reject (players mismatch).
+        // Outcome asserted for a different committee -> reject (players mismatch).
         let other: Set<PeerPubkey> =
             Set::from_iter_dedup((0..5).map(|_| Ed25519PrivateKey::random(&mut rng).public_key()));
         let (any_pk, any) = shares_a.iter().next().expect("a share");
@@ -213,9 +196,8 @@ mod tests {
     }
 
     /// Another member's share — its own point, on this very polynomial, at that
-    /// member's index — is refused for `me`: the point check alone would pass
-    /// it, the seat binding does not. Falsifier: `validate_share_on_poly`
-    /// without the `committee.position(me) == my_share.index` check (M4).
+    /// member's index — is refused for `me`: the point check alone would pass it,
+    /// the seat binding does not.
     #[test]
     fn share_on_poly_refuses_another_members_share_at_that_members_index() {
         use crate::beacon::dkg_oracle::run_local_dkg;
@@ -228,7 +210,7 @@ mod tests {
         let mut members = committee.iter();
         let (me, other) = (members.next().expect("me"), members.next().expect("other"));
         let others_share = shares.get(other).expect("other's share");
-        // Self-verification of the fixture: the share IS on the polynomial at its
+        // Self-verification of the fixture: the share is on the polynomial at its
         // own index — the point check has nothing to refuse.
         assert_eq!(
             out.public()
@@ -250,14 +232,11 @@ mod tests {
         );
     }
 
-    /// P3 3a (FORK-SAFETY): a CORRUPT recompute (a share from a DIFFERENT ceremony over
-    /// the same committee) is caught TWICE, with NO fork surface: (i) the LOCAL self-check
-    /// `validate_share_on_poly` returns `false` → the share is NEVER adopted (the demoted
-    /// member keeps fetching); (ii) even a hypothetically-adopted corrupt share yields a
-    /// seed partial REJECTED PER-PARTIAL by `verify_seed_partial` → not counted toward the
-    /// quorum → NO Nullify storm, NO fork. The ONLY gates are a local self-check + a
-    /// per-partial BLS verify — no byte-compare on a non-deterministic artifact gates a
-    /// peer's vote.
+    /// A corrupt recompute (a share from a different ceremony over the same
+    /// committee) is caught twice, with no fork surface: the local self-check
+    /// returns `false`, so the share is never adopted; and even a hypothetically
+    /// adopted corrupt share yields a seed partial rejected per-partial by
+    /// `verify_seed_partial`, so it is not counted toward the quorum.
     #[test]
     fn corrupt_recompute_rejected_by_self_check_and_per_partial_verify() {
         use crate::beacon::dkg_oracle::run_local_dkg;
@@ -270,7 +249,7 @@ mod tests {
         let committee: Set<PeerPubkey> = Set::from_iter_dedup(keys.iter().map(|k| k.public_key()));
         let (outcome, real_shares) =
             run_local_dkg(&mut rng, b"ns", 0, &keys, &keys).expect("real dkg");
-        // A DIFFERENT ceremony over the SAME committee → a corrupt (wrong-poly) share.
+        // A different ceremony over the same committee → a corrupt (wrong-poly) share.
         let (_bad, bad_shares) = run_local_dkg(&mut rng, b"ns", 1, &keys, &keys).expect("bad dkg");
 
         let seed_ns = seed_namespace(b"ns");
@@ -301,10 +280,9 @@ mod tests {
         }
     }
 
-    /// The devnet byzantine forge: a DIFFERENT `PK_E` over the SAME committee that
-    /// is NOT trivially shape-rejected (players + total match the committee) yet
-    /// FAILS every honest share-holder's "C" gate — exactly the Track-1 SAFETY
-    /// mechanism (the forge cannot pass C → cannot reach a quorum at `f=1`).
+    /// A different `PK_E` over the same committee that is not trivially
+    /// shape-rejected (players and total match) yet fails every honest
+    /// share-holder's C gate.
     #[test]
     fn forge_differs_in_pk_keeps_committee_shape_and_fails_honest_c() {
         use crate::beacon::dkg_oracle::run_local_dkg;
@@ -332,11 +310,11 @@ mod tests {
             real.public().total(),
             "the forge keeps total == committee size (passes the shape gate)"
         );
-        // It is decodable through the wire path verify uses, so it is NOT a
+        // It is decodable through the wire path verify uses, so it is not a
         // trivially-rejected malformed outcome — it reaches the C check.
         let bytes = encode_outcome(&forged);
         assert!(parse_outcome(&bytes).is_ok(), "forge round-trips the codec");
-        // Yet EVERY honest share-holder's C gate rejects it (their real share does
+        // Yet every honest share-holder's C gate rejects it (their real share does
         // not lie on the forged poly).
         for pk in committee.iter() {
             let honest_share = real_shares.get(pk).expect("real share");

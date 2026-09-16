@@ -1,12 +1,10 @@
 //! Threshold randomness seed primitives (BLS12-381 MinSig), shared by the
-//! combined consensus scheme (which signs/recovers the seed partial alongside
-//! each vote) and the deriver (which checks a recovered seed against the epoch
-//! group key).
+//! combined consensus scheme and the deriver.
 //!
-//! The seed for a consensus round is the unique recovered threshold signature
-//! over `round.encode()` — any ≥t partials recover the same value. The
-//! `prev_randao = keccak256(signature)` derivation lives in the consumer crate
-//! (it owns the EVM/alloy types); this module is pure BLS, no alloy.
+//! The seed for a round is the unique recovered threshold signature over
+//! `round.encode()` — any ≥ t partials recover the same value. The
+//! `prev_randao = keccak256(signature)` derivation lives in the consumer crate;
+//! this module is pure BLS, no alloy.
 
 use commonware_codec::Encode as _;
 use commonware_consensus::types::Round;
@@ -23,9 +21,9 @@ use commonware_utils::{Faults, N3f1};
 
 use crate::BlsSignature;
 
-/// Domain separator suffix for beacon seed signatures — distinct from the
-/// consensus vote and proof-of-possession namespaces so a beacon seed can
-/// never be replayed as a consensus signature (or vice versa).
+/// Domain separator suffix for beacon seed signatures, distinct from the
+/// consensus vote and proof-of-possession namespaces so a seed can never be
+/// replayed as a consensus signature.
 const BEACON_SEED_SUFFIX: &[u8] = b"_BEACON_SEED";
 
 /// Domain separator suffix for the epoch-key agreement instance.
@@ -43,25 +41,16 @@ pub fn seed_namespace(chain_namespace: &[u8]) -> Vec<u8> {
     ns
 }
 
-/// The signing namespace for the epoch-key AGREEMENT instance — a second
-/// `simplex` running over `committee[E+1]` during epoch `E`:
-/// `chain_namespace ‖ "_DKG_AGREE"`.
+/// The signing namespace for the epoch-key agreement instance — a second
+/// `simplex` running over `committee[E+1]` during epoch `E`.
 ///
-/// It MUST be distinct from the chain namespace and from every other namespace
-/// derived from it. Distinct is the whole requirement, and it is enough: a signed
-/// message is `union_unique(namespace, msg)`, which LENGTH-PREFIXES the namespace
-/// (`CW/utils/src/lib.rs:176-185`), so no two `(namespace, message)` pairs collide
-/// and the derivation needs no prefix-freedom against the base — which it does not
-/// have anyway, since it appends to it. The tuple a simplex scheme signs
-/// carries only `Round{epoch, view}` and the payload — nothing identifies the
-/// instance — so under a shared base an honest validator's agreement vote at
-/// `Round(E+1, v)` and its ordering vote at that same round are two different
-/// payloads from one signer at one round: exactly the shape equivocation
-/// evidence is extracted from. The hazard is NOT a local self-slash. Evidence
-/// submission is permissionless and the pre-submit verifier is rebuilt from the
-/// bare chain namespace with no instance discriminator, so ANY observer of the
-/// DKG sub-channel can assemble that pair into calldata and slash an honest
-/// validator (`fluentbase_consensus::slasher::evidence`).
+/// It must be distinct from the chain namespace and from every other namespace
+/// derived from it. `union_unique` length-prefixes the namespace, so distinctness is
+/// enough; under a shared base an honest validator's agreement vote at
+/// `Round(E+1, v)` and its ordering vote at that same round would be two payloads
+/// from one signer at one round — the shape equivocation evidence is extracted
+/// from — and evidence submission is permissionless, so any observer of the DKG
+/// sub-channel could slash that validator.
 pub fn dkg_namespace(chain_namespace: &[u8]) -> Vec<u8> {
     let mut ns = Vec::with_capacity(chain_namespace.len() + DKG_AGREE_SUFFIX.len());
     ns.extend_from_slice(chain_namespace);
@@ -69,15 +58,14 @@ pub fn dkg_namespace(chain_namespace: &[u8]) -> Vec<u8> {
     ns
 }
 
-/// The message signed for a given consensus round (epoch ‖ view, canonical
-/// codec encoding). The seed is keyed by ROUND, not height: the `Subject` the
-/// scheme signs carries the round, and height↔round is 1:1 among finalized
-/// blocks (recovered from the finalization cert by the consumer).
+/// The message signed for a consensus round (epoch ‖ view, canonical codec
+/// encoding). The seed is keyed by round, not height: the consumer carries the
+/// round from the finalization certificate, and among finalized blocks height and
+/// round are 1:1, so the round is a sound key.
 fn seed_message(round: Round) -> Vec<u8> {
     round.encode().to_vec()
 }
 
-/// Partial-sign the seed for `round` with this member's DKG share.
 pub fn sign_seed_partial(
     share: &Share,
     namespace: &[u8],
@@ -97,14 +85,13 @@ pub fn verify_seed_partial(
     threshold::verify_message::<MinSig>(sharing, namespace, &seed_message(round), partial).is_ok()
 }
 
-/// Recover the unique threshold seed signature for a round from ≥t verified
-/// partials. Returns the raw recovered signature (the consumer pairs it with
-/// the round to form a `Seed` and derive `prev_randao`).
+/// Recover the unique threshold seed signature for a round from ≥ t verified
+/// partials; the consumer pairs the raw signature with the round to derive
+/// `prev_randao`.
 ///
-/// Generic over the fault model `M` so the seed quorum (`sharing.required::<M>()`)
-/// stays in lockstep with the vote quorum `CombinedScheme::assemble` recovers
-/// under the same `M` — the whole stack is `N3f1` today, but pinning a literal
-/// here would let the two halves of one certificate silently disagree.
+/// Generic over the fault model `M` so the seed quorum stays in lockstep with the
+/// vote quorum `CombinedScheme::assemble` recovers under the same `M`: pinning a
+/// literal here would let the two halves of one certificate silently disagree.
 pub fn recover_seed<M: Faults>(
     sharing: &Sharing<MinSig>,
     partials: &[PartialSignature<MinSig>],
@@ -113,37 +100,21 @@ pub fn recover_seed<M: Faults>(
 }
 
 /// [`recover_seed`] for a caller that cannot carry `M`: the object-safe
-/// [`crate::oracle::SeedOracle`] path, where the threshold has to arrive as a
-/// value rather than as a type.
+/// [`crate::oracle::SeedOracle`] path, where the threshold arrives as a value
+/// rather than as a type.
 ///
-/// The CALLER owes the lockstep the generic parameter enforces above —
-/// `threshold` must be `M::quorum(n)` for the same `M` the vote quorum was
-/// counted under, computed at the `assemble` call site. It is CHECKED against
-/// the sharing's own quorum rather than trusted: commonware derives its
-/// evaluation count from `M` and offers no entry point that takes a number, so
-/// the `N3f1` below is what actually selects the point count.
+/// The caller owes the lockstep the generic parameter enforces above: `threshold`
+/// must be `M::quorum(n)` for the same `M` the vote quorum was counted under. It is
+/// checked against the sharing's own quorum rather than trusted, and the equality is
+/// two assertions in one: `M == N3f1` (commonware derives the point count from `M`,
+/// so the `N3f1` below is what selects it) and the sharing's total being the epoch's
+/// consensus committee size (the ceremony dealt to exactly that committee).
+/// Comparing fault models alone would drop the second.
 ///
-/// **THE EQUALITY IS TWO ASSERTIONS, NOT ONE**, and the second is unstated in
-/// its own operands. `threshold` is `M::quorum(vote_committee.len())` while
-/// `sharing.required::<N3f1>()` is `N3f1::quorum(sharing.total())`, so the
-/// comparison holds only when BOTH `M == N3f1` (the fault model) AND
-/// `vote_committee.len() == sharing.total()` (the DKG dealt to exactly the
-/// epoch's consensus committee). The latter is a contract-side invariant —
-/// `committee[E]` is what the ceremony deals over — enforced outside this repo,
-/// so this line is where a violation of it would first become visible. Do not
-/// weaken the check to compare fault models alone.
-///
-/// **THE CALLER OWES THIS FAILURE A LOG, AND THIS FUNCTION CANNOT PROVIDE ONE.**
-/// A mismatch is otherwise indistinguishable from a healthy
-/// quorum-not-yet-reached: `assemble` returns `None`, the batcher declines and
-/// retries as each further attestation arrives, and the node simply stops
-/// producing certificates with nothing in its logs — the class of failure where
-/// silence costs the most. But the retry is why the log cannot live here. The
-/// condition is FROZEN for the epoch while the call sits on the per-certificate
-/// path, so it needs a per-epoch latch, and a free function's only option is a
-/// process-wide `static` — which would mute the next epoch's genuinely new
-/// occurrence. `BeaconOracle::recover` owns the latch (it is already per-epoch)
-/// and logs both operands there.
+/// A mismatch is otherwise indistinguishable from a quorum not yet reached, so the
+/// caller owes it a log; the per-epoch latch lives in `BeaconOracle::recover`,
+/// because a free function has no latch and a `static` here would mute the next
+/// epoch's occurrence.
 pub fn recover_seed_with_threshold(
     sharing: &Sharing<MinSig>,
     partials: &[PartialSignature<MinSig>],
@@ -196,10 +167,9 @@ mod tests {
         (outcome.public().clone(), held)
     }
 
-    /// The lockstep the generic parameter of [`recover_seed`] carries by type and
-    /// this sibling can only carry by value: a threshold that is not the
-    /// sharing's own quorum must fail the recovery, never interpolate over a
-    /// different point count.
+    /// The lockstep [`recover_seed`] carries by type and this value-taking sibling
+    /// can only check here: a threshold that is not the sharing's own quorum must
+    /// fail the recovery rather than interpolate over a different point count.
     #[test]
     fn recover_with_threshold_agrees_with_the_generic_and_refuses_a_foreign_quorum() {
         let (sharing, shares) = dealt(4);
@@ -223,15 +193,11 @@ mod tests {
         assert!(recover_seed_with_threshold(&sharing, &partials, quorum + 1).is_err());
     }
 
-    /// What actually separates the derived namespaces, stated as the code has it
-    /// rather than as prefix-freedom against the base — which the construction does
-    /// NOT have, since every derivation appends to the base. The separation is
-    /// `union_unique`'s length prefix plus distinct suffixes, and that is the
-    /// stronger property: it makes the `(namespace, message)` pair injective, so
-    /// even the one concatenation that would collide under a bare `union` cannot.
-    /// The prefix relation that DOES matter is between the derived namespaces, and
-    /// it is asserted below — this repo was bitten by exactly that once already
-    /// (`fluent/leader/fallback` vs `fluent/seedless-leader` in `weighted_vrf`).
+    /// What actually separates the derived namespaces: `union_unique`'s length
+    /// prefix plus distinct suffixes, not prefix-freedom against the base — which
+    /// the construction does not have, since every derivation appends to the base.
+    /// The prefix relation that does matter is between the derived namespaces, and
+    /// it is asserted below.
     #[test]
     fn derived_namespaces_are_distinct_and_cannot_collide_when_signed() {
         let base = fluent_namespace(20994);
@@ -242,11 +208,10 @@ mod tests {
         assert!(!seed.starts_with(&dkg));
         assert!(!dkg.starts_with(&seed));
 
-        // Not prefix-free against the base, by construction.
         assert!(dkg.starts_with(&base));
         assert!(seed.starts_with(&base));
 
-        // The pair that a bare `union` WOULD collide: signing `msg` under the DKG
+        // The pair that a bare `union` would collide: signing `msg` under the DKG
         // namespace, and signing `DKG_AGREE_SUFFIX ‖ msg` under the base.
         let msg = b"round-payload";
         let shifted: Vec<u8> = [DKG_AGREE_SUFFIX, msg].concat();

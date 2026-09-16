@@ -13,32 +13,21 @@
 //!   Simplex behaviour to the Fluent Reth execution layer.
 
 /// Trailing epochs retained for cross-epoch certificate verification: the BLS
-/// schemes in [`outer::EpochSchemeProvider`], and — because a key is only ever
-/// read to verify a certificate a retained scheme covers — every beacon window
-/// that has to reach as far back as those schemes do.
+/// schemes in [`outer::EpochSchemeProvider`], and every beacon window that has to
+/// reach as far back as those schemes do.
 ///
-/// The beacon's DERIVED key tiers, which this used to name, are deleted (П-3): the
-/// artifact store owns `PK_epoch` and has NO retention at all, deliberately (see
-/// `beacon::artifact`'s module doc — on a long-stable committee the OLDEST record
-/// is the valuable one, so any epoch-measured window would drop it first). What
-/// does measure itself against this number is the recompute-heal and DKG-journal
-/// window (`beacon::JOURNAL_RETENTION_EPOCHS`, one alias of this value), the
-/// mint-artifact acquisition window, the seed index's terminal-round protection, and the
-/// committee module's read window — and the last two of those are coupled: the
-/// acquisition asks for exactly the epochs the committee module can still answer a
-/// `changed` bit for.
+/// It does not cover the beacon's derived key tiers: the artifact store keeps no
+/// epoch-measured retention on purpose, because on a long-stable committee the
+/// oldest record is the valuable one.
 ///
 /// Crate-level because it is one policy with enforcers on opposite sides of the
-/// randomness surface. Defining it in either of them would make that one
-/// import the other, which is exactly the coupling the surface exists to remove.
-///
-/// (Marshal backfill / catch-up register epochs in order, so older schemes are
-/// never re-read once the frontier passes them.)
+/// randomness surface; defining it in either would make that side import the
+/// other.
 pub const SCHEME_RETENTION_EPOCHS: usize = 8;
 
 pub mod application;
 pub mod beacon;
-/// DEVNET/TEST-ONLY byzantine code — the single home for all byzantine logic
+/// devnet/test-only byzantine code — the single home for all byzantine logic
 /// (`ByzantineMode`, `forge_outcome_same_committee`, `VoteEquivocator`). Gated
 /// behind `dpos-devnet-byzantine`; also built under `test` so in-crate forge/certify
 /// unit tests reach the helpers. Never compiled into a production build.
@@ -87,9 +76,9 @@ pub use cert_inlet::{
     MAX_UPSTREAM_FAULTS,
 };
 pub use cold_start_jump::{assert_l1_checkpoint, ElSync, RethElSync, JUMP_THRESHOLD};
-// `Geometry` is deliberately NOT here: since the store took its geometry lazily
-// (a `GeometryRx`), the type has no user outside `committee/` — re-exporting it
-// would be public surface nobody can reach through.
+// `Geometry` is deliberately not re-exported: since the store took its geometry
+// lazily (a `GeometryRx`), the type has no user outside `committee/`, so
+// re-exporting it would be public surface nobody can reach.
 pub use committee::{
     epoch_verifier, Anchor, BeaconSlot, Committee, CommitteeError, CommitteeReadsFacade,
     CommitteeRecord, CommitteeStore, EpochReads, EpochVerifier, GeometryRx, Member, RethAnchor,

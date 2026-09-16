@@ -1,77 +1,33 @@
 //! On-disk persistence of a live-DKG per-epoch `Share`.
 //!
-//! The live DKG (§8.11.1) memoizes `(PK_E, share)` for each committee-change epoch
-//! into the in-memory [`crate::beacon::actor::CeremonyStore`]. A mid-epoch restart
-//! otherwise loses it (the node then carries-forward the wrong key for E and stalls
-//! its own seed votes). This module persists each memoized share to disk (mode 0600)
-//! and reloads them at launch, so a restarted committee member rejoins the seed
-//! quorum without re-running the ceremony.
+//! The live DKG memoizes `(PK_E, share)` for each committee-change epoch in the
+//! in-memory [`crate::beacon::actor::CeremonyStore`]. A mid-epoch restart
+//! otherwise loses it (the node then carries-forward the wrong key for E and
+//! stalls its own seed votes). This module persists each memoized share to disk
+//! (mode 0600) and reloads them at launch, so a restarted committee member
+//! rejoins the seed quorum without re-running the ceremony.
 //!
-//! The record is the SHARE, and nothing else.
+//! The record is the share and nothing else: the polynomial a reloaded share
+//! pairs with is read from the artifact of the same minting epoch
+//! (`KeyIndex::sharing_at`), so this file never becomes a second on-disk owner of
+//! `PK_E`. A node that restarts without that artifact acquires the epoch key from
+//! peers.
 //!
-//! # Neither the artifact nor the group output rides along any more (П-3)
+//! Frames are dispatched on a leading 1-byte tag. The tagless inner frame is
+//! `u32_be(len(share)) ‖ share`: `TAG_PLAINTEXT_V2` writes `tag ‖ inner`, and
+//! `TAG_ENCRYPTED_V2` seals `inner` as the AEAD plaintext.
 //!
-//! The v2 record used to be `(output, share, artifact)`. Both of the other two
-//! fields were copies of `PK_E` and of the public polynomial: the artifact
-//! literally, the `output` by carrying the same `Sharing`. That made this file a
-//! SECOND on-disk owner of the fact beside
-//! [`ArtifactStore`](crate::beacon::artifact::ArtifactStore), and the ratified rule
-//! (`.dpos-study/DECISIONS.md`, П-3) is that the artifact store is the only one. The
-//! polynomial a reloaded share pairs with is read from the artifact of the SAME
-//! minting epoch (`KeyIndex::sharing_at`), so nothing is lost and the file holds the
-//! one thing only it can hold: this node's secret.
-//!
-//! **The liveness this costs is named, not discovered.** A node that restarts
-//! holding a share whose artifact never reached its durable store (the artifact
-//! journal is write-behind) no longer has the epoch key locally at all: σ of the
-//! epoch is held pending, execution parks, and the key arrives from peers —
-//! `DkgActor::drive_acquisition` asks for it on the next height tick from the
-//! `Acquiring(ArtifactForShare)` phase (`Acquiring(ArtifactForKey)` is the non-member's leg and
-//! excludes members by design), and at `≤ f` faults the peers hold it. That is the
-//! trade §5.4 of
-//! `.dpos-study/history/E5-BEACON-DESIGN.md` accepts: one quorum-attested owner of
-//! `PK_E` against a locally-sourced key on a disk fault.
-//!
-//! ONE frame version, in a plaintext and an encrypted arm, dispatched on the
-//! leading 1-byte tag. The tagless `inner` frame is what both arms carry:
-//! - v2 (`TAG_PLAINTEXT_V2` / `TAG_ENCRYPTED_V2`) — what is written today:
-//!   `u32_be(len(share)) ‖ share`.
-//!
-//! # What happens to an OLDER file at startup — stated, because it is silent
-//!
-//! Both retired shapes take `load_all`'s warn-and-skip path, which is the same one
-//! a corrupt file takes, and the node then treats the epoch as one it holds no
-//! share for: `DkgActor::recover` resumes from the ceremony journal where that is still
-//! on disk, and sits the epoch out as a verifier where it is not. Nothing aborts
-//! startup and no wrong share is ever adopted.
-//! - a **v1** file (leading tag `TAG_PLAINTEXT` / `TAG_ENCRYPTED`) — the arm is
-//!   deleted, so its tag is now simply unknown to the share-file reader. (Those two
-//!   tag BYTES are still live: the ceremony-journal frame below uses them, under its
-//!   own domain-separated AAD.)
-//! - a **two- or three-field v2** file written before this change — the extra fields
-//!   are read as trailing bytes, which `parse_inner` rejects outright rather than
-//!   ignoring.
-//!
-//! Both are acceptable rather than merely tolerable here because a DPoS network is
-//! relaunched from a fresh genesis rather than migrated in place, so the upgrade
-//! path an old share file represents is a test datadir, never a live validator's.
-//!
-//! A plaintext arm writes `tag(1) ‖ inner`; an encrypted arm (E2 — gated on
-//! keystore mode) writes
+//! The encrypted arm (keystore mode) writes
 //! `tag(1) ‖ version(1) ‖ nonce(24) ‖ XChaCha20-Poly1305(key, nonce, aad, inner)`
-//! with `aad = tag ‖ version ‖ u64_be(epoch)`, which binds the ciphertext to its
-//! epoch (a swapped `beacon-share-e7 ↔ e9` fails AEAD verification) AND — because
-//! the tag is in the AAD — to its frame version. The key is
-//! [`fluentbase_bls::ShareSealKey`], HKDF-derived from the validator BLS secret
-//! (gated on `--dpos.bls-keystore-path`); the plaintext-dev BLS path
-//! (`--dpos.bls-key-path`) has no off-disk secret, so it stays on a plaintext tag.
+//! with `aad = tag ‖ version ‖ u64_be(epoch)`, binding the ciphertext to its
+//! epoch and frame version; the key is [`fluentbase_bls::ShareSealKey`],
+//! HKDF-derived from the validator BLS secret. The plaintext-dev BLS path
+//! (`--dpos.bls-key-path`) has no off-disk secret and stays plaintext.
 //!
-//! Backward-compat is tag-as-version, and it runs both ways: a v1 file decodes on
-//! its own arm forever, and a v2 file met by a binary that predates the tag takes
-//! the same warn-and-skip path a malformed file does (never aborts startup) — it
-//! re-runs the ceremony rather than crashing. The analogous at-rest VALIDATOR-key
-//! secret uses EIP-2335 (`bls/keystore.rs`), a different secret shape with its own
-//! codec.
+//! An older two- or three-field record, or one using the retired v1 tags, fails
+//! to decode — the v1 tags are unknown to the reader and the extra fields are
+//! trailing bytes — and takes `load_all`'s warn-and-skip path rather than
+//! aborting startup or adopting a wrong share.
 
 #[cfg(test)]
 use crate::beacon::{ceremony::CeremonyOutput, outcome::encode_outcome};
@@ -94,38 +50,28 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
-/// On-disk encoding variant. Carries the AEAD seal key for the encrypted arm.
 pub enum ShareState {
     /// Unencrypted framing (`--dpos.bls-key-path` plaintext-dev nodes).
     Plaintext,
     /// XChaCha20-Poly1305 envelope keyed by the HKDF-derived [`ShareSealKey`]
-    /// (E2 — keystore-mode validators).
+    /// (keystore-mode validators).
     Encrypted(ShareSealKey),
 }
 
 const TAG_PLAINTEXT: u8 = 0;
 const TAG_ENCRYPTED: u8 = 1;
-/// v2 plaintext: the share, length-prefixed.
 const TAG_PLAINTEXT_V2: u8 = 2;
-/// v2 encrypted. Its AAD leads with THIS byte, so a retired-v1 ciphertext can
-/// never AEAD-open as a v2 record even at the same epoch under the same key.
 const TAG_ENCRYPTED_V2: u8 = 3;
 /// Envelope version inside an encrypted frame — lets the AEAD/KDF params evolve
 /// without colliding with the tag byte.
 const ENVELOPE_VERSION: u8 = 1;
-/// XChaCha20-Poly1305 nonce length.
 const NONCE_BYTES: usize = 24;
 
 const FILE_PREFIX: &str = "beacon-share-e";
 const FILE_SUFFIX: &str = ".bin";
-/// The durable `Conflict(E)` marker (`persist_conflict`): the epoch's signing was
-/// stopped on this node. Lives beside the share file on the journal's window.
+/// The durable `Conflict(E)` marker: the epoch's signing was stopped on this node.
 const CONFLICT_PREFIX: &str = "beacon-conflict-e";
 
-/// The v2 tagless inner frame: the byte-for-byte payload both v2 arms carry.
-/// `TAG_PLAINTEXT_V2` writes `tag ‖ inner`; `TAG_ENCRYPTED_V2` seals `inner` as
-/// the AEAD plaintext.
-///
 fn inner_frame(share: &Share) -> Vec<u8> {
     let share_bytes = share.encode();
     let mut buf = Vec::with_capacity(4 + share_bytes.len());
@@ -138,9 +84,8 @@ fn push_field(buf: &mut Vec<u8>, field: &[u8]) {
     buf.extend_from_slice(field);
 }
 
-/// Split one `u32_be(len) ‖ bytes` field off the front of `rest`, returning it and
-/// the remainder. `what` names the field in the error so a truncated file says
-/// WHICH field ran out.
+/// `what` names the field in the error so a truncated file says which field ran
+/// out.
 fn take_field<'a>(rest: &'a [u8], what: &str) -> eyre::Result<(&'a [u8], &'a [u8])> {
     if rest.len() < 4 {
         eyre::bail!("truncated share file (no {what}-length prefix)");
@@ -156,12 +101,9 @@ fn take_field<'a>(rest: &'a [u8], what: &str) -> eyre::Result<(&'a [u8], &'a [u8
     Ok(rest.split_at(len))
 }
 
-/// Parse a v2 tagless inner frame back into the share.
-///
-/// Trailing bytes are REJECTED, and that check carries a second job: a pre-П-3
-/// record leads with the OUTPUT's length prefix, so it reaches here with fields left
-/// over, and this is what refuses it instead of silently reading a record whose shape
-/// it does not know.
+/// Trailing bytes are rejected: an older record that carried the group output or
+/// artifact as extra fields reads as trailing bytes and is refused rather than
+/// silently truncated.
 fn parse_inner(rest: &[u8]) -> eyre::Result<Share> {
     let (share_bytes, rest) = take_field(rest, "share")?;
     if !rest.is_empty() {
@@ -174,13 +116,8 @@ fn parse_inner(rest: &[u8]) -> eyre::Result<Share> {
     parse_share(share_bytes).map_err(|e| eyre::eyre!("parse persisted share: {e:?}"))
 }
 
-/// Seal `inner` into an encrypted envelope under `key` for `aad`:
-/// `tag(1) ‖ version(1) ‖ nonce(24) ‖ XChaCha20-Poly1305(key, nonce, aad, inner)`.
-/// Shared by the share-file and the journal-record paths — they differ ONLY in the
-/// tag, the AAD (domain-separated by its first byte) and the inner payload.
-///
-/// `tag` and `aad` MUST agree: the AAD leads with the same tag byte, which is what
-/// stops one frame version's ciphertext from opening as another's.
+/// `tag` and `aad` MUST agree (the AAD's first byte is the tag), so one frame
+/// version's ciphertext cannot open as another's.
 fn seal_envelope(key: &ShareSealKey, tag: u8, aad: &[u8], inner: &[u8]) -> Vec<u8> {
     let cipher = XChaCha20Poly1305::new(key.as_bytes().into());
     let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
@@ -196,10 +133,8 @@ fn seal_envelope(key: &ShareSealKey, tag: u8, aad: &[u8], inner: &[u8]) -> Vec<u
     buf
 }
 
-/// Open a `TAG_ENCRYPTED` envelope body (`rest` = everything AFTER the leading
-/// `TAG_ENCRYPTED` byte) under `key` for `aad`, returning the scrubbed plaintext
-/// `inner`. Errors on a bad version / short nonce / AEAD failure (wrong key,
-/// tampered, or wrong-epoch AAD). The inverse of [`seal_envelope`].
+/// `rest` is the envelope body without its leading tag; errors on a bad version, a
+/// short nonce, or AEAD failure (wrong key, tampered, or wrong-epoch AAD).
 fn open_envelope(key: &ShareSealKey, aad: &[u8], rest: &[u8]) -> eyre::Result<Zeroizing<Vec<u8>>> {
     let (&version, rest) = rest
         .split_first()
@@ -232,10 +167,7 @@ fn tagged_aad(tag: u8, epoch: u64) -> [u8; 10] {
     aad
 }
 
-/// Frame a share record for on-disk storage under `state` for `epoch`, always in the
-/// v2 frame. Takes a reference because the caller persists before moving the share
-/// into the in-memory store. The `Encrypted` arm seals a `Zeroizing` inner buffer
-/// with a fresh random 24-byte nonce + version-and-epoch-bound AAD.
+/// Always writes the v2 frame.
 pub fn encode(state: &ShareState, epoch: u64, share: &Share) -> Vec<u8> {
     let inner = Zeroizing::new(inner_frame(share));
     match state {
@@ -254,12 +186,9 @@ pub fn encode(state: &ShareState, epoch: u64, share: &Share) -> Vec<u8> {
     }
 }
 
-/// Decode a framed share for `epoch`, dispatching on the LEADING TAG BYTE (not on
-/// `state`): a plaintext file always decodes; an encrypted file requires
-/// `state == Encrypted(key)` and AEAD-opens with the version-and-epoch-bound AAD.
-/// Errors on an unknown tag (which now includes the retired v1 share tags), a
-/// malformed body, a missing key, or AEAD failure (wrong key / tampered /
-/// wrong-epoch / wrong-version file) — `load_all` turns those into a warn+skip.
+/// Dispatch is on the leading tag, not on `state`: a plaintext file always
+/// decodes, while an encrypted file requires `state == Encrypted(key)`. The retired
+/// v1 tags are unknown here, and `load_all` turns any error into a warn-and-skip.
 pub fn decode(bytes: &[u8], epoch: u64, state: &ShareState) -> eyre::Result<Share> {
     let (&tag, rest) = bytes
         .split_first()
@@ -276,8 +205,6 @@ pub fn decode(bytes: &[u8], epoch: u64, state: &ShareState) -> eyre::Result<Shar
     }
 }
 
-/// Open an encrypted share envelope body, refusing early when this node holds no
-/// seal key at all.
 fn open_share_envelope(
     state: &ShareState,
     aad: &[u8],
@@ -293,14 +220,8 @@ fn file_for(dir: &Path, epoch: u64) -> PathBuf {
     dir.join(format!("{FILE_PREFIX}{epoch}{FILE_SUFFIX}"))
 }
 
-/// Persist the memoized share for `epoch` under `dir`, mode 0600, framed per
-/// `state`. The encoded bytes (which embed the secret share) are scrubbed on drop.
-///
-/// NOT best-effort to its caller any more: the error is returned as it always was,
-/// but `DkgActor::adopt_share` now treats it as a REFUSAL rather than a warning —
-/// see §5.4 of `.dpos-study/history/E5-BEACON-DESIGN.md` and that function's doc
-/// for why "signing now, mute after a restart" is the outcome that rule exists to
-/// forbid.
+/// Persist the memoized share for `epoch` under `dir`, mode 0600. `DkgActor::adopt_share`
+/// treats an error as a refusal to sign, not a warning.
 pub fn persist(dir: &Path, epoch: u64, share: &Share, state: &ShareState) -> eyre::Result<()> {
     std::fs::create_dir_all(dir).map_err(|e| eyre::eyre!("create share dir {dir:?}: {e}"))?;
     let bytes = Zeroizing::new(encode(state, epoch, share));
@@ -311,10 +232,9 @@ pub fn persist(dir: &Path, epoch: u64, share: &Share, state: &ShareState) -> eyr
 /// One reloaded share record: the minting epoch and this node's share at it.
 pub(crate) type ReloadedShare = (u64, Share);
 
-/// Reload every persisted `beacon-share-e<E>.bin` under `dir`, decoding each per
-/// `state`. A missing dir → empty; a malformed OR undecryptable file is skipped
-/// with a warning (never aborts startup — the in-memory store rebuilds via the
-/// next ceremony / carry-forward).
+/// A missing dir yields empty; a malformed or undecryptable file is skipped with a
+/// warning, never aborting startup — the in-memory store rebuilds via the next
+/// ceremony or carry-forward.
 pub fn load_all(dir: &Path, state: &ShareState) -> Vec<ReloadedShare> {
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -332,9 +252,8 @@ pub fn load_all(dir: &Path, state: &ShareState) -> Vec<ReloadedShare> {
         let Ok(epoch) = epoch_str.parse::<u64>() else {
             continue;
         };
-        // bug 13 read-side: refuse a group/other-accessible share file (a
-        // backup/rsync that recreated it at 0644) — skip + warn, don't load a
-        // leaked secret. Mirrors the p2p / validator-secret loaders.
+        // Refuse a group/other-accessible share file (e.g. recreated at 0644 by a
+        // backup) rather than load a leaked secret.
         match fluentbase_bls::secret_store::reject_insecure_mode(&entry.path())
             .map_err(|e| eyre::eyre!(e))
             .and_then(|()| std::fs::read(entry.path()).map_err(|e| eyre::eyre!(e)))
@@ -356,41 +275,30 @@ pub fn load_all(dir: &Path, state: &ShareState) -> Vec<ReloadedShare> {
 const JOURNAL_PREFIX: &str = "beacon-dkgjournal-e";
 
 /// One durable record of a mid-window DKG ceremony, journaled so a restart can
-/// `Player::resume` instead of re-dealing a divergent contribution (§8.11.1).
+/// `Player::resume` instead of re-dealing a divergent contribution.
 ///
-/// The `ReceivedDealing` body carries a per-dealer `DealerPrivMsg` (secret-
-/// equivalent) — so on a keystore-mode node the journal MUST seal with the same
-/// `ShareState::Encrypted` AEAD as the share file (gated identically), never
-/// plaintext.
+/// `ReceivedDealing` carries a per-dealer `DealerPrivMsg`, so on a keystore-mode
+/// node the journal MUST seal with the same `ShareState::Encrypted` AEAD as the
+/// share file.
 pub(crate) enum JournalRecord {
-    /// A `(dealer, DealerPubMsg, DealerPrivMsg)` dealing this node ACCEPTED — the
-    /// input `Player::resume` re-feeds to rebuild `Player.view` (and re-emit acks).
-    /// The (large, secret-bearing) bodies are boxed (clippy `large_enum_variant`).
+    /// A dealing this node accepted; `Player::resume` re-feeds it to rebuild
+    /// `Player.view` and re-emit acks.
     ReceivedDealing(PeerPubkey, Box<DealerPubMsg<MinSig>>, Box<DealerPrivMsg>),
-    /// This node's OWN sealed log (also marks the epoch sealed: on resume the node
-    /// re-broadcasts THIS log rather than re-dealing a fresh, divergent one).
+    /// This node's own sealed log; on resume the node re-broadcasts it rather than
+    /// re-dealing a fresh, divergent one.
     OwnSeal(Box<DealerReveal>),
-    /// A peer's recorded sealed log — fed into both `Logs` (for `select`/`finalize`)
-    /// and `Player::resume` (a peer log lets us finalize when that peer revealed our
-    /// share).
+    /// A peer's sealed log, fed into `Logs` for `select`/`finalize` and into
+    /// `Player::resume`, which needs it to finalize when that peer revealed our
+    /// share.
     PeerLog(Box<DealerReveal>),
-    /// An ack our OWN dealer received from `player` — journaled so a pre-seal reconstruct
-    /// resume rebuilds `unsent` (who has acked) and does not re-reveal an already-acked
-    /// player (§8.11.1). NOT secret (acks travel in the clear), but framed uniformly.
+    /// An ack this node's dealer received; journaled so a pre-seal resume rebuilds
+    /// `unsent` and does not re-reveal an already-acked player.
     OwnDealerAck(PeerPubkey, Box<Ack>),
-    /// EVIDENCE that one dealer signed two distinct `check`-valid logs for this epoch:
-    /// `(first, second)` in the order this node recorded them. Written INSTEAD of a
-    /// `PeerLog` for the second log on the live paths, so the one record that
-    /// restores the local ban after a restart is the record that restores the second
-    /// body. Replay records through the same rule as the live path, so a journal
-    /// that holds BOTH bodies as plain `PeerLog`s (the past-boundary heal writes
-    /// those, `actor.rs::ingest_recompute_log`) proves the pair again without this
-    /// record — this record is what makes the pair durable when only ONE body is
-    /// journaled on its own. Self-contained on replay (`DkgCeremony::resume`): both
-    /// halves must re-`check` as the SAME dealer under DIFFERENT hashes, else the
-    /// record is dropped whole and neither body is recorded from it. Public data
-    /// (signed logs), framed uniformly with the rest; the codec (`parse_journal_inner`)
-    /// decodes the two bodies and checks nothing — the replay does.
+    /// Evidence that one dealer signed two distinct `check`-valid logs for this
+    /// epoch, `(first, second)` in the order this node recorded them. Written in
+    /// place of a second `PeerLog` so a restart restores both the ban and the second
+    /// body. Replay re-`check`s both halves as the same dealer under different
+    /// hashes and drops the record whole otherwise.
     DealerEquivocation(Box<DealerReveal>, Box<DealerReveal>),
 }
 
@@ -400,9 +308,6 @@ const REC_PEER_LOG: u8 = 2;
 const REC_OWN_DEALER_ACK: u8 = 3;
 const REC_DEALER_EQUIVOCATION: u8 = 4;
 
-/// The tagless inner frame of a journal record: `rec_tag(1) ‖ body`. Both
-/// `ShareState` variants carry this — `TAG_PLAINTEXT` writes `tag ‖ inner`,
-/// `TAG_ENCRYPTED` seals `inner` as the AEAD plaintext.
 fn journal_inner(record: &JournalRecord) -> Vec<u8> {
     let mut buf = Vec::new();
     match record {
@@ -434,19 +339,16 @@ fn journal_inner(record: &JournalRecord) -> Vec<u8> {
     buf
 }
 
-/// AAD binding a journal-record ciphertext to its epoch. A distinct first byte
-/// (`TAG_ENCRYPTED ^ 0x80` = 0x81) domain-separates it from every share-file AAD
-/// (0x00..0x03) so a share ciphertext can never AEAD-open as a journal record (or
-/// vice-versa) — the high bit keeps that true as share tags keep counting up.
+/// AAD binding a journal-record ciphertext to its epoch. Its first byte
+/// (`TAG_ENCRYPTED ^ 0x80`) domain-separates it from every share-file AAD, so
+/// neither can AEAD-open as the other; the high bit keeps that true as share tags
+/// keep counting up.
 fn journal_aad(epoch: u64) -> [u8; 10] {
     let mut aad = tagged_aad(TAG_ENCRYPTED, epoch);
     aad[0] ^= 0x80;
     aad
 }
 
-/// Frame one record for the on-disk journal: `u32_be(len) ‖ framed`, where
-/// `framed` is the SAME `tag ‖ inner` / `tag ‖ version ‖ nonce ‖ ct` framing the
-/// share file uses (encryption MANDATORY on keystore nodes, plaintext only on dev).
 fn encode_record(state: &ShareState, epoch: u64, record: &JournalRecord) -> Vec<u8> {
     let inner = Zeroizing::new(journal_inner(record));
     let framed = match state {
@@ -466,8 +368,7 @@ fn encode_record(state: &ShareState, epoch: u64, record: &JournalRecord) -> Vec<
     out
 }
 
-/// Decode one tagless inner frame back into a [`JournalRecord`], bounding the DKG
-/// decoders by `committee_size` (an upper bound, like the wire path).
+/// `committee_size` is an upper bound on the DKG decoders, as on the wire path.
 fn parse_journal_inner(inner: &[u8], committee_size: NonZeroU32) -> eyre::Result<JournalRecord> {
     let (&rec_tag, mut body) = inner
         .split_first()
@@ -513,7 +414,6 @@ fn parse_journal_inner(inner: &[u8], committee_size: NonZeroU32) -> eyre::Result
     Ok(record)
 }
 
-/// Decode one `framed` record (leading `tag ‖ …`) under `state` for `epoch`.
 fn decode_record(
     framed: &[u8],
     epoch: u64,
@@ -540,11 +440,9 @@ fn journal_file_for(dir: &Path, epoch: u64) -> PathBuf {
     dir.join(format!("{JOURNAL_PREFIX}{epoch}{FILE_SUFFIX}"))
 }
 
-/// Append one ceremony [`JournalRecord`] for `epoch` to `beacon-dkgjournal-e<E>.bin`
-/// under `dir`, mode 0600, framed per `state`. Best-effort: the caller logs +
-/// continues on error (the in-memory ceremony is authoritative for the running
-/// process; only a crash loses an unwritten tail, which the DKG-log recovery
-/// resolver re-fetches).
+/// Append one ceremony [`JournalRecord`] for `epoch`, mode 0600. Best-effort at the
+/// call site: the in-memory ceremony is authoritative for the running process, and
+/// only a crash loses an unwritten tail.
 pub(crate) fn append_journal(
     dir: &Path,
     epoch: u64,
@@ -557,38 +455,25 @@ pub(crate) fn append_journal(
         .map_err(|e| eyre::eyre!("append journal record: {e}"))
 }
 
-/// Result of [`load_journal`] — distinguishes a GENUINE first run (no journal file)
-/// from a PRESENT-but-damaged journal, so the caller (`actor::recover`) never
-/// re-deals an already-sealed epoch. A torn/undecryptable journal means
-/// THIS node already participated in `epoch`'s ceremony (it wrote at least one
-/// record); a second sealed log of the same dealer with a different ack/reveal
-/// set is self-equivocation. So a damaged journal is evicted and, at/after
-/// the seal deadline, the share is healed as a player over the pinned bodies;
-/// before the deadline (nothing broadcast yet) the seeded dealer starts fresh.
+/// Result of [`load_journal`]: distinguishes a genuine first run from a
+/// present-but-damaged journal, so the caller never re-deals an already-sealed
+/// epoch. A non-empty journal proves this node participated, and a second sealed
+/// log of the same dealer is self-equivocation.
 pub(crate) enum JournalLoad {
-    /// No journal file exists for this epoch — a genuine first run; the caller may
-    /// `start_fresh` (deal).
+    /// No journal file exists: a genuine first run, so the caller may deal.
     NoFile,
-    /// A journal file exists and decoded (possibly to an empty/short prefix if the
-    /// tail was torn). The records are the recoverable prefix; the caller RESUMES
-    /// player-only (never re-deals).
+    /// A journal file decoded; the records are the recoverable prefix, and the
+    /// caller resumes player-only rather than re-dealing.
     Present(Vec<JournalRecord>),
-    /// A journal file exists but its VERY FIRST record is undecodable (torn length
-    /// prefix, truncated/garbled body, or undecryptable — e.g. wrong keystore mode).
-    /// The caller evicts it: at/after the seal deadline it heals as a player (never
-    /// re-deals); before the deadline it starts fresh.
+    /// A journal file exists but its first record is undecodable (torn length
+    /// prefix, truncated body, or undecryptable — e.g. wrong keystore mode). The
+    /// caller evicts it: at or after the seal deadline it heals as a player, and
+    /// before the deadline it starts fresh.
     Torn,
 }
 
-/// Load the per-epoch ceremony journal for `epoch` under `dir`, decoding each
-/// length-prefixed record per `state`, bounded by `committee_size`.
-///
-/// Returns a tri-state ([`JournalLoad`]): a MISSING file is `NoFile` (genuine first
-/// run → the caller may deal); a present file whose first record is undecodable is
-/// `Torn` (the caller evicts it and, past the seal deadline, heals as a player
-/// rather than re-dealing); a present file is `Present(records)` where a
-/// malformed/undecryptable record TRUNCATES the read (the tail is the crash-lost
-/// part) with a warning — never aborts, mirroring `load_all`'s warn+skip fail-soft.
+/// A malformed or undecryptable record truncates the read at that point — the tail
+/// is the crash-lost part — with a warning; never an abort.
 pub(crate) fn load_journal(
     dir: &Path,
     epoch: u64,
@@ -598,10 +483,10 @@ pub(crate) fn load_journal(
     let Ok(bytes) = std::fs::read(journal_file_for(dir, epoch)) else {
         return JournalLoad::NoFile;
     };
-    // A 0-byte file (create succeeded, the first write/fsync crashed before any
-    // bytes) is a genuine first run, NOT a torn record — we committed NO dealing, so
-    // the caller may deal. Only a NON-empty file whose first record fails to decode is
-    // `Torn` (we wrote it ⇒ we participated ⇒ re-dealing would self-equivocate).
+    // A 0-byte file is a genuine first run, not a torn record: the create succeeded
+    // but no dealing was committed, so the caller may still deal. Only a non-empty
+    // file whose first record fails to decode is `Torn` (we wrote it, so re-dealing
+    // would self-equivocate).
     if bytes.is_empty() {
         return JournalLoad::NoFile;
     }
@@ -628,8 +513,6 @@ pub(crate) fn load_journal(
         }
         rest = tail;
     }
-    // A present-but-damaged journal whose FIRST record never decoded is `Torn` — the
-    // caller evicts it and never re-deals past the seal (we may have sealed).
     if out.is_empty() {
         JournalLoad::Torn
     } else {
@@ -648,8 +531,8 @@ pub(crate) fn evict_journal(dir: &Path, epoch: u64) {
     }
 }
 
-/// Delete a superseded per-epoch share secret file (`reconcile_journals` prunes the
-/// older shares once carry-forward has moved on — review [334]).
+/// Delete a superseded per-epoch share secret file; `reconcile_journals` prunes
+/// older shares once carry-forward has moved on.
 pub(crate) fn evict_share(dir: &Path, epoch: u64) {
     let path = file_for(dir, epoch);
     if let Err(e) = std::fs::remove_file(&path) {
@@ -663,17 +546,10 @@ fn conflict_file_for(dir: &Path, epoch: u64) -> PathBuf {
     dir.join(format!("{CONFLICT_PREFIX}{epoch}{FILE_SUFFIX}"))
 }
 
-/// Record `Conflict(E)` durably: `held ‖ second`, the value digests of the two
-/// quorum-certified artifacts, 64 plaintext bytes (both are public). Written by
-/// the artifact STORE the instant it notes a second value
-/// (`ArtifactStore::note_divergent` — the store owns the witness, so no restart
-/// window between the note and the actor's next tick can lose it), and by the
-/// actor as it enters the terminal when the store has not (`stop_signing`,
-/// BEFORE the share file is evicted). Read back by `DkgActor::recover` BEFORE
-/// anything else it holds for the epoch — a share file that outlived the
-/// terminal (an `evict_share` that failed, a death between the marker and the
-/// eviction) must not re-key the epoch on a restart. Reclaimed with the epoch's
-/// journal (`reconcile_journals` on the first tick, `sweep_epoch_state` after).
+/// Record `Conflict(E)` durably as `held ‖ second`, the value digests of the two
+/// quorum-certified artifacts (64 public bytes). `DkgActor::recover` reads it before
+/// any share for the epoch, so a share file that outlived the terminal cannot re-key
+/// the epoch on a restart.
 pub(crate) fn persist_conflict(
     dir: &Path,
     epoch: u64,
@@ -696,14 +572,12 @@ pub(crate) fn persist_conflict(
 pub(crate) enum ConflictMarker {
     /// `(held, second)` — the value digests of the two certified artifacts.
     Pair(B256, B256),
-    /// The file is there but is not 64 bytes. FAIL-CLOSED: only a verdict ever
-    /// writes the file, so the verdict stands even though its digests are lost;
-    /// the epoch is `Conflict` with no known pair, said as an ERROR, and the
-    /// file is left in place for the operator.
+    /// The file is present but not 64 bytes. Fail-closed: only a verdict writes the
+    /// file, so the verdict stands even though its digests are lost, and the file is
+    /// left in place for the operator.
     Malformed,
 }
 
-/// The `Conflict(E)` marker, if one is on disk.
 pub(crate) fn load_conflict(dir: &Path, epoch: u64) -> Option<ConflictMarker> {
     let bytes = std::fs::read(conflict_file_for(dir, epoch)).ok()?;
     if bytes.len() != 64 {
@@ -721,8 +595,7 @@ pub(crate) fn load_conflict(dir: &Path, epoch: u64) -> Option<ConflictMarker> {
     ))
 }
 
-/// Every `Conflict(E)` marker under `dir`, ascending by epoch — what the artifact
-/// store reloads its divergence witnesses from at launch.
+/// Every `Conflict(E)` marker under `dir`, ascending by epoch.
 pub(crate) fn conflict_markers(dir: &Path) -> Vec<(u64, ConflictMarker)> {
     let mut epochs = scan_beacon_dir(dir).2;
     epochs.sort_unstable();
@@ -742,29 +615,18 @@ pub(crate) fn evict_conflict(dir: &Path, epoch: u64) {
     }
 }
 
-/// Reconcile the on-disk beacon directory on the first tick, in one scan: prune both
-/// boundary-passed ceremony JOURNALS and superseded SHARE secrets that no in-memory map
-/// holds. The durable lifetime owner — a finalize-then-restart-before-boundary holds the
-/// epoch in NO in-memory map (the running sweep never sees it), so without this its files
-/// leak forever (review [334]). A missing dir is a no-op; malformed/foreign filenames are
-/// IGNORED, never deleted.
+/// Reconcile the on-disk beacon directory on the first tick: prune boundary-passed
+/// ceremony journals and superseded share secrets that no in-memory map holds.
+/// This is the durable lifetime owner — a finalize-then-restart-before-boundary
+/// leaves the epoch in no in-memory map, so without this its files leak.
 ///
-/// JOURNALS (recompute-heal scratch, §8.11.1): delete every journal that has aged out
-/// of the retention window — `epoch + JOURNAL_RETENTION_EPOCHS < now` — the SAME
-/// predicate the running sweep applies (`actor.rs`, `*e + JOURNAL_RETENTION_EPOCHS <
-/// now`), so a startup reconcile and the running sweep can never disagree. A
-/// finalized-but-pre-boundary epoch E (its ceremony ran during E-1, so at finalize
-/// `now ∈ E-1 < E`) is KEPT (resume/serve/recompute still need it), and a boundary-
-/// passed epoch is retained one more window for the demote-heal recompute before it is
-/// reclaimed.
-///
-/// SHARES (the durable carry-forward key): KEEP the ACTIVE carry-forward — the max share
-/// epoch `<= now`, exactly what `CeremonyStore.range(..=now).next_back()` resolves to — AND
-/// every FUTURE share (`> now`, a just-finalized next-epoch key not yet active, normal
-/// near a change boundary). DELETE only shares STRICTLY OLDER than that active floor: they
-/// are superseded and never re-used (a node verifies/signs only the live epoch's key).
-/// Keeping only `max` would be WRONG — it would delete the active `<= now` carry-forward
-/// whenever a future share already exists, demoting the node for the rest of the epoch.
+/// A journal is deleted when `epoch + JOURNAL_RETENTION_EPOCHS < now`, the same
+/// predicate the running sweep applies. Shares keep the active carry-forward (the
+/// max share epoch `<= now`) and every future share (`> now`); only strictly older
+/// shares are deleted, because keeping only the max would delete the active
+/// carry-forward whenever a future share exists and demote the node for the rest of
+/// the epoch. A missing dir is a no-op; malformed or foreign filenames are ignored,
+/// never deleted.
 pub(crate) fn reconcile_journals(dir: &Path, now: u64) {
     let (journals, shares, conflicts) = scan_beacon_dir(dir);
     for epoch in journals {
@@ -772,15 +634,13 @@ pub(crate) fn reconcile_journals(dir: &Path, now: u64) {
             evict_journal(dir, epoch);
         }
     }
-    // A conflict marker rides the journal's window: the terminal it records is
-    // an epoch's, and an epoch past the window has no slot to be terminal in.
+    // A conflict marker rides the journal's window: an epoch past the window has no
+    // slot to be terminal in.
     for epoch in conflicts {
         if epoch + crate::beacon::JOURNAL_RETENTION_EPOCHS < now {
             evict_conflict(dir, epoch);
         }
     }
-    // Active carry-forward = the newest share at or before `now`. Older shares are
-    // superseded; the floor itself and every future (`> now`) share are retained.
     if let Some(floor) = shares.iter().copied().filter(|e| *e <= now).max() {
         for epoch in shares {
             if epoch < floor {
@@ -790,9 +650,8 @@ pub(crate) fn reconcile_journals(dir: &Path, now: u64) {
     }
 }
 
-/// `(journal epochs, share epochs, conflict-marker epochs)` parsed out of ONE
-/// directory scan. A missing dir yields three empty sets; malformed / foreign
-/// filenames are ignored.
+/// Returns `(journal epochs, share epochs, conflict-marker epochs)` parsed out of
+/// one directory scan.
 fn scan_beacon_dir(dir: &Path) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
     let mut journals: Vec<u64> = Vec::new();
     let mut shares: Vec<u64> = Vec::new();
@@ -857,9 +716,8 @@ mod tests {
         dir
     }
 
-    /// The v1 inner frame this module no longer writes, rebuilt by hand so the
-    /// retired-format tests exercise real legacy bytes rather than a v1 encoder
-    /// kept alive only for them.
+    /// The v1 inner frame, rebuilt by hand so the retired-format tests exercise real
+    /// legacy bytes rather than a v1 encoder kept alive only for them.
     fn v1_inner(output: &CeremonyOutput, share: &Share) -> Vec<u8> {
         let out_bytes = encode_outcome(output);
         let mut buf = (out_bytes.len() as u32).to_be_bytes().to_vec();
@@ -868,13 +726,8 @@ mod tests {
         buf
     }
 
-    /// The v2 plaintext frame, pinned byte-for-byte: ONE length-prefixed field — the
-    /// share — and nothing after it.
-    ///
-    /// Reds if ANY second field comes back. That is the assertion П-3 needs from this
-    /// module: both of the copies of `PK_E` this record used to carry (the group
-    /// output, and the artifact after it) were length-prefixed tails, so their
-    /// absence is checkable as a byte count rather than only as an API shape.
+    /// The v2 plaintext frame is pinned byte-for-byte: one length-prefixed field —
+    /// the share — and nothing after it.
     #[test]
     fn plaintext_v2_frame_is_pinned() {
         let (_output, share) = sample_output_share();
@@ -886,13 +739,8 @@ mod tests {
         assert_eq!(bytes, expected);
     }
 
-    /// A v1 file is no longer readable, and the outcome is the warn-and-skip one —
-    /// the node re-runs the ceremony rather than crashing or adopting a share it
-    /// cannot frame. Both arms, because the encrypted one used to open on its own
-    /// AAD and must now fail on the tag alone.
-    ///
-    /// Reds if the v1 share arms come back: a reader for them would resurrect a
-    /// frame the write path cannot produce.
+    /// A v1 file is unreadable on both arms; the node re-runs the ceremony rather
+    /// than crashing or adopting a share it cannot frame.
     #[test]
     fn a_v1_share_file_is_retired_and_skipped_not_read() {
         let (output, share) = sample_output_share();
@@ -914,23 +762,18 @@ mod tests {
             decode(&sealed, 7, &ShareState::Encrypted(key.clone())).is_err(),
             "and so is the v1 encrypted arm, holder of the key or not"
         );
-        // Non-vacuity: the SAME reader accepts a current record, so the two
-        // refusals above are about the retired frame and not about this fixture.
+        // Non-vacuity: the same reader accepts a current record, so the refusals
+        // above are about the retired frame.
         let current = encode(&ShareState::Encrypted(key.clone()), 7, &share);
         assert!(decode(&current, 7, &ShareState::Encrypted(key)).is_ok());
     }
 
-    /// A PRE-П-3 v2 record — `(output, share)` or `(output, share, artifact)` — must be
-    /// REFUSED rather than read with its tail ignored.
-    ///
-    /// It is the one legacy shape whose leading tag still matches, so the
-    /// trailing-byte check is the only thing standing between it and a record whose
-    /// third field would be read as nothing at all. The outcome is `load_all`'s
-    /// warn-and-skip, stated in this module's doc.
+    /// An older v2 record carrying the output and/or artifact past the share must be
+    /// refused, not read with its tail ignored — it is the one legacy shape whose
+    /// leading tag still matches.
     #[test]
     fn a_pre_p3_record_is_refused_not_silently_truncated() {
         let (output, share) = sample_output_share();
-        // Exactly the old `inner_frame`: output, then share, then the artifact.
         let mut legacy = vec![TAG_PLAINTEXT_V2];
         let out_bytes = encode_outcome(&output);
         legacy.extend_from_slice(&(out_bytes.len() as u32).to_be_bytes());
@@ -957,9 +800,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The other direction of tag-as-version: a v2 file met by a binary that knows
-    /// only the v1 tags falls into the unknown-tag arm, which `load_all` turns into
-    /// a warn-and-skip — the node re-runs the ceremony instead of crashing.
+    /// A v2 file read by a v1-only reader hits the unknown-tag arm and is skipped
+    /// with a warning, so the node re-runs the ceremony instead of crashing.
     #[test]
     fn v2_file_is_unreadable_to_a_v1_only_reader_and_skipped_not_fatal() {
         let (_output, share) = sample_output_share();
@@ -972,7 +814,6 @@ mod tests {
             "a v2 file must not lead with a tag a v1-only reader would MISPARSE"
         );
 
-        // What that reader does with it, reproduced through the tag it cannot match.
         std::fs::write(file_for(&dir, 7), [0xFFu8; 8]).unwrap();
         assert!(
             load_all(&dir, &ShareState::Plaintext).is_empty(),
@@ -981,8 +822,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Length-prefixing the share took away the trailing-byte check `parse_share`
-    /// used to provide for free; v2 has to keep catching a corrupted tail.
+    /// v2 must keep rejecting a corrupted tail even though the share is
+    /// length-prefixed.
     #[test]
     fn v2_frame_rejects_trailing_bytes() {
         let (_output, share) = sample_output_share();
@@ -1026,8 +867,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// An encrypted file loaded with the WRONG key OR with `Plaintext` state is
-    /// SKIPPED (warn), not panicked.
+    /// An encrypted file loaded with the wrong key or with `Plaintext` state is
+    /// skipped with a warning, not a panic.
     #[test]
     fn encrypted_file_with_wrong_or_absent_key_is_skipped() {
         let (_output, share) = sample_output_share();
@@ -1054,12 +895,10 @@ mod tests {
         persist(&dir, 7, &share, &ShareState::Encrypted(key.clone())).expect("persist");
         std::fs::rename(file_for(&dir, 7), file_for(&dir, 9)).unwrap();
 
-        // load_all reads the filename epoch (9) for the AAD → AEAD-open fails.
         assert!(
             load_all(&dir, &ShareState::Encrypted(key.clone())).is_empty(),
             "a ciphertext renamed e7 → e9 fails AEAD (epoch-bound AAD)"
         );
-        // Decoding the same bytes at the ORIGINAL epoch still succeeds.
         let bytes = std::fs::read(file_for(&dir, 9)).unwrap();
         assert!(decode(&bytes, 7, &ShareState::Encrypted(key)).is_ok());
         let _ = std::fs::remove_dir_all(&dir);
@@ -1114,8 +953,8 @@ mod tests {
             .receive_player_ack(player_pk.clone(), ack.clone())
             .expect("receive ack");
         let log = dealer.finalize::<N3f1>();
-        // A second, independently dealt log of the SAME dealer (no acks ⇒ all
-        // reveals) — the other half of an equivocation pair.
+        // A second independently dealt log of the same dealer — the other half of an
+        // equivocation pair.
         let (second_dealer, _, _) =
             Dealer::start::<N3f1>(&mut rng, info.clone(), dealer_key.clone(), None)
                 .expect("second start");
@@ -1216,8 +1055,8 @@ mod tests {
         for record in &records {
             append_journal(&dir, 5, record, &state).expect("append");
         }
-        // A PRESENT file whose first record never decodes is `Torn` (we wrote it →
-        // we participated → never re-deal past the seal, NEVER `NoFile`).
+        // A present file whose first record never decodes is `Torn`: we wrote it, so
+        // it must never be `NoFile`.
         assert!(
             matches!(
                 load_journal(&dir, 5, &ShareState::Encrypted(seal_key(2)), n),
@@ -1244,8 +1083,7 @@ mod tests {
         for record in &records {
             append_journal(&dir, 7, record, &state).expect("append");
         }
-        // Read the e7 journal bytes back under epoch 9 → the epoch-bound AAD rejects.
-        let loaded = present(load_journal(&dir, 7, &state, n)); // correct epoch decodes
+        let loaded = present(load_journal(&dir, 7, &state, n));
         assert_eq!(loaded.len(), records.len(), "correct epoch decodes");
         std::fs::rename(journal_file_for(&dir, 7), journal_file_for(&dir, 9)).unwrap();
         assert!(
@@ -1270,22 +1108,18 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// `reconcile_journals(now)` deletes only journals that have aged OUT of the
+    /// `reconcile_journals(now)` deletes only journals that have aged out of the
     /// recompute-heal window (`epoch + JOURNAL_RETENTION_EPOCHS < now`), keeps the
-    /// in-window ones (so a demoted member can still recompute from them past the
-    /// boundary), and never touches a foreign file.
-    ///
-    /// The heights are DERIVED from the window rather than written down, because the
-    /// window is now the crate's one retention constant (`beacon/mod.rs`) and a test
-    /// that hard-codes `1` pins a number instead of the predicate. `now` sits one
-    /// epoch above the aged-out one's edge, so exactly one of the three is past it.
+    /// in-window ones so a demoted member can still recompute from them past the
+    /// boundary, and never touches a foreign file. The heights are derived from the
+    /// window rather than written down, so the test pins the predicate and not a
+    /// number.
     #[test]
     fn reconcile_journals_deletes_past_window_keeps_in_window_ignores_foreign() {
         let (records, _n) = sample_journal_records();
         let dir = fresh_dir("journal-reconcile");
         let window = crate::beacon::JOURNAL_RETENTION_EPOCHS;
         let aged_out = 3u64;
-        // `aged_out + window < now` by exactly one, so `in_window + window >= now`.
         let now = aged_out + window + 1;
         let in_window = now;
         let future = now + 2;
@@ -1366,11 +1200,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// `reconcile_journals` prunes SUPERSEDED share secrets ([334]): it keeps the ACTIVE
-    /// carry-forward (`max{share epoch <= now}`) AND every FUTURE share (`> now`, a
-    /// just-finalized next-epoch key), deleting only strictly-older shares. Keeping only the
-    /// max share would WRONGLY delete the active `<= now` carry-forward whenever a future
-    /// share exists (normal at a committee-change boundary) — this pins the floor rule.
+    /// `reconcile_journals` keeps the active carry-forward (`max{share epoch <= now}`)
+    /// and every future share (`> now`), deleting only strictly older shares; keeping
+    /// only the max would drop the active carry-forward whenever a future share exists.
     #[test]
     fn reconcile_prunes_superseded_shares_keeps_active_and_future() {
         let (_output, share) = sample_output_share();
@@ -1395,8 +1227,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Floor-rule edge: when EVERY share is in the future (`> now`) there is no `<= now`
-    /// floor, so reconcile deletes NOTHING (a node with only future shares keeps them all).
+    /// Floor-rule edge: when every share is in the future (`> now`) there is no
+    /// `<= now` floor, so reconcile deletes nothing.
     #[test]
     fn reconcile_keeps_all_when_every_share_is_future() {
         let (_output, share) = sample_output_share();
@@ -1404,7 +1236,7 @@ mod tests {
         for e in [8u64, 9] {
             persist(&dir, e, &share, &ShareState::Plaintext).expect("persist");
         }
-        reconcile_journals(&dir, 5); // now=5, both shares > now
+        reconcile_journals(&dir, 5); // now=5, both shares are future
         assert!(
             file_for(&dir, 8).exists(),
             "no `<= now` floor → nothing deleted"
@@ -1424,8 +1256,8 @@ mod tests {
         reconcile_journals(&dir, 99); // must not panic on a missing dir
     }
 
-    /// A 0-byte journal (create succeeded, the first write crashed before any bytes)
-    /// is `NoFile` (genuine first run → deal), NOT `Torn`.
+    /// A 0-byte journal (create succeeded, no bytes written) is `NoFile` for a
+    /// genuine first run, not `Torn`.
     #[test]
     fn zero_byte_journal_is_no_file_not_torn() {
         let dir = fresh_dir("journal-zerobyte");

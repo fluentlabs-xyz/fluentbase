@@ -1,31 +1,20 @@
-//! DKG-log recovery over `commonware_resolver::p2p` (§8.11.1).
+//! DKG-log recovery over `commonware_resolver::p2p`.
 //!
-//! A committee member that restarts mid-window resumes its ceremony PLAYER-ONLY
-//! (`ceremony::resume`) but may still LACK some peer dealer logs it never received
-//! (the public, signed, self-verifying half of the ceremony). Those logs are
-//! re-fetched here via the architecture's OWN recovery primitive — the same
-//! `commonware_resolver::p2p` engine the marshal rides for cert backfill — keyed by
-//! `{epoch, dealer, hash}`: the exact body the agreement pinned (the hash comes from
-//! a proposal under verification or from the certified artifact), never "some log
-//! of that dealer". This REPLACES the former best-effort `BEACON_CHANNEL`
-//! `LogRequest`/`LogResponse` gossip pull: the resolver owns retry / multi-peer
-//! fallback / `fetch_targeted` / rate-limiting / blocked-peer eviction, and serves
-//! ONE ~8.4 KiB log per key (never a 430 KiB blob).
+//! A committee member that restarts mid-window resumes its ceremony player-only
+//! but may still lack peer dealer logs it never received. Those logs are re-fetched
+//! here through the architecture's own recovery engine, keyed by
+//! `{epoch, dealer, hash}`: the exact body the agreement pinned, never "some log of
+//! that dealer". The engine owns retry, multi-peer fallback, `fetch_targeted`,
+//! rate-limiting and blocked-peer eviction, and serves one dealer log per key.
 //!
-//! Reachability (verified): the beacon plane's `EpochTransition` tracks
-//! `committee[E−1] ∪ committee[E] ∪ committee[E+1]` as PRIMARY on the SAME
-//! `OracleHandle` the resolver's `Provider` reads (4.3 — the Active registry moved
-//! to the secondary tier, which commonware never dials), so during E-1 (when
-//! committee[E] is dealing) the log holders are in `latest.primary` as that
-//! epoch's own `committee[(E−1)+1]` record — by the incoming-committee leg of the
-//! union, not by a registry union. Targeted fetches aim at the known roster.
+//! The beacon plane's `EpochTransition` tracks
+//! `committee[E-1] ∪ committee[E] ∪ committee[E+1]` as primary on the same oracle
+//! handle the resolver's provider reads, so the log holders are reachable during
+//! the epoch whose committee is dealing.
 //!
-//! Wiring mirrors `marshal::resolver::handler`: [`LogHandler`] implements both
-//! `Producer` (serve a `SignedDealerLog` from the live ceremony's `signed_logs` +
-//! the persisted journal) and `Consumer` (re-`check`-ingest a fetched log via the
-//! ceremony's existing peer-Reveal path), forwarding each to the single-threaded
-//! [`crate::beacon::actor::DkgActor`] run loop over an mpsc channel + a oneshot reply
-//! (so the actor stays the sole owner of ceremony state, no shared locks).
+//! [`LogHandler`] implements both `Producer` and `Consumer`, forwarding each to the
+//! single-threaded `DkgActor` run loop over an mpsc channel and a oneshot reply, so
+//! the actor stays the sole owner of ceremony state.
 
 use alloy_primitives::B256;
 use bytes::{Buf, BufMut, Bytes};
@@ -43,20 +32,14 @@ use tracing::error;
 
 use crate::beacon::artifact::ArtifactBridge;
 
-/// Resolver key for ONE signed dealer log in one ceremony: `{epoch, dealer, hash}`.
+/// Resolver key for one signed dealer log in one ceremony: `{epoch, dealer, hash}`.
 ///
-/// A composite `Span` (`Ord + Hash + Codec<Cfg = ()>` key): `u64` epoch ‖ 32-byte
-/// ed25519 dealer pubkey ‖ 32-byte content hash
-/// (`ceremony::log_hash` = `keccak256(encode(SignedDealerLog))`, the hash the
-/// agreement pins). The hash is part of the identity, not a hint: a dealer can sign
-/// two `check`-valid logs, and a fetch answered with "a log of that dealer" could
-/// deliver the one the network did NOT pin — which is exactly how a Byzantine dealer
-/// left an honest member shareless (R-002). The server answers a key with the body
-/// under that exact `(dealer, hash)` or with nothing; the requester takes the hash
-/// from the pinned set it is trying to finalize over. `Ord`/`Hash` derive from the
-/// fields; the codec is fixed-layout (72 bytes) so it round-trips byte-identically
-/// network-wide. A WIRE change on `BEACON_RESOLVER_CHANNEL` — every network is
-/// relaunched from genesis, there is no mixed-version window.
+/// The hash is part of the identity, not a hint: a dealer can sign two valid logs,
+/// and a fetch answered with "a log of that dealer" could deliver the one the
+/// network did not pin. The server answers a key with the body under that exact
+/// `(dealer, hash)` or with nothing; the requester takes the hash from the pinned
+/// set it is finalizing over. The codec is a fixed 72 bytes, so keys round-trip
+/// byte-identically network-wide.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DkgLogKey {
     pub epoch: u64,
@@ -113,25 +96,18 @@ impl Span for DkgLogKey {}
 
 /// Everything this node pulls on `BEACON_RESOLVER_CHANNEL`.
 ///
-/// Two subjects on ONE engine, deliberately. The epoch-key artifact needs a pull
-/// seam at a 16/s quota and never a 128/s consensus one, because an inbound
-/// over-quota SLEEPS THE WHOLE CONNECTION to a peer and stalls its other
-/// channels; `BEACON_RESOLVER_CHANNEL` is already that quota, already tracks the
-/// right peer set (primary = the three committee records), and is already wired.
-/// Adding a top-level channel would have bought a second engine and a
-/// network-wide coordinated release for traffic that belongs on this one.
+/// Two subjects on one engine: the epoch-key artifact needs a pull seam at the
+/// beacon resolver's quota, which already tracks the right peer set and is already
+/// wired, so adding a top-level channel would buy a second engine for traffic that
+/// belongs on this one.
 ///
-/// The tag byte is the marshal request codec's shape (`resolver/handler.rs`
-/// keys). It is a WIRE change on this channel — a key that used to be a bare
-/// `{epoch, dealer}` now leads with a discriminant (and, since the hash-identity
-/// change, carries the content hash) — and therefore a coordinated
-/// release, which the `OrderBlock` shrink makes anyway.
+/// The tag byte is the marshal request codec's shape.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BeaconFetchKey {
     /// One dealer's public log in one ceremony. Boxed: the 72-byte log key beside
     /// the 8-byte artifact key would otherwise size every key to the larger arm.
     Log(Box<DkgLogKey>),
-    /// The quorum-signed agreement artifact for one target epoch — the ONLY
+    /// The quorum-signed agreement artifact for one target epoch — the only
     /// source of `PK_epoch` for a node that never ran the ceremony.
     Artifact { epoch: u64 },
 }
@@ -139,41 +115,12 @@ pub enum BeaconFetchKey {
 impl BeaconFetchKey {
     const TAG_LOG: u8 = 0;
     const TAG_ARTIFACT: u8 = 1;
-    /// RETIRED, and reserved rather than reusable — the same discipline
-    /// `OrderBlock`'s retired `beacon_flags` bits take (§13 rule 39).
+    /// Retired tag, reserved rather than reusable, so an old peer's seed request does
+    /// not decode as a future subject.
     ///
-    /// It carried `Seed { from, to }`, a by-round σ request. Nothing asks any
-    /// more: σ rides the certificate, and `Beacon::observe_certificate` files it
-    /// at the certificate's own round on EVERY cert door — the notarization door,
-    /// the live-stream inlet, the by-height resolver and the crash-survivor
-    /// replay all hand their certificate to that one operation
-    /// (`beacon/seed_index.rs:1-8`) — so a node that pulls a boundary
-    /// finalization obtains exactly the σ this request existed to fetch.
-    ///
-    /// THAT CONCLUSION NOW RESTS ON A WEAKER FOOT, and it is named here rather
-    /// than quietly inherited. It used to rest on a WRITE: the same call that
-    /// filed σ wrote a SECOND copy of the epoch's highest round into a dedicated
-    /// `terminal` map (`SeedStore::insert` → `pin_terminal`), so the boundary
-    /// reader had its own storage and the σ-per-round count could not touch it.
-    /// There is no second copy. The filed σ lives in the one `round → σ` map and
-    /// survives only because the EVICTION RULE spares it:
-    /// `seed_index.rs::oldest_evictable` skips the highest VERIFIED round held
-    /// for each epoch inside the trailing `SCHEME_RETENTION_EPOCHS` window. A
-    /// negative property (nothing removes it) where there used to be a positive
-    /// one (something wrote it somewhere else), under one shared budget instead
-    /// of two. The WINDOW is not the new part — `retain_terminal_from` took the
-    /// same `SCHEME_RETENTION_EPOCHS` edge — so anyone reviving a by-round pull
-    /// has to show that the skip rule can lose a boundary σ the pin would have
-    /// kept, not merely that the window exists.
-    ///
-    /// The one caller it was built for, the propose-side witness embed, is gone
-    /// with the field, and it could not have helped the node it was meant to
-    /// save: `build_proposal` runs only inside an already-spawned engine, and the
-    /// spawn is gated by `boundary_lookup`, whose `Missing` is precisely the
-    /// state the pull was supposed to resolve.
-    ///
-    /// Reserved, not reassigned: a future subject takes TAG 3. Reusing 2 would
-    /// make an old peer's seed request decode as that subject.
+    /// It carried a by-round σ request. Nothing asks any more: σ rides the certificate
+    /// and is filed at the certificate's own round on every door, so a node that pulls
+    /// a boundary finalization obtains exactly the σ this request existed to fetch.
     const TAG_SEED_RETIRED: u8 = 2;
 }
 
@@ -229,7 +176,7 @@ impl Read for BeaconFetchKey {
             Self::TAG_ARTIFACT => Ok(Self::Artifact {
                 epoch: u64::read(buf)?,
             }),
-            // Retired, and REFUSED rather than ignored: silently accepting a tag
+            // Retired, and refused rather than ignored: silently accepting a tag
             // whose subject no longer exists would leave the requester's fetch
             // hanging on a responder that can never answer.
             Self::TAG_SEED_RETIRED => Err(CodecError::Invalid(
@@ -302,7 +249,7 @@ impl<R: Resolver<Key = BeaconFetchKey>> Resolver for LogFetcher<R> {
     }
 
     async fn clear(&mut self) {
-        // Deliberately NOT `inner.clear()`: this handle speaks for the ceremony,
+        // Deliberately not `inner.clear()`: this handle speaks for the ceremony,
         // and cancelling the artifact seam's in-flight pull on its behalf would
         // strand a caller that is waiting on a key this side does not own.
         self.0
@@ -324,11 +271,9 @@ impl<R: Resolver<Key = BeaconFetchKey>> Resolver for LogFetcher<R> {
 /// The shared resolver's `Producer`/`Consumer`, dispatching each key to the half
 /// that owns it.
 ///
-/// Both halves obey the same rule and it is the one that keeps commonware's
-/// un-removable `excluded` set out of this engine: `deliver` returns `false` ONLY
-/// for proven misbehaviour — a genuine forgery — and `true` for everything an
-/// honest peer can legitimately send, including a log this node can no longer use
-/// and an artifact it does not have.
+/// `deliver` returns `false` only for proven misbehaviour and `true` for everything
+/// an honest peer can legitimately send, which keeps commonware's un-removable
+/// `excluded` set out of this engine.
 #[derive(Clone)]
 pub struct BeaconFetchHandler {
     logs: LogHandler,
@@ -353,12 +298,11 @@ impl Consumer for BeaconFetchHandler {
         }
     }
 
+    // `failed` fires only on Cancel/Retain/Clear and never on an error or timeout, so
+    // a seam that relied on it would retry silently forever. The artifact side learns
+    // from a delivered `NotYet` or its own bounded window; the log side re-issues its
+    // missing targets each tick.
     async fn failed(&mut self, key: Self::Key, failure: Self::Failure) {
-        // Nothing here waits on `failed`, and that is the point: it fires solely
-        // on Cancel/Retain/Clear and never on an error or a timeout, so a seam
-        // that relied on it would leave its caller in unbounded silent retry. The
-        // artifact seam's caller learns from a delivered `NotYet` or from its own
-        // bounded window; the log side re-issues its missing targets each tick.
         if let BeaconFetchKey::Log(key) = key {
             self.logs.failed(*key, failure).await;
         }
@@ -372,7 +316,7 @@ impl Producer for BeaconFetchHandler {
         match key {
             BeaconFetchKey::Log(key) => self.logs.produce(*key).await,
             BeaconFetchKey::Artifact { epoch } => {
-                // ALWAYS an answer, never a dropped responder: a producer that
+                // Always an answer, never a dropped responder: a producer that
                 // has nothing says `NotYet`, which is what lets the requester
                 // distinguish "not converged yet" from "nobody answered".
                 let (response, receiver) = oneshot::channel();
@@ -388,7 +332,7 @@ impl Producer for BeaconFetchHandler {
 /// the resolver never touches it directly.
 pub enum LogMessage {
     /// Serve a `SignedDealerLog` for `key` (the resolver received an inbound
-    /// request). The actor replies with the encoded log bytes, or DROPS the
+    /// request). The actor replies with the encoded log bytes, or drops the
     /// responder (→ the resolver sends an empty "no data" response → the requester
     /// retries another peer).
     Produce {
@@ -396,7 +340,7 @@ pub enum LogMessage {
         response: oneshot::Sender<Bytes>,
     },
     /// Re-`check`-ingest a fetched log for `key`. The actor replies `true` iff the
-    /// log is valid (recorded → fetch complete) or `false` for a GENUINE forgery
+    /// log is valid (recorded → fetch complete) or `false` for a genuine forgery
     /// (the resolver then blocks the lying peer). An honest-but-unusable log (e.g.
     /// the ceremony already finalized/evicted) replies `true` to avoid blocking an
     /// honest peer.
@@ -444,12 +388,9 @@ impl Consumer for LogHandler {
     }
 
     async fn failed(&mut self, _: Self::Key, _: Self::Failure) {
-        // No-op retry: the resolver retries on its own AND the actor re-issues the
-        // missing `{epoch, dealer, hash}` targets each tick (off the live ceremony in-window
-        // and off the `Acquiring(Logs)` heal past the boundary, within the journal-retention
-        // window), so a transiently-unavailable log is re-fetched to completion rather
-        // than sat out. A log NO peer holds simply backs off with the epoch's age-out
-        // (the fetch set is bounded to `pinned(E) − held`), so this is not a storm.
+        // No-op: the resolver retries on its own and the actor re-issues the
+        // missing targets each tick, so a transiently-unavailable log is
+        // re-fetched to completion rather than sat out.
     }
 }
 
@@ -480,10 +421,8 @@ mod tests {
     use rand_08::rngs::StdRng;
     use rand_core::SeedableRng as _;
 
-    /// The shared key space: both subjects round-trip, an unknown tag is refused,
-    /// and no `Log` key can ever decode as an `Artifact` key or the reverse — the
-    /// two halves ride ONE engine (`BEACON_RESOLVER_CHANNEL`, 16/s) and the
-    /// discriminant is the only thing keeping them apart on the wire.
+    /// Both subjects round-trip, an unknown tag is refused, and no `Log` key decodes as
+    /// an `Artifact` key or the reverse.
     #[test]
     fn the_shared_key_space_separates_its_two_subjects() {
         let mut rng = StdRng::seed_from_u64(11);
@@ -510,11 +449,9 @@ mod tests {
         );
     }
 
-    /// Tag 2 is RETIRED, not free. It carried the by-round σ request; σ rides the
-    /// certificate now, so nothing asks — but a peer on an older binary still
-    /// can, and the refusal is what tells it so instead of leaving its fetch
-    /// waiting on a responder that will never answer. The next subject must take
-    /// tag 3: reusing 2 would decode that peer's seed request as the new subject.
+    /// Tag 2 is retired, not free: a peer on an older binary can still send it, and the
+    /// refusal tells it so instead of leaving its fetch waiting. The next subject must
+    /// take tag 3.
     #[test]
     fn the_retired_seed_tag_is_refused_rather_than_reused() {
         // A full pre-retirement `Seed{from,to}` frame: tag 2 plus four u64s.
@@ -527,10 +464,8 @@ mod tests {
         );
     }
 
-    /// The ceremony's handle speaks only for dealer logs. Its `retain`/`clear`
-    /// must not drop an artifact pull, which belongs to a caller this side does
-    /// not know about: cancelling it would strand that caller on a key nobody
-    /// re-requests.
+    /// The ceremony's handle speaks only for dealer logs, so its `retain`/`clear` must
+    /// not drop an artifact pull it does not own.
     #[test]
     fn the_log_fetcher_never_cancels_the_artifact_arm() {
         let runner = commonware_runtime::deterministic::Runner::default();
@@ -603,12 +538,9 @@ mod tests {
     }
 
     /// The wire layout of the log key, byte for byte: `u64_be(epoch) ‖ dealer(32) ‖
-    /// hash(32)`, 72 bytes, no length prefixes — so two nodes on the same binary
-    /// encode one key identically and a peer's decode of it names the same body.
-    /// The hash is part of the identity: two keys that differ ONLY in the hash are
-    /// different keys (different bytes, unequal, ordered), which is what makes
-    /// "fetch the pinned body of this dealer, not its other one" expressible on the
-    /// wire at all.
+    /// hash(32)`, 72 bytes, no length prefixes. Two keys that differ only in the hash
+    /// are different keys, which makes "fetch the pinned body of this dealer"
+    /// expressible on the wire.
     #[test]
     fn dkg_log_key_round_trips_and_orders_by_epoch_then_dealer() {
         let mut rng = StdRng::seed_from_u64(3);
@@ -632,8 +564,6 @@ mod tests {
         );
         let decoded = DkgLogKey::decode(bytes.as_ref()).expect("decode");
         assert_eq!(decoded, key);
-        // The envelope the wire carries: ONE tag byte, then the 72-byte key — 73
-        // bytes, the tag leading, the key's bytes unchanged by the boxing.
         let envelope = BeaconFetchKey::Log(Box::new(key.clone()));
         let wire = envelope.encode();
         assert_eq!(wire.len(), 73, "tag + 72");
@@ -651,8 +581,6 @@ mod tests {
             DkgLogKey::decode(&bytes[..71]).is_err(),
             "a key short of its hash does not decode"
         );
-        // Epoch is the primary sort key (the u64 leads the layout), the dealer the
-        // second, the hash the third — and a different hash IS a different key.
         let lo = DkgLogKey {
             epoch: 6,
             dealer: b.clone(),

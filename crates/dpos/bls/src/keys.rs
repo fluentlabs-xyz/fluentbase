@@ -26,9 +26,6 @@ pub struct ValidatorBlsKeypair {
 
 impl ValidatorBlsKeypair {
     /// Generate a fresh keypair from cryptographically secure randomness.
-    ///
-    /// Internally draws 64 bytes of IKM and runs IETF BLS KeyGen
-    /// (`blst_keygen`), which loops until the scalar is non-zero.
     pub fn generate<R: CryptoRngCore>(rng: &mut R) -> Self {
         let (secret, public) = ops::keypair::<R, Variant>(rng);
         Self { secret, public }
@@ -41,17 +38,16 @@ impl ValidatorBlsKeypair {
     pub fn from_secret_bytes(bytes: &[u8; SECRET_BYTES]) -> Result<Self, Error> {
         use commonware_codec::DecodeExt;
         // `bytes` is caller-owned; `Private::decode` moves the scalar into the
-        // zeroizing `Secret<Scalar>` wrapper, so no extra Zeroizing temp needed.
+        // zeroizing `Secret<Scalar>` wrapper, so no extra zeroizing temp is needed.
         let secret = Private::decode(bytes.as_slice()).map_err(|_| Error::InvalidSecret)?;
         let public = ops::compute_public::<Variant>(&secret);
         Ok(Self { secret, public })
     }
 
-    /// Derive the per-epoch DKG-share at-rest seal key (E2): HKDF-SHA256 over the
+    /// Derive the per-epoch DKG-share at-rest seal key: HKDF-SHA256 over the
     /// validator BLS secret as IKM, salted by the chain namespace and
-    /// domain-separated by [`SHARE_AT_REST_INFO`]. The raw scalar never crosses
-    /// the crate boundary — HKDF runs here over the exposed secret and only the
-    /// derived 32-byte [`ShareSealKey`] is returned. Derived ONCE at launch.
+    /// domain-separated by [`SHARE_AT_REST_INFO`]. The raw scalar never crosses the
+    /// crate boundary; derived once at launch.
     pub fn derive_share_seal_key(&self, chain_id: u64) -> ShareSealKey {
         use commonware_codec::Encode as _;
         use zeroize::Zeroize as _;
@@ -78,12 +74,9 @@ impl ValidatorBlsKeypair {
         self.public.encode_fixed::<PUBKEY_BYTES>()
     }
 
-    /// Borrow the underlying private scalar for use with `ops::*` functions
-    /// from `commonware_cryptography`.
-    ///
-    /// Prefer the high-level [`crate::pop::sign_pop`] / signing helpers; this
-    /// accessor exists so downstream code can pass the
-    /// private key into [`crate::scheme::build_signer`] without duplicating it.
+    /// Borrow the underlying private scalar for use with `ops::*` functions from
+    /// `commonware_cryptography`; prefer the high-level signing helpers. It exists
+    /// so [`crate::scheme::build_signer`] can take the key without duplicating it.
     pub(crate) fn secret(&self) -> &Private {
         &self.secret
     }
@@ -104,8 +97,6 @@ impl ValidatorBlsKeypair {
         Self::from_backend(SecretBackend::Eip2335 { password }, path.as_ref())
     }
 
-    /// Read raw secret bytes via the at-rest `backend`, then validate the
-    /// 32-byte scalar shape at the typed [`Self::from_secret_bytes`] boundary.
     fn from_backend(backend: SecretBackend<'_>, path: &std::path::Path) -> Result<Self, Error> {
         use zeroize::Zeroize as _;
         let bytes = backend.open(path)?;
@@ -118,14 +109,11 @@ impl ValidatorBlsKeypair {
         result
     }
 
-    /// Plaintext fallback writer (symmetric counterpart of
-    /// [`Self::read_from_file`]): writes the 32-byte scalar as lowercase bare
-    /// hex (no `0x` prefix, no trailing newline). Writes an UNENCRYPTED private
-    /// key, so it is gated behind the off-by-default `plaintext-keys` feature
-    /// and cannot link into a binary that does not opt in (only the local
-    /// devnet bootstrap does). Prefer an encrypted EIP-2335 keystore otherwise.
-    /// Secret bytes never cross the crate boundary — a leaky downstream cannot
-    /// dump them via `{:?}` / `tracing`. On Unix, sets file mode 0600 at create.
+    /// Plaintext fallback writer, the counterpart of [`Self::read_from_file`]:
+    /// writes the 32-byte scalar as lowercase bare hex. It writes an unencrypted
+    /// private key, so it is gated behind the off-by-default `plaintext-keys`
+    /// feature and cannot link into a binary that does not opt in (only the local
+    /// devnet bootstrap does). On Unix, sets mode 0600 at create.
     #[cfg(feature = "plaintext-keys")]
     pub fn write_to_plaintext_file<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), Error> {
         use commonware_codec::Encode;
@@ -144,8 +132,8 @@ impl ValidatorBlsKeypair {
     }
 }
 
-// Custom Debug that does NOT print the secret. Without this the derive
-// would expose it through {:?}, which is an audit footgun.
+// Custom Debug that does not print the secret: the derive would expose it
+// through `{:?}`.
 impl core::fmt::Debug for ValidatorBlsKeypair {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("ValidatorBlsKeypair")
@@ -155,7 +143,7 @@ impl core::fmt::Debug for ValidatorBlsKeypair {
     }
 }
 
-// NOT Default — would yield a predictable secret. Force explicit construction.
+// Deliberately not `Default`: it would yield a predictable secret.
 
 #[cfg(test)]
 mod tests {
@@ -163,8 +151,8 @@ mod tests {
     use rand_08::rngs::StdRng;
     use rand_core::SeedableRng;
 
-    /// Write a key file at 0600 (a bare `std::fs::write` leaves it 0644, which the
-    /// read-side mode check — bug 13 — now correctly rejects before hex/length).
+    /// Write a key file at 0600 — a bare `std::fs::write` leaves it 0644, which the
+    /// read-side mode check rejects before hex or length.
     fn write_key_file(path: &std::path::Path, data: impl AsRef<[u8]>) {
         std::fs::write(path, data).unwrap();
         #[cfg(unix)]
@@ -210,13 +198,11 @@ mod tests {
         let hex_bare = hex::encode(secret_bytes);
         let dir = std::env::temp_dir();
 
-        // bare hex
         let path = dir.join(format!("bls_test_bare_{}.key", std::process::id()));
         write_key_file(&path, &hex_bare);
         let kp1 = ValidatorBlsKeypair::read_from_file(&path).unwrap();
         assert_eq!(kp1.public_bytes(), original.public_bytes());
 
-        // 0x-prefixed with trailing newline
         let path2 = dir.join(format!("bls_test_prefixed_{}.key", std::process::id()));
         write_key_file(&path2, format!("0x{hex_bare}\n"));
         let kp2 = ValidatorBlsKeypair::read_from_file(&path2).unwrap();
@@ -264,7 +250,6 @@ mod tests {
         let kp = ValidatorBlsKeypair::generate(&mut StdRng::seed_from_u64(9));
         let dbg = format!("{kp:?}");
         assert!(dbg.contains("<redacted>"));
-        // Sanity: the secret's hex representation must not appear anywhere.
         let secret_hex = kp.secret().expose(|s| {
             use commonware_codec::Encode;
             format!("{:x?}", s.encode())

@@ -1,105 +1,44 @@
 //! The agreement artifact: what the plane leaves behind, where it is kept, and
 //! how a node that never ran the ceremony gets it.
 //!
-//! # Why this exists at all
-//!
 //! No block carries the epoch key any more, so a node that never ran the
-//! ceremony — a cold-started member, a validator that sat outside
-//! `committee[E]`, the STF verifier — holds no dealer logs, cannot recompute
-//! `PK_E`, and this artifact is the only form the key still reaches it in. So it
-//! must be checkable by someone who has nothing but the staking contract:
-//! [`verify_artifact`] takes the artifact and `committee[epoch]` and needs no
-//! local ceremony state, no share, no journal and no block.
+//! ceremony — a cold-started member, a validator that sat outside `committee[E]`,
+//! the STF verifier — holds no dealer logs, cannot recompute `PK_E`, and this
+//! artifact is the only form the key still reaches it in. It must be checkable by
+//! someone who has nothing but the staking contract: [`verify_artifact`] takes the
+//! artifact and `committee[epoch]` and needs no local ceremony state, share,
+//! journal or block.
 //!
-//! # Who this seam does NOT reach — and who gets a second one instead
+//! Delivery has two seams. The pull seam here rides `BEACON_RESOLVER_CHANNEL` and
+//! reaches only nodes on the consensus plane; a `--cert-follow` follower has no
+//! peer set and no peer asks it, so it fetches the same artifact over its cert
+//! upstream, checked against the same `committee[minted_at]`.
 //!
-//! The check is that cheap, but the DELIVERY here rides
-//! `BEACON_RESOLVER_CHANNEL`, so THIS seam reaches exactly the nodes that are on
-//! the consensus plane. A `--cert-follow` follower is not one: it mints an
-//! ephemeral p2p identity, configures no bootstrappers, listens on an ephemeral
-//! loopback port and never tracks a peer set (`node/src/cert_follow/mod.rs`), so
-//! it has no peer to ask here and no peer asks it.
+//! [`ArtifactStore`] is per-epoch, in memory and on disk, and is what a peer is
+//! served from. It is also what closes the residual the agreement supervisor
+//! names: a node that restarts after its instance finalized loses the artifact
+//! entirely, because no live sender re-broadcasts a decided proposal. The durable
+//! half is written on the same edge the artifact is produced, so recovering it
+//! after a restart is a read, not a re-agreement.
 //!
-//! That is still true, and it is no longer the end of the story. Nothing this
-//! module lacks was ever what blocked a follower: [`verify_artifact`] needs only
-//! a staking read it makes on every cert. What was missing was a delivery route
-//! over the ONE relationship a follower has — its cert upstream — and that route
-//! now exists as `CertUpstream::get_epoch_artifact` over the `consensus`
-//! namespace's `getEpochArtifact` (FLU-1167). It is a SECOND seam, deliberately
-//! separate from this one, built in [`crate::beacon::plane::build_follower`]: same artifact,
-//! same [`verify_artifact_for_epoch`] check against `committee[minted_at]`, a
-//! different transport. So a follower's cert-inlet leaves vote-only admission
-//! when the epoch's artifact arrives, not when the process exits. See
-//! Both transports speak ONE acquisition ([`AcquireArtifact`]), and what a caller
-//! may spend on one is stated there rather than in a ladder of rungs — the tiered
-//! key store that ladder walked is gone (П-3).
-//!
-//! # The three pieces
-//!
-//! - **The artifact** is `(DkgProposal, Finalization)` — the certified payload
-//!   plus simplex's own finalization certificate, which is a quorum of
-//!   `committee[target_epoch]` BLS signatures over the payload digest under the
-//!   agreement namespace. Attributability of the signers comes from the multisig
-//!   bitmap; there is no attestation layer on top of it.
-//! - **The store** ([`ArtifactStore`]) is per-epoch, in memory and on disk, and
-//!   is what a peer is served from. It is also what closes the residual the
-//!   agreement supervisor names today: a node that restarts after its instance
-//!   finalized loses the artifact entirely, because no live sender re-broadcasts
-//!   a decided proposal (`dkg_agree_body_lost_total` counts it). The durable half
-//!   is written on the same edge the artifact is produced, so recovering it after
-//!   a restart is a read, not a re-agreement — and the `DkgActor` READS it
-//!   (`recover` on the tick an epoch is decided, `reconcile_with_store` on every
-//!   tick after); its channel intake is the fast path, never the only one.
-//! - **The pull seam** ([`ArtifactBridge`] serving, [`ArtifactPull`] fetching)
-//!   rides the DKG-log resolver's key space
-//!   ([`BeaconFetchKey`](crate::beacon::log_resolver::BeaconFetchKey)), i.e. the
-//!   `BEACON_RESOLVER_CHANNEL` engine at 16/s — never a 128/s consensus quota,
-//!   because an inbound over-quota sleeps the WHOLE connection to that peer and
-//!   stalls its other channels.
-//!
-//! # A pulled artifact enters the write-back, it does not just land in the store
-//!
-//! Filing an artifact answers every `PK_epoch` read ([`KeyIndex`]) and lets this
-//! node serve peers,
-//! and neither of those reaches
-//! [`DkgActor::on_artifact`](crate::beacon::actor::DkgActor::on_artifact) — that is
-//! fed by the agreement write-back alone. So on a FIRST insert the seam hands the
-//! artifact to the same write-back channel a live instance enters on, and the
-//! actor's existing adoption, first-wins and retention-hold rules run over it
-//! unchanged. Without that hop the member whose own instance died
-//! mid-agreement — its peers decided without it and their launchers hold the target
-//! in `started`, so no re-agreement is coming — can verify the epoch key it pulled
-//! and still be permanently shareless for the epoch it was elected to sign in.
-//!
-//! # The seam carries exactly two states, and the reason there is no third
-//!
-//! [`ArtifactResponse`] is `Have` or `NotYet{epoch}`. Both are honest
-//! DELIVERIES, never a dropped responder — which is the whole point:
-//! `Consumer::deliver` returning `false` inserts the peer into commonware's
-//! resolver `excluded` set (`resolver/src/p2p/fetcher.rs:94`, `:189`, `:242`,
-//! `:516`), and that set has **no removal path anywhere**, so a peer blocked once
-//! is blocked for the life of the process. Here `false` is reserved for proven
-//! misbehaviour — bytes that do not decode, or a certificate that fails against
-//! the committee — and every other answer, including "I do not have it", is a
-//! delivered value.
-//!
-//! There is deliberately **no `Never{epoch}`**. Nothing in this design can
-//! produce it honestly: the store has no eviction policy, the plane never aborts
-//! and the instance is never restarted, so for any epoch that is still a target
-//! "no peer will ever hold it" is not a true answer — and a wrong "never" tells a
-//! peer to stop asking for a key it genuinely needs. The state can only return
-//! together with a retention policy, and not before.
-//!
-//! # The caller-facing shape is the RPC seam's, not the resolver's
+//! [`ArtifactResponse`] is `Have` or `NotYet{epoch}`; both are delivered, never a
+//! dropped responder. Commonware's resolver inserts a peer that answers `false`
+//! into an `excluded` set with no removal path, so `false` is reserved here for
+//! proven misbehaviour and every other answer, including "I do not have it", is a
+//! delivered value. There is deliberately no `Never`: a wrong "never" tells a peer
+//! to stop asking for a key it genuinely needs, and the state can only return
+//! together with a retention policy.
 //!
 //! [`ArtifactPull::pull`] answers `Some(Have)`, `Some(NotYet)` or `None`, where
-//! `None` means the walk was exhausted — nobody answered inside the window. That
-//! is the cert-follow RPC seam's semantics (`node/src/cert_follow/upstream.rs:372`,
-//! `:388-390`, `:415-464`: a bounded one-pass walk whose exhaustion reaches the
-//! caller). It is explicitly NOT `Consumer::failed`, which fires solely on
-//! Cancel/Retain/Clear and never on an error or a timeout
-//! (`resolver/src/p2p/engine.rs:261`, `:278`, `:299`, `:444-457`), leaving the
-//! caller in unbounded silent retry with no signal above the transport.
+//! `None` means the walk was exhausted. That is the cert-follow RPC seam's
+//! semantics; it is not `Consumer::failed`, which fires only on
+//! Cancel/Retain/Clear and never on an error or a timeout.
+//!
+//! A pulled artifact enters the write-back rather than only the store: filing it
+//! answers every `PK_epoch` read and lets this node serve peers, but neither
+//! reaches `DkgActor::on_artifact`, which is fed by the agreement write-back
+//! alone. Without that hop a member whose own instance died mid-agreement can
+//! verify the key it pulled and still stay shareless for the epoch.
 
 use bytes::{Buf, BufMut, Bytes};
 use commonware_codec::{
@@ -117,8 +56,7 @@ use fluentbase_bls::{
     EpochCommittee, PeerPubkey, Scheme as BlsScheme,
 };
 use fluentbase_p2p::constants::MAX_COMMITTEE_SIZE;
-// Only [`verify_artifact_from_snapshot`] speaks the snapshot type, and that is
-// test-only.
+// Spoken only by the test-only [`verify_artifact_from_snapshot`].
 #[cfg(test)]
 use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use rand_core::{CryptoRngCore, OsRng};
@@ -153,54 +91,43 @@ type Cert = Finalization<BlsScheme, Digest>;
 
 /// Decode cap for one served artifact.
 ///
-/// Worst case at `n = 51`: a 51-entry log set (~1.7 KiB), a 64 KiB outcome cap
-/// ([`MAX_BEACON_OUTCOME_SIZE`](crate::beacon::outcome::MAX_BEACON_OUTCOME_SIZE)),
-/// 51 confirmations each carrying a 51-entry recorded set and a 64-byte signature
-/// (~88 KiB), and a certificate well under 1 KiB — about 154 KiB. The cap is
-/// rounded up from that, and it is a NETWORK-WIDE constant rather than a bound
-/// derived from the live committee, so every node accepts and refuses the same
-/// bytes.
+/// Worst case at `n = 51` is about 154 KiB: a 51-entry log set (~1.7 KiB), a
+/// 64 KiB outcome, 51 confirmations each carrying a 51-entry recorded set and a
+/// 64-byte signature (~88 KiB), and a certificate under 1 KiB. The cap is rounded
+/// up from that, and it is a network-wide constant rather than a bound derived
+/// from the live committee, so every node accepts and refuses the same bytes.
 ///
-/// **It may only ever GROW.** The same value is the durable journal's decode
-/// bound ([`ArtifactJournal::init`]), and that decode is infallible-by-`expect`:
-/// a record already on disk that no longer fits panics the node at STARTUP —
-/// a node that was healthy when it shut down, with a codec message that names
-/// neither this constant nor the epoch whose artifact it refused. Raising it
-/// only widens what a peer may send; lowering it retroactively invalidates
-/// history nothing can re-fetch until the node is up.
+/// It may only ever grow: the same value is the durable journal's decode bound
+/// ([`ArtifactJournal::init`]), so lowering it invalidates records already on
+/// disk and panics the node at startup.
 pub(crate) const MAX_ARTIFACT_SIZE: usize = 256 * 1024;
 
 /// Shortest gap between two pulls for one target epoch.
 ///
 /// The per-peer bound this seam owes the network. The resolver picks the peer and
-/// the channel quota (16/s) bounds the far side, but nothing upstream stops a
-/// caller from re-issuing a fetch in a tight loop — and an inbound over-quota
-/// SLEEPS THE WHOLE CONNECTION to that peer, stalling its consensus channels
-/// along with this one. `NotYet` is the normal answer for most of an epoch, so
-/// this is the common path, not the exceptional one.
+/// the channel quota bounds the far side, but nothing upstream stops a caller from
+/// re-issuing a fetch in a tight loop, and an inbound over-quota sleeps the whole
+/// connection to that peer. `NotYet` is the normal answer for most of an epoch.
 pub(crate) const PULL_MIN_INTERVAL: Duration = Duration::from_secs(5);
 
 /// How long one pull waits for an answer before reporting the walk exhausted.
 ///
-/// Bounds the caller the way the RPC seam's one-pass walk does: an isolated node
-/// gets `None` and can act on it, instead of parking on a fetch the resolver will
-/// silently retry forever.
+/// Bounds the caller: an isolated node gets `None` and can act on it instead of
+/// parking on a fetch the resolver will silently retry forever.
 pub(crate) const PULL_TIMEOUT: Duration = Duration::from_secs(8);
 
-/// How `committee[epoch]` is read — the ONLY input artifact verification needs
+/// How `committee[epoch]` is read — the only input artifact verification needs
 /// beyond the artifact itself.
 ///
 /// A closure rather than a trait because the production implementation is a
-/// staking-contract read (`epoch_committee_snapshot` at a finalized hash) that
-/// lives above this crate, and because that is already how the epoch-boundary
-/// orchestrator takes its own chain reads. `None` means the committee cannot be
-/// read yet (the executor has not reached the block that committed it) — a
-/// transient state, never a verdict about the artifact.
+/// staking-contract read that lives above this crate. `None` means the committee
+/// cannot be read yet (the executor has not reached the block that committed it) —
+/// a transient state, never a verdict about the artifact.
 pub type CommitteeSource = Arc<dyn Fn(u64) -> Option<EpochCommittee> + Send + Sync>;
 
 /// Why an artifact does not verify against `committee[epoch]`.
 ///
-/// Every arm except [`Self::CommitteeUnreadable`] is a property of the ARTIFACT,
+/// Every arm except [`Self::CommitteeUnreadable`] is a property of the artifact,
 /// which is what makes them safe to punish a peer for; that one arm is a property
 /// of this node and must never reach a peer as a verdict.
 #[derive(Debug, thiserror::Error)]
@@ -219,12 +146,10 @@ pub enum ArtifactError {
     /// The multisig quorum does not verify under `committee[epoch]`.
     #[error("the finalization certificate does not verify against committee[{0}]")]
     Certificate(u64),
-    /// The committee could not be read at all. NOT a fault of the artifact.
+    /// The committee could not be read at all. Not a fault of the artifact.
     #[error("committee[{0}] is not readable yet")]
     CommitteeUnreadable(u64),
-    /// The snapshot does not form a committee (duplicate peer or BLS key). Only
-    /// [`verify_artifact_from_snapshot`] reaches it, and that entry point is
-    /// itself test-only.
+    /// The snapshot does not form a committee (duplicate peer or BLS key).
     #[cfg(test)]
     #[error("committee[{epoch}] snapshot is not a valid participant set: {source}")]
     Committee {
@@ -240,19 +165,11 @@ pub enum ArtifactError {
 
 /// Verify an artifact against `committee[epoch]` and nothing else.
 ///
-/// This is the standalone check the whole design rests on. Its inputs are the
-/// artifact, the committee read from the staking contract, and the chain id —
-/// no ceremony state, no share, no local scheme registry, no block.
-///
-/// Three things are checked and all three are load-bearing:
-/// 1. the committee, the proposal and the certificate name ONE epoch, so a
-///    genuine artifact for `E` cannot be replayed as one for `E'`;
-/// 2. the certificate names THIS proposal's digest, so a valid certificate
-///    cannot be re-paired with a substituted body;
-/// 3. the certificate carries a `committee[epoch]` quorum under the AGREEMENT
-///    namespace ([`dkg_namespace`]) — not the chain namespace, which is a
-///    distinct and prefix-free tag precisely so the two planes' signatures can
-///    never be read as each other's.
+/// The inputs are the artifact, the committee read from the staking contract, and
+/// the chain id — no ceremony state, no share, no local scheme registry, no block.
+/// The quorum is checked under the agreement namespace ([`dkg_namespace`]), not the
+/// chain namespace, which is a distinct and prefix-free tag so the two planes'
+/// signatures can never be read as each other's.
 pub(crate) fn verify_artifact<R: CryptoRngCore>(
     rng: &mut R,
     chain_id: u64,
@@ -272,9 +189,9 @@ pub(crate) fn verify_artifact<R: CryptoRngCore>(
         return Err(ArtifactError::PayloadMismatch);
     }
     let namespace = dkg_namespace(&fluent_namespace(chain_id));
-    // `oracle: None`: the agreement instance carries no beacon half at all (it
-    // exists to AGREE the key), so its certificate is a plain multisig quorum and
-    // `verify_certificate` returns on the vote arm.
+    // `oracle: None`: the agreement instance carries no beacon half at all, so its
+    // certificate is a plain multisig quorum and `verify_certificate` returns on
+    // the vote arm.
     let verifier = build_verifier(&namespace, committee.bimap.clone(), committee.epoch, None);
     if !certificate.verify(rng, &verifier, &Sequential) {
         return Err(ArtifactError::Certificate(committee.epoch));
@@ -285,8 +202,7 @@ pub(crate) fn verify_artifact<R: CryptoRngCore>(
 /// [`verify_artifact`] straight off a staking read.
 ///
 /// The snapshot is exactly what `RethStakingStateReader::epoch_committee_snapshot`
-/// returns, so this is the whole path from "I can call the contract" to "this key
-/// is the one `committee[E]` agreed".
+/// returns, so this is the whole path from a staking read to the verified key.
 #[cfg(test)]
 pub(crate) fn verify_artifact_from_snapshot<R: CryptoRngCore>(
     rng: &mut R,
@@ -304,10 +220,10 @@ pub(crate) fn verify_artifact_from_snapshot<R: CryptoRngCore>(
 
 /// [`verify_artifact`] against a committee this node may not be able to read yet.
 ///
-/// The unreadable case gets its OWN error arm rather than folding into a generic
-/// failure, because the two demand opposite responses: an artifact that cannot be
-/// checked is dropped while the peer keeps its standing, whereas one that fails
-/// the check is a proven forgery and costs the peer.
+/// The unreadable case gets its own error arm because the two demand opposite
+/// responses: an artifact that cannot be checked is dropped while the peer keeps
+/// its standing, whereas one that fails the check is a proven forgery and costs
+/// the peer.
 pub(crate) fn verify_artifact_for_epoch<R: CryptoRngCore>(
     rng: &mut R,
     chain_id: u64,
@@ -320,13 +236,12 @@ pub(crate) fn verify_artifact_for_epoch<R: CryptoRngCore>(
 }
 
 /// Canonical bytes for one artifact — the durable record and the `Have` payload.
-/// The VALUE identity of a certified payload: `keccak256(target_epoch ‖ logs ‖
-/// group_key)` — the pinned set and the polynomial, which is everything the epoch
-/// signs under. `DkgProposal::digest` (what the instance VOTES on) also covers
-/// `confirms`, the entry-bar evidence a leader attached; two certificates over
-/// one pinned set and one key with different confirmation metadata certify the
-/// SAME value, and are one artifact here, not two. This is the identity
-/// `Conflict` is judged by (the actor) and the bridge's divergence is noted by.
+///
+/// The value identity of a certified payload: `keccak256(target_epoch ‖ logs ‖
+/// group_key)`. [`DkgProposal::digest`] also covers `confirms`, so two certificates
+/// over one pinned set and one key with different confirmation metadata certify the
+/// same value and are one artifact here. This is the identity `Conflict` is judged
+/// by.
 pub(crate) fn value_digest(proposal: &DkgProposal) -> alloy_primitives::B256 {
     let mut buf = Vec::with_capacity(8 + 4 + proposal.logs.len() * 33);
     buf.extend_from_slice(&proposal.target_epoch.to_be_bytes());
@@ -348,9 +263,9 @@ pub fn decode_artifact(bytes: &[u8]) -> Result<AgreedArtifact, ArtifactError> {
     if bytes.len() > MAX_ARTIFACT_SIZE {
         return Err(ArtifactError::TooLarge(bytes.len()));
     }
-    // The signer bitmap is decoded with a BOUNDED cap: the bytes come from an
-    // untrusted peer and the unbounded decoder allocates eagerly from a tiny
-    // length prefix (the same guard `plane_upstream::decode_frontier` applies).
+    // The signer bitmap is decoded with a bounded cap: the bytes come from an
+    // untrusted peer and the unbounded decoder allocates eagerly from a tiny length
+    // prefix.
     let cap = MAX_COMMITTEE_SIZE as usize;
     Ok(<(crate::beacon::dkg_agree::DkgProposal, Cert)>::decode_cfg(
         bytes,
@@ -360,15 +275,14 @@ pub fn decode_artifact(bytes: &[u8]) -> Result<AgreedArtifact, ArtifactError> {
 
 /// What a peer answers when asked for `committee[epoch]`'s artifact.
 ///
-/// Two states, and both are DELIVERED. See the module doc for why a producer that
-/// lacks the artifact answers instead of dropping the responder, and why there is
-/// no third state.
+/// Both states are delivered; a peer that lacks the artifact answers instead of
+/// dropping the responder.
 #[derive(Clone, Debug)]
 pub(crate) enum ArtifactResponse {
     /// The peer holds the artifact for the requested epoch.
     Have(Box<AgreedArtifact>),
-    /// The peer does not hold it yet. The normal answer for most of epoch `E`,
-    /// and never a statement about whether it will ever exist.
+    /// The peer does not hold it yet — never a statement about whether it will
+    /// ever exist.
     NotYet { epoch: u64 },
 }
 
@@ -421,68 +335,44 @@ impl Read for ArtifactResponse {
     }
 }
 
-/// The per-epoch artifact store: a RAM map every reader sees synchronously, and
-/// an optional durable mirror behind it.
+/// The per-epoch artifact store: a RAM map every reader sees synchronously, and an
+/// optional durable mirror behind it.
 ///
-/// # Why the durable write may lag the RAM write
+/// The RAM write is what in-process readers (the producer serving a peer, the
+/// write-back adopting the pinned set) see and it must stay synchronous, while
+/// durability is only ever read by a later process after a restart, so it is free
+/// to lag. Records go out over a non-blocking unbounded channel and every disk
+/// touch happens on the writer.
 ///
-/// The same argument [`crate::beacon::seed_journal`] makes, and the one the deleted
-/// key journal made: the RAM write is what in-process readers (the producer serving
-/// a peer, the write-back adopting the pinned set) see and must stay synchronous,
-/// while durability is only ever read by a LATER process after a restart, so it is
-/// free to lag. Records go out over
-/// a non-blocking unbounded channel and every disk touch happens on the writer.
-///
-/// # Retention: none
-///
-/// Deliberate, and it is load-bearing rather than laziness. An artifact is the
-/// only source of `PK_epoch` for a node that never ran the ceremony, and on a
-/// committee that has been stable for a long time the entry worth having is the
-/// OLDEST one — so any window measured in epochs drops the valuable record first.
-/// It is also what makes the seam's two states honest: with no eviction, "not
-/// yet" is never a lie, and there is nothing that could produce a truthful
-/// "never". The arithmetic that makes "just keep them" the right answer: one
-/// record per COMMITTEE CHANGE, on the order of a few KiB, so a chain that
-/// changed committee every epoch at day-long epochs writes single-digit MB a year.
+/// Retention: none, deliberately. An artifact is the only source of `PK_epoch` for
+/// a node that never ran the ceremony, and on a committee that has been stable for
+/// a long time the entry worth having is the oldest, so any window measured in
+/// epochs drops the valuable record first. One record per committee change is a
+/// few KiB, so keeping them all stays small.
 #[derive(Clone, Default)]
 pub struct ArtifactStore {
     ram: Arc<RwLock<BTreeMap<u64, Arc<AgreedArtifact>>>>,
     durable: Option<tokio::sync::mpsc::UnboundedSender<(u64, Vec<u8>)>>,
-    /// The VALUE digest of a SECOND quorum-certified artifact seen for an epoch
+    /// The value digest of a second quorum-certified artifact seen for an epoch
     /// this store already holds one for — the `Conflict` witness, kept beside the
-    /// held value so the fact survives a lost hand-off to the `DkgActor` (which
-    /// reads this store on every height tick, `DkgActor::reconcile_with_store`).
-    /// First-wins like `ram`: a third value changes nothing. THE STORE OWNS THE
-    /// WITNESS, in RAM and on disk: [`Self::note_divergent`] writes the
-    /// `beacon-conflict-e<E>.bin` marker (`share_state::persist_conflict`) under
-    /// `conflict_dir` the instant it notes the value, and a store opened over that
-    /// directory reloads every marker there ([`Self::with_conflict_dir`]) — so no
-    /// restart between the note and the actor's next tick loses the verdict.
+    /// held value so the fact survives a lost hand-off to the `DkgActor`. First-wins
+    /// like `ram`. [`Self::note_divergent`] writes the
+    /// `beacon-conflict-e<E>.bin` marker under `conflict_dir` the instant it notes
+    /// the value, and a store opened over that directory reloads every marker there.
     divergent: Arc<RwLock<BTreeMap<u64, alloy_primitives::B256>>>,
-    /// Where the conflict markers live: the beacon share directory the
-    /// `DkgActor` reads them back from (`recover`). `None` (RAM-only, the
-    /// in-process/test default) ⇒ the witness lives only in this process.
+    /// Where the conflict markers live. `None` (RAM-only, the in-process/test
+    /// default) keeps the witness in this process only.
     conflict_dir: Option<PathBuf>,
     /// One notifier per [`Self::subscribe`] caller, fired by every accepted
     /// [`Self::insert`].
     ///
-    /// THE EDGE THAT USED TO BE `BeaconKeys::subscribe`, moved here with the fact
-    /// (П-3): "a key this node could not resolve became resolvable" now means
-    /// "an artifact landed", because the artifact is the only thing a key comes
-    /// from. Its ONE consumer on the validator plane is the `KeyAvailable` event
-    /// bridge, which settles the held σ before it publishes; the follower's fetch
-    /// task is the other class's.
-    ///
-    /// PER CONSUMER, never a shared handle, and the reason is the one
-    /// `beacon::keys`' module header gave for the store it replaces: `notify_one`
-    /// wakes exactly ONE waiter, so two consumers sharing a handle silently
-    /// swallow each other's wake-ups — and each loss here is a silent degrade (an
-    /// epoch left vote-only, or a σ that is never settled).
+    /// Per consumer, never a shared handle: `notify_one` wakes exactly one waiter,
+    /// so two consumers sharing a handle silently swallow each other's wake-ups.
     listeners: Arc<Mutex<Vec<Arc<tokio::sync::Notify>>>>,
 }
 
 impl ArtifactStore {
-    /// A RAM-only store — what tests and any in-process run get.
+    /// A RAM-only store: tests and any in-process run.
     pub fn new() -> Self {
         Self::default()
     }
@@ -504,12 +394,10 @@ impl ArtifactStore {
         }
     }
 
-    /// Make the divergence witness DURABLE under `dir` — the beacon share
-    /// directory, where `DkgActor::recover` reads `Conflict(E)` back from — and
-    /// reload every marker already there, so a store that restarts between the
-    /// note and the actor's verdict still answers `divergent` for the epoch. A
-    /// malformed marker reloads as a witness with no known digest (fail-closed:
-    /// only a verdict ever writes one).
+    /// Make the divergence witness durable under `dir` and reload every marker
+    /// already there, so a store that restarts between the note and the actor's
+    /// verdict still answers `divergent` for the epoch. A malformed marker reloads
+    /// as a witness with no known digest (fail-closed: only a verdict writes one).
     pub fn with_conflict_dir(self, dir: PathBuf) -> Self {
         {
             let mut divergent = self
@@ -530,8 +418,7 @@ impl ArtifactStore {
         }
     }
 
-    /// A notifier of this consumer's OWN, fired by every accepted [`Self::insert`].
-    /// See the field's doc for why it is never shared.
+    /// A notifier of this consumer's own, fired by every accepted [`Self::insert`].
     pub fn subscribe(&self) -> Arc<tokio::sync::Notify> {
         let handle = Arc::new(tokio::sync::Notify::new());
         if let Ok(mut listeners) = self.listeners.lock() {
@@ -542,18 +429,13 @@ impl ArtifactStore {
 
     /// Record `artifact` as the agreement's output for `epoch`.
     ///
-    /// `Err(artifact)` — the value handed BACK (boxed: the refusal is the rare
-    /// arm, and the `Ok` must stay small) — when an artifact for that epoch is
-    /// already held; the store keeps the one it has. FIRST-WINS is correct
-    /// rather than convenient: the agreement instance certifies exactly one value
-    /// per target epoch (a certified value bars every other one at `propose` and
-    /// `verify`), so a second artifact for one epoch is either the identical
-    /// bytes or evidence of something this store cannot adjudicate — and
+    /// `Err(artifact)` returns the value handed back (boxed, so the `Ok` stays
+    /// small) when an artifact for that epoch is already held; the store keeps the
+    /// one it has. First-wins is correct rather than convenient: the agreement
+    /// instance certifies exactly one value per target epoch, so a second artifact
+    /// is either identical or evidence this store cannot adjudicate, and
     /// overwriting would let a fetched artifact displace the one this node itself
-    /// agreed. The loser comes back so the caller can NOTE it
-    /// ([`Self::note_divergent`]): the decision is taken under the one write lock,
-    /// so a producer that lost the race to another still holds the value the
-    /// verdict needs (there is no check-then-insert window to lose it in).
+    /// agreed. The loser comes back so the caller can note it as divergent.
     pub fn insert(&self, epoch: u64, artifact: AgreedArtifact) -> Result<(), Box<AgreedArtifact>> {
         let encoded = {
             let mut ram = self.lock_mut();
@@ -565,16 +447,12 @@ impl ArtifactStore {
             encoded
         };
         if let Some(durable) = &self.durable {
-            // Unbounded and non-blocking: a closed writer means the durable half
-            // is gone for the rest of the process, which costs a re-fetch after
+            // Unbounded and non-blocking: a closed writer costs a re-fetch after
             // the next restart and nothing now.
             if durable.send((epoch, encoded)).is_err() {
-                // Counted as well as logged: "accepted in RAM, never written" is
-                // precisely the state §5.4 allows and an operator must be able to
-                // see, and a `warn!` alone is not a signal anything scrapes. Same
-                // arm the writer's own `sync` failure lands on
-                // (`dpos_artifact_store_sync_failed_total`) — the value stands, the
-                // durability does not.
+                // Counted as well as logged: "accepted in RAM, never written" is a
+                // state an operator must be able to see, and a `warn!` alone is not
+                // a signal anything scrapes.
                 metrics::counter!("dpos_artifact_store_handoff_failed_total").increment(1);
                 warn!(
                     epoch,
@@ -583,10 +461,8 @@ impl ArtifactStore {
                 );
             }
         }
-        // Strictly AFTER the durable hand-off, and unconditionally for every
-        // accepted insert: what a waiter does on the wake-up is re-read, which is
-        // idempotent, so a conditional fire would have to reason about which
-        // reader's answer this particular artifact can change.
+        // Unconditional and strictly after the durable hand-off: a waiter re-reads
+        // on wake-up, so firing regardless is idempotent.
         if let Ok(listeners) = self.listeners.lock() {
             for handle in listeners.iter() {
                 handle.notify_one();
@@ -600,17 +476,15 @@ impl ArtifactStore {
         self.lock().get(&epoch).cloned()
     }
 
-    /// Note a quorum-certified `artifact` for `epoch` whose VALUE differs from the
-    /// held one ([`value_digest`]). Returns whether it is the first such value —
+    /// Note a quorum-certified `artifact` for `epoch` whose value differs from the
+    /// held one ([`value_digest`]). Returns whether it is the first such value, so
     /// the caller reports the conflict once. A note for an epoch nothing is held
-    /// for, or for the held value itself, is refused: the witness is a PAIR.
+    /// for, or for the held value itself, is refused: the witness is a pair.
     ///
-    /// The first note is made DURABLE here and now (`share_state::persist_conflict`,
-    /// fsync, under the witness lock) when the store has a `conflict_dir`: the
-    /// `DkgActor` reads the marker first on a restart, so the verdict survives a
-    /// death before its next tick. A marker that cannot be written is said
-    /// (ERROR) and counted; the RAM witness stands regardless, and the actor
-    /// re-attempts the marker as it enters the terminal (`stop_signing`).
+    /// The first note is made durable here and now when the store has a
+    /// `conflict_dir`, so the verdict survives a death before the actor's next tick.
+    /// A marker that cannot be written is logged and counted; the RAM witness
+    /// stands.
     pub(crate) fn note_divergent(&self, epoch: u64, artifact: &AgreedArtifact) -> bool {
         let Some(held) = self.get(epoch) else {
             return false;
@@ -642,10 +516,8 @@ impl ArtifactStore {
         true
     }
 
-    /// What this store knows about `epoch`: the held artifact, and the value
-    /// digest of the divergent second one if it was ever noted. THE read the
-    /// `DkgActor` makes of this store (`AgreedOutcomeAt`): the store owns the fact
-    /// "the epoch's artifact", the actor owns what to do about it.
+    /// The held artifact for `epoch`, and the value digest of the divergent second
+    /// one if it was ever noted.
     pub fn view(
         &self,
         epoch: u64,
@@ -665,17 +537,17 @@ impl ArtifactStore {
         self.lock().contains_key(&epoch)
     }
 
-    /// Every epoch this store can serve, ascending. TEST SUPPORT: production reads
-    /// the store by epoch (`view`, `get`, `has`), never as a list.
+    /// Every epoch this store can serve, ascending. Test support: production reads
+    /// the store by epoch.
     #[cfg(test)]
     pub fn epochs(&self) -> Vec<u64> {
         self.lock().keys().copied().collect()
     }
 
     fn lock(&self) -> std::sync::RwLockReadGuard<'_, BTreeMap<u64, Arc<AgreedArtifact>>> {
-        // A poisoned lock means a reader panicked mid-read; the map itself is a
-        // plain BTreeMap and cannot be left half-written, and taking the node down
-        // over it would forfeit the very key this store exists to serve.
+        // A poisoned lock means a reader panicked mid-read; the map is a plain
+        // BTreeMap and cannot be left half-written, and taking the node down over it
+        // would forfeit the very key this store exists to serve.
         self.ram
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -688,80 +560,45 @@ impl ArtifactStore {
     }
 }
 
-/// Read the FROZEN on-chain `dkgQual[epoch]` bit: did the committee CHANGE at
+/// Read the frozen on-chain `dkgQual[epoch]` bit: did the committee change at
 /// `epoch`, i.e. did its DKG re-mint the key. `None` = could not read yet, which
 /// the caller must treat as undecided and never as "no re-mint".
-///
-/// The `committed` leg the raw staking read carries is NOT here, and that is Д-7
-/// resolved rather than dropped: the module answers a record only for an epoch
-/// whose committee it actually read, so "is it committed" is answered by having a
-/// record at all (`committee::CommitteeReadsFacade::dkg_qual`, whose second leg is
-/// unconditionally `true`). The `!(bit || committed) ⇒ None` guard this used to
-/// carry had exactly one live meaning left — `false` — so keeping it would be a
-/// second name for the `None` above.
 pub(crate) type ChangedAt = Arc<dyn Fn(u64) -> Option<bool> + Send + Sync>;
 
-/// `epoch → the epoch that MINTED the key in force at it`, memoised on disk.
-///
-/// # The rule
+/// `epoch → the epoch that minted the key in force at it`, memoised on disk.
 ///
 /// `minted_at(E) = last e in (BOOTSTRAP, E] with changed[e], else BOOTSTRAP`. The
-/// bits are set deterministically by the contract at `commitEpochCommittee`
-/// (`changed[e] = committee[e] != committee[e−1]`) and never mutated, so a
-/// resolved answer is a function of frozen chain facts and cannot change later.
-/// The deterministic bootstrap epoch mints unconditionally.
+/// bits are set deterministically by the contract at `commitEpochCommittee` and
+/// never mutated, so a resolved answer is a function of frozen chain facts and
+/// cannot change later.
 ///
-/// # Why it is DURABLE, which is the part the project did not say
+/// The memo is durable because the walk reads the chain, and the committee module
+/// answers a bit only inside
+/// `[epoch(anchor) − SCHEME_RETENTION_EPOCHS, epoch(anchor) + lookahead]`, folding
+/// everything below that window into `None`: a restarted node with an empty memo
+/// would hold a durable artifact it cannot address. Two gaps remain: a fresh node
+/// whose mint is older than the window, and an epoch whose memo entry lies below an
+/// unreadable bit — the walk answers `None` at the first undecided bit, so the
+/// answer on disk is unreachable until the bits above it become readable.
 ///
-/// The project keeps this memo ("правила memo сохраняются") and deletes the key
-/// journal. Those two are only compatible if the memo survives a restart, and the
-/// key journal's own doc says why: the walk reads the chain, and "the `dkgQual`
-/// read is exactly what is NOT answerable while a restarted node's EL is still
-/// catching up" — the gap that store existed to close. Worse than "slow": the
-/// committee module answers a bit only inside
-/// `[epoch(anchor) − SCHEME_RETENTION_EPOCHS, epoch(anchor) + lookahead]`
-/// (`committee/mod.rs`), and folds everything below that window into the same
-/// `None`, so a walk that must reach a mint older than the window never terminates
-/// in an answer at all. A restarted node with an empty memo would therefore hold a
-/// durable artifact it cannot ADDRESS.
-///
-/// Persisting the memo closes that for every epoch this node ever resolved AND can
-/// still REACH, and the cost is a `(u64, u64)` per epoch against the whole key
-/// journal. Two epochs it does not close, both stated rather than implied:
-///
-/// - a FRESH node (empty memo) whose mint is older than the window — see this
-///   module's `open_mint_memo` doc;
-/// - an epoch whose memo entry lies BELOW an unreadable bit: the walk answers
-///   `None` at the first undecided bit (it must — recording a guess is
-///   unrecoverable), so a node restarting more than `SCHEME_RETENTION_EPOCHS`
-///   epochs behind cannot read PAST the gap to the entry underneath it. The answer
-///   is on disk and unreachable until the bits above it become readable. Low
-///   reachability rather than closed: the restarted node's committee anchor is
-///   equally old, and `cold_start_jump` bounds the jump to two epochs.
-///
-/// # Two rules carried over verbatim, because breaking either is unrecoverable
-///
-/// - **`None` is never memoised.** An undecided bit means "retry", and recording it
-///   would pin the bootstrap answer onto an epoch the chain has not committed yet
-///   — a wrong mint is a wrong key for the epoch's whole life.
-/// - **Write-once.** A resolved answer is frozen chain fact; a second, different
-///   answer for one epoch cannot be honest, so the first stands and the
-///   disagreement is loud.
+/// Two rules make this safe, and breaking either is unrecoverable: `None` is never
+/// memoised (it would pin the bootstrap answer onto an epoch the chain has not
+/// committed yet), and a resolved answer is write-once (a second, differing answer
+/// for one epoch cannot be honest).
 #[derive(Clone)]
 pub(crate) struct MintIndex {
     changed: ChangedAt,
     /// `epoch → minted_at`. Shared by clone: every reader of the same plane shares
-    /// one, which is what makes the walk cost one step instead of `E − BOOTSTRAP`
-    /// per certificate.
+    /// one, which makes the walk cost one step instead of `E − BOOTSTRAP` per
+    /// certificate.
     memo: Arc<Mutex<BTreeMap<u64, u64>>>,
-    /// Decided bits, so the walk pays one chain read per epoch per PROCESS rather
-    /// than per call. Not persisted: it is derivable and the memo above is what has
-    /// to survive.
+    /// Decided bits, so the walk pays one chain read per epoch per process rather
+    /// than per call. Not persisted: it is derivable, and the memo above is what
+    /// has to survive.
     bits: Arc<Mutex<BTreeMap<u64, bool>>>,
     /// Durable sink for resolved answers. `None` ⇒ RAM-only (tests, and any config
-    /// without a partition). Non-blocking by construction, like every other durable
-    /// half in this module: readers see the RAM map, and durability is only ever
-    /// read by a LATER process.
+    /// without a partition). Non-blocking: readers see the RAM map, and durability
+    /// is only ever read by a later process.
     persist: Option<tokio::sync::mpsc::UnboundedSender<(u64, u64)>>,
 }
 
@@ -777,16 +614,7 @@ impl MintIndex {
     }
 
     /// The epoch that minted the key in force at `epoch`, or `None` when the chain
-    /// cannot answer yet.
-    ///
-    /// FLAT `Option`, unlike the two-layer `Option<Option<u64>>` this replaces. The
-    /// inner layer meant "`epoch` predates the beacon entirely", and it had one
-    /// consumer beyond its own answer: `signer_scheme`'s `Signs` arm was safe only
-    /// because that `Some(None)` made the material resolve to `None` below the
-    /// bootstrap epoch. That arm STATES the gate itself now
-    /// (`mandatory_at(epoch).then(|| material(..))`), so the layer has no second
-    /// reader and collapsing it removes a distinction every caller was flattening
-    /// anyway — "not now" and "never" both mean "no key here".
+    /// cannot answer yet or `epoch` predates the beacon.
     pub(crate) fn minted_at(&self, epoch: u64) -> Option<u64> {
         if epoch < super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH {
             return None;
@@ -796,7 +624,7 @@ impl MintIndex {
         }
         let mut answer = None;
         for e in (super::actor::DETERMINISTIC_BOOTSTRAP_EPOCH + 1..=epoch).rev() {
-            // A memoised LOWER epoch answers this one too, by monotonicity: nothing
+            // A memoised lower epoch answers this one too, by monotonicity: nothing
             // between it and `epoch` had its bit set, or the scan would have stopped.
             if let Some(hit) = self.memo.lock().ok().and_then(|m| m.get(&e).copied()) {
                 answer = Some(hit);
@@ -808,7 +636,6 @@ impl MintIndex {
                     break;
                 }
                 Some(false) => continue,
-                // Undecided: abort WITHOUT recording anything.
                 None => return None,
             }
         }
@@ -829,9 +656,9 @@ impl MintIndex {
         Some(bit)
     }
 
-    /// Write-once record plus the durable offer. A DIFFERING second answer is
-    /// fork-grade — two mint epochs for one epoch cannot both be chain fact — so it
-    /// is kept loud and the first answer stands.
+    /// Write-once record plus the durable offer. A differing second answer is
+    /// fork-grade — two mint epochs for one epoch cannot both be chain fact — so the
+    /// first stands and the disagreement is loud.
     fn record(&self, epoch: u64, minted_at: u64) {
         let fresh = match self.memo.lock() {
             Ok(mut memo) => match memo.get(&epoch).copied() {
@@ -868,14 +695,11 @@ impl MintIndex {
     }
 }
 
-/// `PK_epoch` and the public polynomial, read from their ONE owner (П-3).
+/// `PK_epoch` and the public polynomial, read from their one owner.
 ///
-/// Two facts and nothing else: the chain says WHICH epoch minted the key in force
-/// at `epoch` ([`MintIndex`]), and that mint's quorum-certified artifact carries the
-/// key ([`ArtifactStore`]). There is no store of keys any more — `BeaconKeys`, its
-/// three provenance tiers, its journal and the ladder over them are gone, and with
-/// them the class where "the key I rebuilt" and "the key the network attested" were
-/// two possible values of one map entry.
+/// Two facts and nothing else: the chain says which epoch minted the key in force
+/// at `epoch` ([`MintIndex`]), and that mint's quorum-certified artifact carries
+/// the key ([`ArtifactStore`]). There is no separate store of keys.
 #[derive(Clone)]
 pub(crate) struct KeyIndex {
     artifacts: ArtifactStore,
@@ -892,7 +716,7 @@ impl KeyIndex {
         self.mints.minted_at(epoch)
     }
 
-    /// `PK_epoch` in force at `epoch`. SYNCHRONOUS and I/O-free: "not resolvable"
+    /// `PK_epoch` in force at `epoch`. Synchronous and I/O-free: "not resolvable"
     /// is the answer a vote path acts on, never a reason to go fetch.
     pub(crate) fn key_at(&self, epoch: u64) -> Option<GroupPublic> {
         let minted_at = self.mints.minted_at(epoch)?;
@@ -903,7 +727,7 @@ impl KeyIndex {
 
     /// `(minting epoch, public polynomial)` in force at `epoch` — what a partial is
     /// signed and verified against. The share that pairs with it is the
-    /// `CeremonyStore`'s, keyed by the SAME minting epoch.
+    /// `CeremonyStore`'s, keyed by the same minting epoch.
     pub(crate) fn sharing_at(&self, epoch: u64) -> Option<(u64, Sharing<MinSig>)> {
         let minted_at = self.mints.minted_at(epoch)?;
         let artifact = self.artifacts.get(minted_at)?;
@@ -917,25 +741,13 @@ impl KeyIndex {
     }
 }
 
-/// ONE bounded acquisition of a MINTING epoch's artifact — the single shape both
-/// classes that need one speak (Д-11).
-///
-/// # Why this is a trait and was a closure
-///
-/// Journal 5.0's Д-11 kept `ArtifactFetch` a closure because it had exactly one
-/// implementation and "a trait from one method with one implementor is another type
-/// on the boundary with no second caller to justify it". The second caller appears
-/// HERE: a validator that is not in `committee[E]` needs the same acquisition the
-/// follower needed, over a different transport, and the CALLER must not be able to
-/// tell them apart — that is what makes the non-member's route and the follower's
-/// route one code path rather than two that agree today.
-///
-/// # The contract
+/// One bounded acquisition of a minting epoch's artifact — the single shape both
+/// classes that need one speak.
 ///
 /// One bounded attempt, throttled to at most one network round-trip per epoch per
 /// [`PULL_MIN_INTERVAL`], answering whether the store now holds `minted_at`. An
-/// implementation may only return `true` for an artifact it VERIFIED against
-/// `committee[minted_at]` read from this node's own chain state — a lying transport
+/// implementation may return `true` only for an artifact it verified against
+/// `committee[minted_at]` read from this node's own chain state: a lying transport
 /// is caught by the implementation, never by the caller.
 pub(crate) trait AcquireArtifact: Send + Sync {
     fn fetch(&self, minted_at: u64) -> futures::future::BoxFuture<'_, bool>;
@@ -944,25 +756,20 @@ pub(crate) trait AcquireArtifact: Send + Sync {
 /// The handle every consumer of [`AcquireArtifact`] holds.
 pub(crate) type AcquireMint = Arc<dyn AcquireArtifact>;
 
-/// The BYTES half of an acquisition: one transport's answer for a minting epoch.
+/// The bytes half of an acquisition: one transport's answer for a minting epoch.
 ///
-/// `None` for every negative alike — no artifact, a peer/upstream too old to know
+/// `None` covers every negative alike — no artifact, an upstream too old to know
 /// the method, a dead link. The three are one answer to the caller (stay unpinned,
-/// ask again) and separating them would only invite someone to treat one as a
-/// fault. Two implementations: the follower's cert-upstream RPC and, on a
-/// validator, the `BEACON_RESOLVER_CHANNEL` pull.
+/// ask again), and separating them would invite someone to treat one as a fault.
 pub(crate) type ArtifactBytes =
     Arc<dyn Fn(u64) -> futures::future::BoxFuture<'static, Option<Vec<u8>>> + Send + Sync>;
 
-/// [`AcquireArtifact`] over a byte transport: throttle, fetch, decode, VERIFY
+/// [`AcquireArtifact`] over a byte transport: throttle, fetch, decode, verify
 /// against `committee[minted_at]`, file, and hand the artifact to the write-back.
 ///
-/// ONE body for every transport that delivers bytes, which is the half that must
-/// not diverge: the verify is what makes a lying upstream and a lying peer the same
-/// non-event, and a second copy of it is a second place for the check to be
-/// weakened. The follower used to carry this inline; the non-member validator half
-/// of PLAN row 5.1 is the second caller that makes it shared code rather than a
-/// generalisation for its own sake.
+/// One body for every transport that delivers bytes: the verify is what makes a
+/// lying upstream and a lying peer the same non-event, and a second copy of it is a
+/// second place for the check to be weakened.
 pub(crate) struct TransportAcquire<E: Clock> {
     chain_id: u64,
     committees: CommitteeSource,
@@ -970,9 +777,8 @@ pub(crate) struct TransportAcquire<E: Clock> {
     store: ArtifactStore,
     adopt: Option<tokio::sync::mpsc::Sender<AgreedArtifact>>,
     clock: E,
-    /// Per-epoch budget, pruned as it expires — the same `PULL_MIN_INTERVAL` the
-    /// plane's pull seam owes its peers. Without it a want that arrives on every
-    /// certificate (~1/s) would be one round-trip a second per unresolved epoch.
+    /// Per-epoch budget, pruned as it expires. Without it a want that arrives on
+    /// every certificate would be one round-trip a second per unresolved epoch.
     next_allowed: Arc<Mutex<BTreeMap<u64, SystemTime>>>,
     metrics: BeaconMetrics,
 }
@@ -1018,8 +824,8 @@ impl<E: Clock> TransportAcquire<E> {
 impl<E: Clock + Send + Sync> AcquireArtifact for TransportAcquire<E> {
     fn fetch(&self, minted_at: u64) -> futures::future::BoxFuture<'_, bool> {
         Box::pin(async move {
-            // Short-circuit on a local hit: an acquisition is never the way to read
-            // what is already held.
+            // Short-circuit on a local hit: an acquisition never reads what is
+            // already held.
             if self.store.has(minted_at) {
                 return true;
             }
@@ -1050,9 +856,8 @@ impl<E: Clock + Send + Sync> AcquireArtifact for TransportAcquire<E> {
                 &artifact,
             ) {
                 Ok(()) => {}
-                // Not the server's fault and not a verdict on the artifact: this
-                // node has not reached the block that committed
-                // `committee[minted_at]`. Drop it and re-ask later.
+                // Not the server's fault: this node has not reached the block that
+                // committed `committee[minted_at]`. Drop it and re-ask later.
                 Err(ArtifactError::CommitteeUnreadable(_)) => {
                     self.metrics.dkg_artifact_unverifiable.inc();
                     return false;
@@ -1071,10 +876,8 @@ impl<E: Clock + Send + Sync> AcquireArtifact for TransportAcquire<E> {
             let pk = *group_public_key(&artifact.0.group_key);
             let first = match self.store.insert(minted_at, artifact.clone()) {
                 Ok(()) => true,
-                // A producer inserted between the `has` above and here: the
-                // held value stands, and if this one differs it is the
-                // `Conflict` witness — exactly as the instance and the pull
-                // seam note their losers.
+                // A producer inserted between the `has` above and here: the held
+                // value stands, and if this one differs it is the `Conflict` witness.
                 Err(loser) => {
                     self.store.note_divergent(minted_at, &loser);
                     false
@@ -1082,22 +885,12 @@ impl<E: Clock + Send + Sync> AcquireArtifact for TransportAcquire<E> {
             };
             self.metrics.follower_artifact_adopted.inc();
             if first {
-                // THE TAIL IS PART OF THE WITNESS, not decoration: without it the line
-                // says an adoption happened and not what the adoption MEANS, which is
-                // the whole reason an operator reads it. It was lost when this moved
-                // out of `beacon/follower.rs` (PLAN row 5.2), along with the level row
-                // 4.4 put back. The harness matches the constant as a SUBSTRING
-                // (`verdicts_follow.CF_KEY_LINE`), so the clause costs no verdict.
                 tracing::info!(
                     epoch = minted_at,
                     group_public = %pk_prefix(&pk),
                     "beacon: PK_epoch obtained and verified against committee[epoch] — \
                      certificates of the epochs it covers leave vote-only admission"
                 );
-                // The write-back hop, where the caller wired one: a pulled artifact
-                // must reach the actor's adoption rails exactly as an agreed one
-                // does, or a member whose own instance died stays shareless for an
-                // epoch it was elected to sign in (see this module's header).
                 if let Some(adopt) = self.adopt.as_ref() {
                     hand_off(adopt, minted_at, &artifact, &self.metrics);
                 }
@@ -1108,12 +901,9 @@ impl<E: Clock + Send + Sync> AcquireArtifact for TransportAcquire<E> {
 }
 
 /// Hand `artifact` to the agreement write-back — the only route from an
-/// acquisition seam to the `DkgActor`. ONE shape for both seams that make it
-/// (the pull bridge and the transport acquisition): a refused send is said and
-/// counted (`dpos_dkg_artifact_handoff_lost_total`), never fatal — the store owns
-/// the artifact and the actor reads it on its next height tick
-/// (`DkgActor::reconcile_with_store`), so what is lost is a tick of latency, not
-/// the fact.
+/// acquisition seam to the `DkgActor`. A refused send is logged and counted, never
+/// fatal: the store owns the artifact and the actor reads it on its next height
+/// tick, so what is lost is a tick of latency, not the fact.
 fn hand_off(
     tx: &tokio::sync::mpsc::Sender<AgreedArtifact>,
     epoch: u64,
@@ -1144,25 +934,21 @@ fn hand_off(
     }
 }
 
-/// First 8 serialized bytes of a group public key, hex — a stable, greppable value
-/// fingerprint. Enough to byte-diff key VALUES across nodes from logs alone; the
+/// First 8 serialized bytes of a group public key, hex — a stable, greppable
+/// fingerprint. Enough to byte-diff key values across nodes from logs alone; the
 /// full G2 hex is 192 chars of log noise.
-///
-/// It lived in `beacon::keys` until that module's store was deleted (П-3); it is a
-/// formatter for the fact this module now owns.
 pub(crate) fn pk_prefix(pk: &GroupPublic) -> String {
     let mut s = pk.to_string();
     s.truncate(16);
     s
 }
 
-/// ONE artifact builder for every test in this module tree that needs a
-/// [`KeyIndex`] to answer, rather than one per test module.
+/// One artifact builder for every test in this module tree that needs a
+/// [`KeyIndex`] to answer.
 ///
 /// The committee is a throwaway set whose only job is to make a real
 /// `Finalization` constructible: nothing downstream of [`ArtifactStore::insert`]
-/// re-verifies (verification happens BEFORE the insert on every production path —
-/// `verify_artifact` at the bridge, the instance's own certificate on the plane),
+/// re-verifies (verification happens before the insert on every production path),
 /// so a caller that wants a store answering for `minted_at` wants exactly this.
 #[cfg(test)]
 pub(crate) fn artifact_with_key(
@@ -1227,23 +1013,21 @@ pub(crate) fn artifact_with_key(
     (proposal, cert)
 }
 
-/// The ONE test seam for "this node holds the epoch key", for every module that
+/// The one test seam for "this node holds the epoch key", for every module that
 /// needs a [`KeyIndex`] to answer.
 ///
-/// A test states a MINT — an epoch plus the real `Output` its ceremony produced —
+/// A test states a mint — an epoch plus the real `Output` its ceremony produced —
 /// and the fixture does what production does with one: files the artifact that
 /// carries it and records the chain's `changed` bit at that epoch. There is no way
-/// to state a bare `GroupPublic`, and that is the point: the key is a projection of
-/// the artifact now (П-3), so a fixture that could inject one without an artifact
-/// would be testing a state the node cannot be in.
+/// to state a bare `GroupPublic`: the key is a projection of the artifact, so a
+/// fixture that could inject one would test a state the node cannot be in.
 #[cfg(test)]
 pub(crate) struct MintFixture {
     pub(crate) artifacts: ArtifactStore,
     bits: Arc<Mutex<BTreeSet<u64>>>,
-    /// How many times the CHAIN was asked for an epoch's `changed` bit — the rung
-    /// the ladder pays for, in production a staticcall. A test that ingests many
-    /// certificates of one epoch asserts on this to pin that the walk is memoised
-    /// and the chain is read ONCE, not once per certificate.
+    /// How many times the chain was asked for an epoch's `changed` bit. A test that
+    /// ingests many certificates of one epoch asserts on this to pin that the walk is
+    /// memoised and the chain is read once, not once per certificate.
     chain_reads: Arc<Mutex<BTreeMap<u64, u32>>>,
     pub(crate) keys: KeyIndex,
 }
@@ -1290,14 +1074,12 @@ impl MintFixture {
             .unwrap_or_default()
     }
 
-    /// Record that the chain says `epoch` re-minted, WITHOUT the artifact arriving.
+    /// Record that the chain says `epoch` re-minted, without the artifact arriving.
     ///
-    /// The two halves are separate because they happen at different times and the
-    /// order is load-bearing: the contract writes the bit with the committee, an
-    /// epoch before the epoch, while the artifact arrives when the agreement
-    /// converges or a peer serves it. A fixture that set the bit LATE would be
-    /// staging a chain that changed its own history — and [`MintIndex`]'s write-once
-    /// memo correctly refuses to notice, so the test would fail for the wrong reason.
+    /// The two halves are separate and the order is load-bearing: the contract writes
+    /// the bit with the committee, an epoch before the artifact arrives, and a
+    /// fixture that set the bit late would stage a chain that changed its own
+    /// history — [`MintIndex`]'s write-once memo correctly refuses to notice.
     pub(crate) fn changed(&self, epoch: u64) {
         self.bits
             .lock()
@@ -1305,7 +1087,7 @@ impl MintFixture {
             .insert(epoch);
     }
 
-    /// The artifact for a mint the chain has already recorded ARRIVES.
+    /// The artifact for a mint the chain has already recorded arrives.
     pub(crate) fn arrive(&self, minted_at: u64, group_key: crate::beacon::outcome::DkgOutcome) {
         // First-wins: a fixture that arrives twice keeps the first value.
         drop(
@@ -1321,7 +1103,7 @@ impl MintFixture {
     }
 }
 
-/// A [`ChangedAt`] over a fixed set of CHANGE epochs — the frozen chain record a
+/// A [`ChangedAt`] over a fixed set of change epochs — the frozen chain record a
 /// test asserts against.
 #[cfg(test)]
 pub(crate) fn changed_at(bits: &[u64]) -> ChangedAt {
@@ -1329,8 +1111,8 @@ pub(crate) fn changed_at(bits: &[u64]) -> ChangedAt {
     Arc::new(move |e| Some(set.contains(&e)))
 }
 
-/// A [`KeyIndex`] over a store the CALLER holds, so a test can make the mint's
-/// artifact ARRIVE mid-test — the one edge a key resolve turns on.
+/// A [`KeyIndex`] over a store the caller holds, so a test can make the mint's
+/// artifact arrive mid-test — the one edge a key resolve turns on.
 #[cfg(test)]
 pub(crate) fn key_index_over(artifacts: ArtifactStore, bits: &[u64]) -> KeyIndex {
     KeyIndex::new(artifacts, MintIndex::new(changed_at(bits)))
@@ -1339,20 +1121,14 @@ pub(crate) fn key_index_over(artifacts: ArtifactStore, bits: &[u64]) -> KeyIndex
 /// Open the durable mint memo and join it to a [`MintIndex`] over `changed`, or
 /// hand back a RAM-only index when no partition is configured.
 ///
-/// # What this closes and what it does not
+/// Rehydrating the memo means a restarted node needs no chain read for any epoch it
+/// already resolved, and one step for the next.
 ///
-/// Rehydrating the memo means a restarted node needs NO chain read for any epoch it
-/// already resolved, and one step for the next — which is the whole of what the
-/// deleted key journal provided for this question, and strictly more: the journal
-/// held `epoch → pk` for MINT epochs only, so it never answered a carry epoch at
-/// all (W1 did, and W1 is gone).
-///
-/// It does NOT close a FRESH node whose datadir is empty and whose committee last
+/// It does not close a fresh node whose datadir is empty and whose committee last
 /// minted more than `SCHEME_RETENTION_EPOCHS` epochs ago: its walk must reach that
 /// mint, every epoch below its own anchor's window folds to `None`, and no memo
 /// entry exists to stop the walk. That node stays on vote-only admission for the
-/// epoch — which is I4's residual and NOT a regression: the deleted ladder had the
-/// identical walk and the deleted journal was empty for it too.
+/// epoch.
 pub(crate) async fn open_mint_memo<E>(
     journal_context: E,
     writer_context: E,
@@ -1394,12 +1170,10 @@ where
         rejected,
         "rehydrated the beacon mint memo from disk"
     );
-    // THE TORN OUTCOME, NAMED. A record of the wrong length is dropped, and a memo
-    // that dropped everything behaves exactly like a memo that was empty — so
-    // without this line the two are distinguishable only by a counter nobody was
-    // told to look at. There is no state to enter: the walk re-resolves whatever it
-    // can still read, which is the correct response to a partly lost memo, and
-    // `None` was never memoised so nothing wrong can have been kept.
+    // A record of the wrong length is dropped, and a memo that dropped everything
+    // behaves exactly like an empty memo — so without this warn the two are
+    // distinguishable only by a counter. There is no state to enter: the walk
+    // re-resolves whatever it can still read.
     if rejected > 0 {
         warn!(
             rejected,
@@ -1446,13 +1220,13 @@ pub(crate) enum StoreError {
     Store(#[from] MetadataError),
 }
 
-/// The durable half. Exactly ONE instance per process: a second handle over the
+/// The durable half. Exactly one instance per process: a second handle over the
 /// same partition is a dual-writer.
 ///
-/// [`Metadata`] rather than an `Ordinal`: an artifact is variable-length (a
-/// `Ordinal` record has to be fixed-size), the collection is small and sparse,
-/// and `Metadata` commits a batch atomically through its two-blob discipline —
-/// which matters here because a half-written artifact is a key nobody can verify.
+/// [`Metadata`] rather than an `Ordinal`: an artifact is variable-length, the
+/// collection is small and sparse, and `Metadata` commits a batch atomically
+/// through its two-blob discipline — which matters because a half-written artifact
+/// is a key nobody can verify.
 pub(crate) struct ArtifactJournal<E: Storage + Clock + Metrics> {
     store: Metadata<E, U64, Vec<u8>>,
 }
@@ -1483,9 +1257,9 @@ impl<E: Storage + Clock + Metrics> ArtifactJournal<E> {
 
     /// Every retained artifact, for the startup refill.
     ///
-    /// A record that no longer decodes is SKIPPED with a warn rather than
-    /// failing the load: one unreadable epoch costs a peer fetch, while refusing
-    /// to start costs the node.
+    /// A record that no longer decodes is skipped with a warn rather than failing
+    /// the load: one unreadable epoch costs a peer fetch, while refusing to start
+    /// costs the node.
     pub fn replay(&self) -> Vec<(u64, AgreedArtifact)> {
         let mut loaded = Vec::new();
         let mut rejected = 0u64;
@@ -1510,10 +1284,9 @@ impl<E: Storage + Clock + Metrics> ArtifactJournal<E> {
 /// Open the durable artifact store and join it to a RAM map, or hand back a
 /// RAM-only store when no partition is configured.
 ///
-/// An EMPTY partition means "no journal", which is what tests and any in-process
-/// run get. `writer_context` MUST be a SIBLING of `journal_context`, never a
-/// clone: the deterministic runtime panics on a duplicate metric registered under
-/// the same label, and both halves register store metrics.
+/// `writer_context` must be a sibling of `journal_context`, never a clone: the
+/// deterministic runtime panics on a duplicate metric registered under the same
+/// label, and both halves register store metrics.
 pub async fn open<E>(
     journal_context: E,
     writer_context: E,
@@ -1544,17 +1317,11 @@ where
 /// Drain `rx` onto the journal. The RAM store hands records over and returns
 /// immediately; every disk touch happens here.
 ///
-/// # What "the write is retried" means, exactly (§5.4)
-///
-/// `Metadata::put` is an in-memory insert and `sync` commits the WHOLE map, so a
-/// failed `sync` loses nothing it was given: the record stays staged and the next
-/// `sync` re-attempts it. That is the retry §5.4 asks for, and its trigger is the
-/// next record on `rx` — nothing else calls `sync` here. Artifacts arrive once per
-/// committee change, so the retry is real but can be far away, and the gap is
-/// bounded by the loss being LOUD rather than by a timer (a timer is the thing this
-/// plane does not have and does not want). PLAN row 5.4 is where the beacon's clock
-/// becomes a `watch` every task can subscribe to; a clock-driven re-`sync` belongs
-/// there and not in a second consumer of today's single-consumer height channel.
+/// A failed `sync` loses nothing it was given: `Metadata::put` is an in-memory
+/// insert and `sync` commits the whole map, so the record stays staged and the next
+/// `sync` re-attempts it. The trigger is the next record on `rx`; artifacts arrive
+/// once per committee change, so the retry can be far away and the gap is bounded
+/// by the loss being loud.
 pub(crate) fn spawn_writer<E>(
     context: E,
     mut journal: ArtifactJournal<E>,
@@ -1588,10 +1355,6 @@ where
 type Waiters = Arc<Mutex<HashMap<u64, Vec<oneshot::Sender<PullAnswer>>>>>;
 
 /// What a peer answered one pull.
-///
-/// The seam's two states, and nothing else. Exhaustion is not an arm here — it is
-/// the `None` [`ArtifactPull::pull`] returns, exactly as the cert-follow RPC seam
-/// surfaces an exhausted upstream walk.
 #[derive(Clone, Debug)]
 pub enum PullAnswer {
     /// A peer served the artifact and it verified against `committee[epoch]`.
@@ -1600,10 +1363,8 @@ pub enum PullAnswer {
     NotYet,
 }
 
-/// The serve-and-consume half of the seam, held by the resolver handler.
-///
-/// Cloned into the resolver engine for both roles, like
-/// [`LogHandler`](crate::beacon::log_resolver::LogHandler).
+/// The serve-and-consume half of the seam, held by the resolver handler and cloned
+/// into the resolver engine for both roles.
 #[derive(Clone)]
 pub struct ArtifactBridge {
     chain_id: u64,
@@ -1616,11 +1377,10 @@ pub struct ArtifactBridge {
 
 impl ArtifactBridge {
     /// `adopt_tx` is the agreement write-back's own inbound channel — the one a live
-    /// instance sends its artifact on. It is a REQUIRED constructor argument rather
-    /// than an optional one because a bridge wired without it is precisely the
-    /// defect this seam had:
-    /// a pulled artifact that answers every key question and never reaches
-    /// [`crate::beacon::actor::DkgActor::on_artifact`].
+    /// instance sends its artifact on. It is a required constructor argument rather
+    /// than an optional one because a bridge wired without it is precisely the defect
+    /// this seam had: a pulled artifact that answers every key question and never
+    /// reaches [`crate::beacon::actor::DkgActor::on_artifact`].
     pub fn new(
         chain_id: u64,
         store: ArtifactStore,
@@ -1638,11 +1398,10 @@ impl ArtifactBridge {
         }
     }
 
-    /// Serve `epoch`. ALWAYS an answer, never a dropped responder.
+    /// Serve `epoch`. Always an answer, never a dropped responder.
     ///
     /// Dropping it would make the requester's resolver read "no data" and retry
-    /// another peer forever with nothing surfaced above the transport — the shape
-    /// this seam exists to avoid.
+    /// another peer forever, with nothing surfaced above the transport.
     pub fn produce(&self, epoch: u64) -> Bytes {
         let response = match self.store.get(epoch) {
             Some(artifact) => {
@@ -1660,11 +1419,11 @@ impl ArtifactBridge {
     /// Take a peer's answer for `epoch`.
     ///
     /// Returns `false` — which permanently excludes the peer, since commonware's
-    /// resolver `excluded` set has no removal path — ONLY for proven
-    /// misbehaviour: bytes that do not decode, an answer about a different epoch,
-    /// or an artifact whose certificate fails against `committee[epoch]`. Every
-    /// other outcome, `NotYet` included and an unreadable local committee
-    /// included, is an honest delivery and returns `true`.
+    /// resolver `excluded` set has no removal path — only for proven misbehaviour:
+    /// bytes that do not decode, an answer about a different epoch, or an artifact
+    /// whose certificate fails against `committee[epoch]`. Every other outcome,
+    /// `NotYet` and an unreadable local committee included, is an honest delivery
+    /// and returns `true`.
     pub fn deliver(&self, epoch: u64, value: &[u8]) -> bool {
         let response = match ArtifactResponse::decode(value) {
             Ok(response) => response,
@@ -1696,9 +1455,9 @@ impl ArtifactBridge {
                     artifact.as_ref(),
                 ) {
                     Ok(()) => {}
-                    // This node cannot check the artifact yet, so it neither
-                    // stores it nor punishes the peer that sent it. The pull sees
-                    // no answer and exhausts, which is the honest outcome.
+                    // This node cannot check the artifact yet, so it neither stores
+                    // it nor punishes the peer that sent it. The pull sees no answer
+                    // and exhausts, which is the honest outcome.
                     Err(ArtifactError::CommitteeUnreadable(_)) => {
                         self.metrics.dkg_artifact_unverifiable.inc();
                         warn!(
@@ -1715,11 +1474,10 @@ impl ArtifactBridge {
                     }
                 }
                 let artifact = *artifact;
-                // ONE decision, under the store's write lock: the value is held
+                // One decision, under the store's write lock: the value is held
                 // (first insert) or comes back as the loser. There is no
-                // check-then-insert window in which a producer that raced this
-                // pull in (the local agreement instance, `dkg_engine`) could make
-                // the served value vanish un-noted.
+                // check-then-insert window in which a producer that raced this pull
+                // in could make the served value vanish un-noted.
                 match self.store.insert(epoch, artifact) {
                     Ok(()) => {
                         // Read back rather than re-wrapping: every waiter is
@@ -1729,21 +1487,15 @@ impl ArtifactBridge {
                             self.wake(epoch, PullAnswer::Have(held));
                         }
                     }
-                    // A quorum-certified value for an epoch this node already
-                    // holds one for — held before this pull, or inserted by a
-                    // producer while it ran. The same value is nothing new. A
-                    // DIFFERENT one is not the peer's fault (its certificate
-                    // verified) and not adjudicable here — the instance bars a
-                    // second value within itself, so this is two instances for
-                    // one target, ≥ 2q−n signers. The store keeps the held one
-                    // (first-wins) and NOTES the second beside it, durably
-                    // (`note_divergent`), which is what makes the epoch `Conflict`
-                    // at the DKG actor: the actor reads this store on every tick,
-                    // so the fact outlives a lost hand-off. The hand-off is still
-                    // made, for the tick the actor would otherwise wait. Identity
-                    // is by VALUE (`value_digest`): a certificate over the held
-                    // set and key with other confirmation metadata is the held
-                    // value again.
+                    // A second quorum-certified value for an epoch this node already
+                    // holds one for. The same value is nothing new; a different one
+                    // is not the peer's fault (its certificate verified) and is not
+                    // adjudicable here — the instance bars a second value within
+                    // itself, so this is two instances for one target. The store
+                    // keeps the held one and notes the second durably, which is what
+                    // makes the epoch `Conflict` at the DKG actor. Identity is by
+                    // value, so a certificate over the held set and key with other
+                    // confirmation metadata is the held value again.
                     Err(served) => {
                         if self.store.note_divergent(epoch, &served) {
                             warn!(
@@ -1769,26 +1521,15 @@ impl ArtifactBridge {
     /// Hand a newly-pulled artifact to the agreement write-back, which is the only
     /// route from this seam to the `DkgActor`.
     ///
-    /// Without it a pulled artifact answers every `PK_epoch` read and serves peers
-    /// while the node stays permanently SHARELESS for the epoch: `on_artifact` is
-    /// reached from the write-back alone, so nothing adopts the pinned set and
-    /// nothing finalizes over it until the boundary heal — after the chain
-    /// has already entered the epoch this node was meant to sign in. The reachable
-    /// shape is a member of `committee[E+1]` whose instance died mid-agreement:
-    /// its peers decided without it and their launchers hold `E+1` in `started`,
-    /// so no re-agreement is coming and the pull is its only source.
-    ///
-    /// Sent on a first insert, and on a DIVERGENT second value (a different
+    /// Sent on a first insert and on a divergent second value (a different
     /// quorum-certified payload for an epoch already held — the actor's `Conflict`
     /// input). A repeat delivery of the held value has nothing new to adopt, and
     /// re-adopting a settled epoch takes a ceremony-retention hold that nothing
-    /// releases until the next height tick. That bound also makes the channel's
-    /// depth a non-issue: at most one send per target epoch and value, into a loop
-    /// that only forwards.
+    /// releases until the next height tick.
     ///
-    /// A refused send is logged and counted, never a `false` from `deliver`: the
-    /// peer served an artifact that verified, and this node's own write-back being
-    /// gone or backed up is not its misbehaviour ([`hand_off`]).
+    /// A refused send is logged and counted, never a `false` from `deliver`: the peer
+    /// served an artifact that verified, and this node's own write-back being gone or
+    /// backed up is not its misbehaviour.
     fn adopt(&self, epoch: u64, artifact: &AgreedArtifact) {
         hand_off(&self.adopt_tx, epoch, artifact, &self.metrics);
     }
@@ -1813,13 +1554,13 @@ impl ArtifactBridge {
 pub struct ArtifactPull<E: Clock> {
     context: E,
     bridge: ArtifactBridge,
-    /// Per-epoch pull state — ONE map, ONE retention rule ([`Self::throttle`]
-    /// ages it, a held artifact removes it), so the rotation cursor can never
-    /// outlive the throttle slot it rides with.
+    /// Per-epoch pull state — one map, one retention rule ([`Self::throttle`] ages
+    /// it, a held artifact removes it), so the rotation cursor can never outlive the
+    /// throttle slot it rides with.
     slots: Arc<Mutex<HashMap<u64, PullSlot>>>,
-    /// This node's own peer key, skipped by the rotation (a member pulling its own
-    /// committee's artifact — the §5.4 partial-success heal — must not spend an
-    /// attempt asking itself). `None` where the puller has no identity (tests).
+    /// This node's own peer key, skipped by the rotation: a member pulling its own
+    /// committee's artifact must not spend an attempt asking itself. `None` where the
+    /// puller has no identity (tests).
     me: Option<PeerPubkey>,
 }
 
@@ -1851,23 +1592,17 @@ impl<E: Clock> ArtifactPull<E> {
             .remove(&epoch);
     }
 
-    /// The ONE member of `committee[epoch]` this attempt asks, rotating through the
+    /// The one member of `committee[epoch]` this attempt asks, rotating through the
     /// committee one member per pull; `None` when the committee is unreadable (the
-    /// fetch then goes untargeted, to whoever the resolver ranks first).
+    /// fetch then goes untargeted).
     ///
-    /// The minters hold the artifact first, so they are who to ask — and asking ONE
-    /// of them per attempt is what keeps the pull live. The resolver ranks peers by
-    /// response time, and a fast `NotYet` is a fast response: an untargeted fetch
-    /// re-asks the same non-holder for as long as it keeps answering, while a peer
-    /// it never asked stays at the `initial` estimate and never comes first.
-    /// Measured on the stand (`a_zero_overlap_boundary_is_crossed_by_acquiring_the_
-    /// other_halfs_key`, 2026-09-14): the outgoing half of a zero-overlap boundary
-    /// asked its OWN half 272 times for the incoming half's artifact and never once a
-    /// minter — it had only crossed before because the in-window dealer-log fetches
-    /// of the time happened to penalise those same neighbours' scores. Rotating the
-    /// target makes a member that keeps answering `NotYet` — not converged yet, or
-    /// lying — cost one attempt, never the pull. A target the resolver does not
-    /// track costs one [`PULL_TIMEOUT`] and moves on; this node itself is skipped.
+    /// The minters hold the artifact first, so they are who to ask. The resolver
+    /// ranks peers by response time, and a fast `NotYet` is a fast response: an
+    /// untargeted fetch re-asks the same non-holder for as long as it keeps
+    /// answering, while a peer it never asked stays at the initial estimate and never
+    /// comes first. Rotating the target makes a member that keeps answering `NotYet`
+    /// cost one attempt, never the pull. A target the resolver does not track costs
+    /// one [`PULL_TIMEOUT`] and moves on; this node itself is skipped.
     fn minter_to_ask(&self, epoch: u64) -> Option<NonEmptyVec<PeerPubkey>> {
         let committee = (self.bridge.committee)(epoch)?;
         let others: Vec<&PeerPubkey> = committee
@@ -1902,11 +1637,9 @@ impl<E: Clock> ArtifactPull<E> {
     /// - `Some(PullAnswer::NotYet)` — a peer answered honestly that it has none;
     /// - `None` — the walk was exhausted: nobody answered inside [`PULL_TIMEOUT`].
     ///
-    /// A locally-held artifact short-circuits without touching the network. The
-    /// fetch is issued no sooner than [`PULL_MIN_INTERVAL`] after the previous one
-    /// for this epoch — the caller-side half of the per-peer rate bound, which
-    /// matters because an inbound over-quota sleeps a peer's whole connection.
-    /// On the way out an unanswered fetch is CANCELLED, so the resolver stops
+    /// A locally-held artifact short-circuits without touching the network. The fetch
+    /// is issued no sooner than [`PULL_MIN_INTERVAL`] after the previous one for this
+    /// epoch. On the way out an unanswered fetch is cancelled, so the resolver stops
     /// probing peers for a key nobody is waiting on any more.
     pub async fn pull<R>(&self, resolver: &mut R, epoch: u64) -> Option<PullAnswer>
     where
@@ -1920,9 +1653,9 @@ impl<E: Clock> ArtifactPull<E> {
             return Some(PullAnswer::Have(held));
         }
         self.throttle(epoch).await;
-        // A delivery during the throttle sleep woke only the waiters of that
-        // moment; re-read the store before registering, or this attempt would sit
-        // out the whole `PULL_TIMEOUT` for an artifact already held.
+        // A delivery during the throttle sleep woke only the waiters of that moment;
+        // re-read the store before registering, or this attempt would sit out the
+        // whole `PULL_TIMEOUT` for an artifact already held.
         if let Some(held) = self.bridge.store.get(epoch) {
             self.forget(epoch);
             return Some(PullAnswer::Have(held));
@@ -1956,9 +1689,8 @@ impl<E: Clock> ArtifactPull<E> {
                 "artifact seam: pull exhausted — no peer answered inside the window"
             );
         }
-        // The waiter is spent either way; the CANCEL is only for the unanswered
-        // case, because a delivered answer already completed the fetch and the
-        // resolver has nothing left to probe for.
+        // The waiter is spent either way; the cancel is only for the unanswered
+        // case, because a delivered answer already completed the fetch.
         let empty = {
             let mut waiters = self
                 .bridge
@@ -1991,14 +1723,11 @@ impl<E: Clock> ArtifactPull<E> {
                 .slots
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            // THE retention rule: an epoch nobody has pulled for a whole
-            // `PULL_MIN_INTERVAL + PULL_TIMEOUT` is done with (its caller gave up
-            // or got the artifact elsewhere), so its slot — throttle AND cursor —
-            // goes; otherwise the map grows one entry per epoch ever pulled,
-            // forever. The `PULL_TIMEOUT` term is what keeps a walk alive across
-            // attempts: an attempt may take the whole timeout, longer than the
-            // interval, and dropping the cursor between two attempts would restart
-            // the rotation at the same member every time.
+            // Retention: an epoch nobody has pulled for a whole
+            // `PULL_MIN_INTERVAL + PULL_TIMEOUT` is done with, so its slot — throttle
+            // and cursor — goes; otherwise the map grows one entry per epoch ever
+            // pulled. The `PULL_TIMEOUT` term keeps a walk alive across attempts,
+            // whose cursor must not restart at the same member.
             slots.retain(|_, slot| slot.next_allowed + PULL_TIMEOUT > now);
             let slot = slots.entry(epoch).or_insert(PullSlot {
                 next_allowed: now,
@@ -2161,10 +1890,10 @@ mod tests {
         (p, cert)
     }
 
-    /// ITEM 1. The artifact verifies against `committee[E+1]` read from the
-    /// staking contract and NOTHING else: no ceremony, no share, no journal, no
-    /// block, no locally-registered scheme. The snapshot below is byte-for-byte
-    /// the value `epoch_committee_snapshot` hands back.
+    /// The artifact verifies against `committee[E+1]` read from the staking contract
+    /// and nothing else: no ceremony, no share, no journal, no block, no
+    /// locally-registered scheme. The snapshot below is byte-for-byte the value
+    /// `epoch_committee_snapshot` hands back.
     #[test]
     fn an_artifact_verifies_from_the_staking_committee_alone() {
         let c = committee(1);
@@ -2173,16 +1902,16 @@ mod tests {
         verify_artifact_from_snapshot(&mut rng, CHAIN_ID, &c.snapshot(TARGET), &artifact)
             .expect("a quorum-certified artifact verifies against the committee alone");
 
-        // A DIFFERENT committee must not certify it — the check is the quorum,
-        // not the shape.
+        // A different committee must not certify it — the check is the quorum, not
+        // the shape.
         let other = committee(2);
         let err =
             verify_artifact_from_snapshot(&mut rng, CHAIN_ID, &other.snapshot(TARGET), &artifact)
                 .expect_err("a foreign committee must not verify it");
         assert!(matches!(err, ArtifactError::Certificate(TARGET)), "{err:?}");
 
-        // The chain namespace must not verify it either: the agreement plane
-        // signs under its own, prefix-free tag.
+        // The chain namespace must not verify it either: the agreement plane signs
+        // under its own, prefix-free tag.
         let mut chain_ns_verifier_failed = false;
         let bimap = c.bimap();
         let verifier = build_verifier(&fluent_namespace(CHAIN_ID), bimap, TARGET, None);
@@ -2283,10 +2012,10 @@ mod tests {
         );
     }
 
-    /// ITEM 2. The store keeps the artifact per epoch, first-wins, and a restart
-    /// finds it again — which is the residual the agreement supervisor names
-    /// today (`dkg_agree_body_lost_total`: nothing re-broadcasts a decided
-    /// proposal, so a restart without this store loses the artifact outright).
+    /// The store keeps the artifact per epoch, first-wins, and a restart finds it
+    /// again — which is the residual the agreement supervisor names: nothing
+    /// re-broadcasts a decided proposal, so a restart without this store loses the
+    /// artifact outright.
     #[test]
     fn the_store_is_per_epoch_first_wins_and_survives_a_restart() {
         let runner = deterministic::Runner::default();
@@ -2310,8 +2039,6 @@ mod tests {
             assert_eq!(*store.get(TARGET).expect("held"), mine);
             assert!(store.get(TARGET + 1).is_none());
 
-            // Let the writer drain, then stop it — the restart below opens the
-            // same partition with a fresh handle.
             context.sleep(Duration::from_millis(50)).await;
             let writer = writer.expect("a partitioned store has a writer");
             writer.abort();
@@ -2333,26 +2060,19 @@ mod tests {
         });
     }
 
-    /// PERSIST ERROR OF THE ARTIFACT (project §5.4; PLAN row 5.1 names this test).
-    /// A failing durable half must NOT gate acceptance: the artifact stands in RAM,
-    /// the epoch stays VERIFIABLE off it, and the failure is observable.
+    /// A failing durable half must not gate acceptance: the artifact stands in RAM,
+    /// the epoch stays verifiable off it, and the failure is observable.
     ///
-    /// Why RAM acceptance is the rule rather than a convenience: refusing an
-    /// artifact this node cannot journal would turn a local disk fault into "no
-    /// `PK_E` ⇒ every σ of the epoch `Pending` ⇒ execution parks" — a node that
-    /// cannot WRITE would stop being able to VERIFY, which is the one failure mode
-    /// §5.4 refuses to buy.
+    /// Refusing an artifact this node cannot journal would turn a local disk fault
+    /// into "no `PK_E` ⇒ every σ of the epoch Pending ⇒ execution parks" — a node
+    /// that cannot write would stop being able to verify.
     ///
-    /// The injected class is the durable writer being GONE (its task died, or the
-    /// drain closed). It is the class this runtime can inject — commonware's
-    /// deterministic `Storage` is in-memory and has no fault knob, so a real
-    /// `Metadata::sync` error is not reachable here — and it is the SAME arm: value
-    /// kept, durability lost, operator told. The `sync` half is
-    /// `dpos_artifact_store_sync_failed_total` in this module's writer.
+    /// The injected class is the durable writer being gone (its task died, or the
+    /// drain closed), the same arm as a real `Metadata::sync` error: value kept,
+    /// durability lost, operator told.
     ///
-    /// Falsifier: `insert` answering `false`, or the key going unresolvable, when
-    /// the durable half is dead; the counter staying at 0 (a silent loss of
-    /// durability, which is the state an operator must never have to infer).
+    /// Falsifier: `insert` answering `false`, or the key going unresolvable, when the
+    /// durable half is dead; the counter staying at 0.
     #[test]
     fn an_artifact_whose_durable_write_is_lost_is_kept_in_ram_and_counted() {
         use metrics_util::debugging::{DebugValue, DebuggingRecorder};
@@ -2374,8 +2094,8 @@ mod tests {
                 mine,
                 "and it is the artifact that was offered, not a placeholder"
             );
-            // And the node keeps verifying: the key of the epoch resolves off the
-            // RAM half alone, which is the whole point of accepting it.
+            // And the node keeps verifying: the key of the epoch resolves off the RAM
+            // half alone, which is the whole point of accepting it.
             let keys = key_index_over(store.clone(), &[TARGET]);
             assert!(
                 keys.key_at(TARGET).is_some(),
@@ -2403,58 +2123,9 @@ mod tests {
         );
     }
 
-    /// (П-3, RECREATED — `resolve.rs::a_stable_committees_attested_mint_outlives_the_retention_window`
-    /// went with its file) A STABLE committee's mint outlives the retention window,
-    /// and now the restart with it.
-    ///
-    /// WHY THE CLAIM SURVIVED ITS OWNER. On a committee that never changes the mint
-    /// is the deterministic bootstrap epoch FOREVER, while every pruner in the plane
-    /// runs frontier-relative — so an epoch-measured window over the wrong store
-    /// deletes the one object every later epoch depends on and nothing re-inserts
-    /// it. That is what the old test guarded, and the shape of the danger did not
-    /// change when the owner did.
-    ///
-    /// WHAT THE OLD ASSERT PROVED, ITEM BY ITEM, AND WHERE EACH ITEM IS NOW:
-    ///
-    /// 1. *A local publication (`KeySource::LocalDkg`) and a carry memo
-    ///    (`KeySource::Carried`) far below the frontier ARE pruned* — the window
-    ///    still bounds growth. GONE AS A CLASS, not moved: W1, W3, `Carried` and the
-    ///    three-tier `BeaconKeys` are deleted, so there is no derived tier left to
-    ///    prune. What is still prunable and still pruned is the σ half
-    ///    (`seed_index::evict`, both node classes since row 5.2 folded the
-    ///    follower's provider into `LiveBeacon`) and this node's own shares
-    ///    (`actor::ceremony_retain_floor`).
-    /// 2. *The attested tier at the mint epoch is EXEMPT from the window, and
-    ///    survives a frontier ten windows above it.* CARRIED HERE, and it is the
-    ///    heart of the test: the owner of the key is the artifact store, which has
-    ///    no prune surface at all, plus the mint memo that ADDRESSES it.
-    /// 3. *Therefore the share gate keeps demoting instead of publishing a divergent
-    ///    key at a far-frontier stable epoch.* GONE AS A CLASS: the divergence gate
-    ///    compared "the key I rebuilt" against "the key the network attested", and
-    ///    [`KeyIndex`] has one value — `WithheldReason::KeyDivergence` and its
-    ///    counter are deleted rather than left unreachable.
-    /// 4. *`ceremony_retain_floor` keeps the single old mint of a stable committee*
-    ///    (the old test read this through the resolver). Already pinned directly, as
-    ///    a unit, by `actor::retain_floor_tests::single_old_mint_on_stable_committee_is_retained`
-    ///    — not duplicated here.
-    ///
-    /// WHAT THIS TEST ADDS that the old one could not: the RESTART. The old owner
-    /// rebuilt its answer by walking the chain's `dkgQual` bits, and that walk cannot
-    /// terminate for this fixture after a restart — the committee module folds every
-    /// epoch below `epoch(anchor) − SCHEME_RETENTION_EPOCHS` into the same `None`
-    /// (`committee/facade.rs`), which the second half models by a `changed` closure
-    /// that answers `None` for every epoch. The durable memo is what still addresses
-    /// the artifact, and the third half is the negative control that says so: the
-    /// same blind chain with a FRESH memo answers nothing at all, which is I4's
-    /// residual stated as an assertion rather than as prose.
-    ///
-    /// Falsifier: any epoch above the mint resolving to a different mint (the walk
-    /// or the memo is wrong); the artifact store losing the entry over a frontier ten
-    /// windows above it; `key_at` at the far frontier answering `None` after the
-    /// restart (the memo is not durable, and a restarted node holds an artifact it
-    /// cannot address); the FRESH index answering the far frontier off a blind chain
-    /// (then the walk does not depend on the memo and the second half proves
-    /// nothing).
+    /// A stable committee's mint outlives the retention window, and so does a
+    /// restart: the durable memo addresses the artifact that a blind chain can no
+    /// longer reach.
     #[test]
     fn a_stable_committees_mint_outlives_the_retention_window() {
         let runner = deterministic::Runner::default();
@@ -2478,9 +2149,9 @@ mod tests {
             .expect("open the artifact store");
             assert!(store.insert(BOOTSTRAP, mint.clone()).is_ok());
 
-            // THE CHAIN: one mint, at the bootstrap epoch, and a committee that never
-            // changes after it. The asked-epoch log is what makes the restart half
-            // non-vacuous — it shows the second process asking nothing.
+            // The chain: one mint, at the bootstrap epoch, and a committee that never
+            // changes after it. The asked-epoch log shows the second process asking
+            // nothing.
             let asked: Arc<Mutex<Vec<u64>>> = Arc::default();
             let stable: ChangedAt = {
                 let asked = asked.clone();
@@ -2499,8 +2170,8 @@ mod tests {
             .expect("open the mint memo");
             let keys = KeyIndex::new(store.clone(), mints);
 
-            // (1) EVERY epoch from the mint to the far frontier is minted by the
-            // bootstrap epoch — resolved one epoch at a time, as the live callers do
+            // Every epoch from the mint to the far frontier is minted by the
+            // bootstrap epoch, resolved one epoch at a time as the live callers do
             // (one resolve per epoch entered).
             for epoch in BOOTSTRAP..=frontier {
                 assert_eq!(
@@ -2514,9 +2185,9 @@ mod tests {
                 "the walk never read the chain, so the memo below is memoising nothing"
             );
 
-            // (2) AND THE KEY IS SERVED THERE. The window is an epoch count and the
-            // frontier is ten of them above the mint; nothing evicted the object that
-            // answers.
+            // And the key is served there: the window is an epoch count and the
+            // frontier is ten of them above the mint, and nothing evicted the object
+            // that answers.
             assert_eq!(
                 keys.key_at(frontier),
                 Some(minted_pk),
@@ -2533,8 +2204,6 @@ mod tests {
                 "the artifact store gained or lost an entry over the walk"
             );
 
-            // Let both writers drain, then stop them: the restart below reopens the
-            // same two partitions.
             context.sleep(Duration::from_millis(50)).await;
             for writer in [
                 store_writer.expect("a partitioned store has a writer"),
@@ -2544,10 +2213,8 @@ mod tests {
                 drop(writer.await);
             }
 
-            // (3) THE RESTART, over a chain that can no longer answer the bit. Every
-            // epoch of this fixture is more than one window below the anchor's
-            // window floor, and the committee module folds that into `None` — so a
-            // walk has nothing to bottom out on and the memo is the whole answer.
+            // The restart, over a chain that can no longer answer the bit: the walk
+            // has nothing to bottom out on and the memo is the whole answer.
             let blind_asks: Arc<Mutex<Vec<u64>>> = Arc::default();
             let blind: ChangedAt = {
                 let asks = blind_asks.clone();
@@ -2583,11 +2250,9 @@ mod tests {
                 blind_asks.lock().expect("asks")
             );
 
-            // (4) NEGATIVE CONTROL, and it is I4's residual as an assertion: the same
-            // blind chain with a FRESH memo answers nothing. So (3) is the memo's
-            // durability and not something the walk would have managed anyway — and a
-            // node whose datadir is empty and whose mint is older than the window
-            // stays on vote-only admission for the epoch.
+            // Negative control: the same blind chain with a fresh memo answers
+            // nothing, so the restart above is the memo's durability and not
+            // something the walk would have managed anyway.
             let fresh = KeyIndex::new(store.clone(), MintIndex::new(blind));
             assert_eq!(
                 fresh.key_at(frontier),
@@ -2625,14 +2290,11 @@ mod tests {
         )
     }
 
-    /// EB-02 / EA-01. A served value that LOSES the insert — the store already
-    /// holds one (before the pull, or inserted by the local instance while the
-    /// pull ran: `insert` is the one decision, so both are this arm) — is not
-    /// lost: a DIFFERENT value is noted as the divergence witness, written to
-    /// disk by the STORE itself (`beacon-conflict-e<E>.bin`, read back by a store
-    /// reopened over the directory), and handed to the write-back; the SAME value
-    /// again is nothing new. The peer served a certified artifact either way, so
-    /// the delivery is honest.
+    /// A served value that loses the insert is not lost: a different value is noted
+    /// as the divergence witness, written to disk by the store itself and read back
+    /// by a store reopened over the directory, and handed to the write-back; the same
+    /// value again is nothing new. The peer served a certified artifact either way,
+    /// so the delivery is honest.
     #[test]
     fn a_served_value_that_loses_the_insert_is_noted_durably_not_lost() {
         let dir = std::env::temp_dir().join(format!(
@@ -2649,7 +2311,7 @@ mod tests {
         assert!(store.insert(TARGET, mine.clone()).is_ok());
         assert!(adopt_rx.try_recv().is_err(), "nothing handed off yet");
 
-        // A peer serves a DIFFERENT certified value for the same epoch.
+        // A peer serves a different certified value for the same epoch.
         let other = {
             let mut p = proposal(TARGET);
             p.logs.pop();
@@ -2713,11 +2375,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// ITEMS 3 + 4. A producer that lacks the artifact ANSWERS `NotYet` instead
-    /// of dropping the responder, and the consumer takes both states as honest
-    /// deliveries — so `deliver` never returns false for an honest peer and the
-    /// un-removable `excluded`-peer defect cannot fire on this instance. `false`
-    /// is reserved for proven misbehaviour.
+    /// A producer that lacks the artifact answers `NotYet` instead of dropping the
+    /// responder, and the consumer takes both states as honest deliveries — so
+    /// `deliver` never returns false for an honest peer and the un-removable
+    /// `excluded`-peer defect cannot fire. `false` is reserved for proven
+    /// misbehaviour.
     #[test]
     fn both_states_are_honest_deliveries_and_only_forgery_returns_false() {
         let c = committee(6);
@@ -2747,7 +2409,7 @@ mod tests {
         assert_eq!(*fetching.store.get(TARGET).expect("stored"), mine);
 
         // A forged artifact — certified by a committee that is not this epoch's
-        // — is proven misbehaviour, and only THAT returns false.
+        // — is proven misbehaviour, and only that returns false.
         let (liar, _liar_adopt) = bridge_and_adopt(&c, TARGET);
         let forged = artifact(&committee(7), TARGET);
         let bytes = ArtifactResponse::Have(Box::new(forged)).encode();
@@ -2769,7 +2431,7 @@ mod tests {
             "a NotYet about another epoch must be refused"
         );
 
-        // An unreadable committee is a fact about THIS node, never a verdict on
+        // An unreadable committee is a fact about this node, never a verdict on
         // the peer: the artifact is dropped and the peer keeps its standing.
         let (blind_adopt_tx, _blind_adopt) = tokio::sync::mpsc::channel(16);
         let blind = ArtifactBridge::new(
@@ -2793,7 +2455,7 @@ mod tests {
     /// once.
     ///
     /// The store answers every `PK_epoch` read and serves peers, but nothing that
-    /// reads it reaches `DkgActor::on_artifact` — so without this push a node whose
+    /// reads it reaches [`DkgActor::on_artifact`] — so without this push a node whose
     /// own instance died mid-agreement can verify the epoch key it pulled and still
     /// never derive its share for that epoch.
     #[test]
@@ -2894,10 +2556,9 @@ mod tests {
         async fn retain(&mut self, _: impl Fn(&Self::Key) -> bool + Send + 'static) {}
     }
 
-    /// ITEM 3. The caller sees all three outcomes and is never left in silent
-    /// retry: `Have`, `NotYet`, and — when nobody answers — an exhausted walk as
-    /// `None`, which is the cert-follow RPC seam's semantics rather than
-    /// `Consumer::failed`'s silence.
+    /// The caller sees all three outcomes and is never left in silent retry: `Have`,
+    /// `NotYet`, and — when nobody answers — an exhausted walk as `None`, which is
+    /// the cert-follow RPC seam's semantics rather than `Consumer::failed`'s silence.
     #[test]
     fn the_pull_surfaces_have_not_yet_and_an_exhausted_walk() {
         let runner = deterministic::Runner::timed(Duration::from_secs(600));
@@ -2951,7 +2612,7 @@ mod tests {
                 "a locally-held artifact must not touch the network"
             );
 
-            // Nobody answers at all: the walk exhausts and the caller is TOLD,
+            // Nobody answers at all: the walk exhausts and the caller is told,
             // instead of parking on a fetch the resolver retries forever.
             resolver.silent = true;
             assert!(
@@ -2969,9 +2630,9 @@ mod tests {
         });
     }
 
-    /// ITEM 5. Repeated pulls for one epoch are rate-bounded at the caller, which
-    /// is what keeps this seam from tripping a peer's inbound quota — an
-    /// over-quota sleeps the WHOLE connection to that peer, not just this channel.
+    /// Repeated pulls for one epoch are rate-bounded at the caller, which keeps this
+    /// seam from tripping a peer's inbound quota — an over-quota sleeps the whole
+    /// connection to that peer, not just this channel.
     #[test]
     fn repeated_pulls_are_rate_bounded_per_epoch() {
         let runner = deterministic::Runner::timed(Duration::from_secs(600));
@@ -3004,11 +2665,10 @@ mod tests {
                     .len(),
                 4
             );
-            // Each attempt is addressed to ONE minter, and successive attempts walk
+            // Each attempt is addressed to one minter, and successive attempts walk
             // the committee in its Commonware order: a member that keeps answering
-            // `NotYet` costs one attempt, never the pull. (The resolver ranks peers
-            // by response time; an untargeted fetch re-asks a fast non-holder
-            // forever — measured on the stand, see `minter_to_ask`.)
+            // `NotYet` costs one attempt, never the pull. (The resolver ranks peers by
+            // response time; an untargeted fetch re-asks a fast non-holder forever.)
             let minters: Vec<PeerPubkey> = epoch_committee_from_snapshot(&c.snapshot(TARGET))
                 .expect("committee")
                 .bimap
@@ -3040,7 +2700,7 @@ mod tests {
                 "the throttle is per epoch, not global"
             );
 
-            // The slot map is bounded by ONE rule: an epoch nobody pulled for a whole
+            // The slot map is bounded by one rule: an epoch nobody pulled for a whole
             // interval + timeout is forgotten (throttle and rotation cursor alike),
             // and a held artifact forgets its epoch at once — no entry per epoch ever
             // pulled, forever.
@@ -3070,11 +2730,8 @@ mod tests {
             ));
             assert_eq!(pull.live_slots(), 0, "a held artifact forgets its slot");
 
-            // The production shape skips the puller itself: a member pulling its
-            // own committee's artifact walks the OTHER members only, in order,
-            // wrapping — an attempt is never spent asking oneself. (A puller of its
-            // own, so its walk starts fresh; `TARGET` is the one epoch whose
-            // committee the fake bridge can read.)
+            // The production shape skips the puller itself: a member pulling its own
+            // committee's artifact walks the other members only, in order, wrapping.
             let me = minters[1].clone();
             let member =
                 ArtifactPull::new(context.clone(), resolver.fetching.clone(), Some(me.clone()));
@@ -3106,10 +2763,10 @@ mod tests {
             );
             assert!(!asked.contains(&me));
 
-            // An artifact that lands DURING the throttle sleep is found before the
-            // network is asked: the sleep answers only the waiters of its moment,
-            // so the store is re-read after it — otherwise this attempt would wait
-            // out the whole `PULL_TIMEOUT` for a body already held.
+            // An artifact that lands during the throttle sleep is found before the
+            // network is asked: the sleep answers only the waiters of its moment, so
+            // the store is re-read after it — otherwise this attempt would wait out the
+            // whole `PULL_TIMEOUT` for a body already held.
             assert!(matches!(
                 pull.pull(&mut resolver, TARGET + 8).await,
                 Some(PullAnswer::NotYet)

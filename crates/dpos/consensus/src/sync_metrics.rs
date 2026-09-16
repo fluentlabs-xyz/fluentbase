@@ -1,16 +1,15 @@
 //! Self-heal observability — the `dpos_sync_degraded{reason}` stuck-detector.
 //!
-//! The reth-aligned recovery posture keeps a node UP and retrying (rather than
-//! `process::exit`-ing) wherever fork-safety permits; the gauge, not a crash, is
-//! then the operator's stuck signal. A [`SyncMetrics`] is created + registered
-//! ONCE per launch (mirrors `beacon::metrics::BeaconMetrics`) against
-//! the launch context (commonware `Metrics`, scraped at `:19100` — NOT the
-//! `metrics::` macro recorder) and cloned into the cold-start + boundary-hook
-//! self-heal loops. Each metric is `Arc`-backed, so the struct is cheap to clone
-//! and every clone shares one counter.
+//! The reth-aligned recovery posture keeps a node up and retrying (rather than
+//! exiting) wherever fork-safety permits; the gauge, not a crash, is then the
+//! operator's stuck signal. A [`SyncMetrics`] is created and registered once per
+//! launch against the launch context (commonware `Metrics`, not the `metrics::` macro
+//! recorder) and cloned into the cold-start and boundary-hook self-heal loops. Each
+//! metric is `Arc`-backed, so the struct is cheap to clone and every clone shares one
+//! counter.
 //!
-//! Contract (modeled on the executor's `deferred_height`): a `reason` held at 1
-//! for `>Xm` is the alertable stuck-node signal that replaces the removed fatal.
+//! Contract: a `reason` held at 1 for `>Xm` is the alertable stuck-node signal that
+//! replaces the removed fatal.
 
 use commonware_runtime::Metrics;
 use prometheus_client::{
@@ -27,43 +26,39 @@ use std::{
 use tokio::sync::watch;
 use tracing::{error, warn};
 
-/// Why a node is self-healing rather than participating normally — the single
-/// bounded label set of `dpos_sync_degraded`. Set to 1 while the matching
-/// self-heal loop retries; cleared to 0 on recovery. Variant numbering follows
-/// the recovery-taxonomy path ids (research T1).
+/// Why a node is self-healing rather than participating normally — the bounded
+/// label set of `dpos_sync_degraded`. Set to 1 while the matching self-heal loop
+/// retries; cleared to 0 on recovery.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum SyncReason {
-    /// #11 cold-start EL-sync found zero devp2p peers — re-attempting forever.
+    /// Cold-start EL-sync found zero devp2p peers; re-attempting forever.
     NoPeers,
-    /// #13 reth does not yet hold the DPoS activation block — polling forever.
+    /// reth does not yet hold the DPoS activation block; polling forever.
     ActivationWait,
-    /// #14 a transient engine-API transport error; retrying the FCU/import.
+    /// A transient engine-API transport error; retrying the FCU/import.
     EngineRetry,
-    /// #17 a just-landed block is not yet reth-visible; visibility belt retrying.
+    /// A just-landed block is not yet reth-visible; the visibility belt retries.
     LandingWait,
-    /// #8/#12 crash-survivor recovery deferred to devp2p / by-height re-fetch.
+    /// Crash-survivor recovery deferred to devp2p EL-sync / by-height re-fetch.
     CrashRecover,
-    /// #16 the epoch-boundary staking hook keeps erroring; retrying-degraded.
+    /// The epoch-boundary staking hook keeps erroring; retrying degraded.
     BoundaryHook,
     /// The EL did not make a finalized derived block canonical (dropped import /
-    /// SYNCING FCU); re-applying (re-derive + import + FCU) until it lands.
+    /// SYNCING FCU); re-applying until it lands.
     FinalizeApply,
-    /// #2/#3 SafetyHalt: attested result diverged from local execution.
+    /// SafetyHalt: attested result diverged from local execution.
     ResultDivergence,
-    /// #10 SafetyHalt: synced head does not descend from the L1-finalized root.
+    /// SafetyHalt: synced head does not descend from the L1-finalized root.
     L1Fork,
-    /// #15 SafetyHalt: reth returned Invalid for our locally-derived block.
+    /// SafetyHalt: reth returned Invalid for a locally-derived block.
     ElInvalid,
     /// SafetyHalt: the staking contract answered an epoch's committee with
-    /// something no committed epoch can answer (`ReadClass::Impossible` —
-    /// undecodable bytes, a committee out of order / duplicated / below the
-    /// on-chain floor, frozen weights missing inside the read window, one epoch
-    /// read twice with two different values), for an epoch this node has to
-    /// enter. The chain contradicted its own invariants, so every validator
-    /// reads the same impossible thing: participating on a guess is the one
-    /// thing a node must not do, and skipping the epoch in silence is what this
-    /// halt replaces. Engaged by `epoch_manager::reconcile_roles`, the ONE site
-    /// that knows the epoch was owed.
+    /// something no committed epoch can answer (undecodable bytes, a committee out
+    /// of order / duplicated / below the on-chain floor, frozen weights missing
+    /// inside the read window, or one epoch read twice with two values) for an epoch
+    /// this node has to enter. Every validator reads the same impossible thing, so
+    /// participating would be a guess. Engaged by `epoch_manager::reconcile_roles`,
+    /// the one site that knows the epoch was owed.
     ContractFork,
 }
 
@@ -124,49 +119,42 @@ struct DegradedLabels {
 pub struct SyncMetrics {
     /// `dpos_sync_degraded{reason}` — 1 while the `reason` self-heal loop retries.
     degraded: Family<DegradedLabels, Gauge<i64>>,
-    /// #14 transient engine-API (FCU/import) transport errors retried, not exited.
+    /// Transient engine-API (FCU/import) transport errors retried, not exited.
     pub engine_transient_retry: Counter,
-    /// #8/#12 crash-survivor recoveries deferred to devp2p EL-sync / by-height re-fetch.
+    /// Crash-survivor recoveries deferred to devp2p EL-sync / by-height re-fetch.
     pub crash_recover_deferred_to_elsync: Counter,
-    /// #12 block distance reth is behind its own consensus archive (0 = none).
+    /// Block distance reth is behind its own consensus archive (0 = none).
     pub crash_recover_gap_blocks: Gauge<i64>,
-    /// #8 below-floor marshal-archive holes healed by a BLS-verified by-height
-    /// re-fetch through the cert upstream (the live marshal resolver cannot repair
-    /// below its finalized floor, so the crash-survivor recovery re-fetches inline).
+    /// Below-floor marshal-archive holes healed by a BLS-verified by-height
+    /// re-fetch through the cert upstream during crash-survivor recovery, which
+    /// cannot repair below its finalized floor.
     pub crash_recover_refetched: Counter,
     /// σ found in the local seed store at a round the agreed epoch map calls
-    /// beacon-INACTIVE, during the crash-survivor replay. IGNORED (the network
+    /// beacon-inactive, during the crash-survivor replay. Ignored (the network
     /// derives `None` there), never obeyed and never fatal: the seed journal is
-    /// replayed without re-verification by design, so one corrupted or crafted
-    /// record must not steer this node's `prev_randao` away from its peers'.
-    /// Sibling of the executor's `dpos_executor_stray_seed_at_inactive_round_total`
-    /// on the live path; both are expected to read 0.
+    /// replayed without re-verification, so one corrupted or crafted record must not
+    /// steer this node's `prev_randao` away from its peers'. Sibling of the
+    /// executor's live-path counter; both are expected to read 0.
     pub crash_recover_stray_seed: Counter,
     /// Epoch-boundary blocks seeded below the marshal floor so a jumped member can
-    /// spawn its engine in the LANDING epoch instead of parking verify-only until the
-    /// next boundary. Bumped at the INJECTION sites, once per height actually stored — a
-    /// successful fetch that the both-or-neither batch then discards leaves this flat, so
-    /// the counter can never read non-zero while nothing was injected.
+    /// spawn its engine in the landing epoch instead of parking verify-only until the
+    /// next boundary. Bumped at the injection sites, once per height actually
+    /// stored, so a fetch the both-or-neither batch discards leaves it flat.
     pub jump_boundary_refetched: Counter,
-    /// Boundary seeding that failed (upstream absent/silent, wrong height served,
-    /// structural or BLS check failed, committee unreadable). Non-zero means a member
-    /// stayed verify-only for its landing epoch — no proposals, no votes — which is
-    /// the pre-fix behaviour, degraded to loudly instead of silently.
+    /// Boundary seeding that failed (upstream absent or silent, wrong height served,
+    /// structural or BLS check failed, committee unreadable). Non-zero means a
+    /// member stayed verify-only for its landing epoch.
     pub jump_boundary_refetch_failed: Counter,
-    /// A steady-state re-jump aborted because reth was CONNECTED but its executed
-    /// head stayed frozen for the stall window — the soak-v43 connected-but-wedged
-    /// EL pipeline. Bumped once per re-jump attempt that trips the stall net; a
-    /// climbing value against a plateaued chain height is the alertable signal that
-    /// this node is deterministically re-wedging (the divergence root cause is
-    /// unknown, so the node stays observable + deferred rather than silently stuck).
+    /// A steady-state re-jump aborted because reth was connected but its executed
+    /// head stayed frozen for the stall window. Bumped once per re-jump attempt that
+    /// trips the stall net; a climbing value against a plateaued chain height means
+    /// this node is deterministically re-wedging.
     pub el_sync_stalled_with_peers: Counter,
-    /// `dpos_safety_halt_engaged` — 1 once the fork-safety latch is engaged, in
-    /// THIS process or in a previous one (a restart reloads the datadir marker
-    /// and re-engages before the first event). Separate from
-    /// `dpos_sync_degraded{reason}` because the halt is permanent and
-    /// operator-cleared while a degraded reason is a self-heal loop that clears
-    /// itself — and because a marker written by another build carries a reason
-    /// label this build cannot decode, leaving the labeled gauge silent.
+    /// `dpos_safety_halt_engaged` — 1 once the fork-safety latch is engaged, in this
+    /// process or a previous one (a restart reloads the datadir marker and re-engages
+    /// before the first event). Separate from `dpos_sync_degraded{reason}` because
+    /// the halt is permanent and operator-cleared, and because a marker written by
+    /// another build carries a reason label this build cannot decode.
     pub safety_halt_engaged: Gauge<i64>,
 }
 
@@ -261,24 +249,19 @@ impl SyncMetrics {
 
 /// The two clocks the DPoS node runs on, published side by side.
 ///
-/// Both halves are the SAME tip — marshal's ordering tip off
-/// `FluentApp::report`, which writes the ordering half and publishes the
-/// process-wide watch the `DkgActor` reads; the actor writes the DKG half off
-/// its monotone clamp when it has taken the tip. Two gauges over one value are
-/// the visibility of an actor that has stopped taking it: a growing lag with a
-/// moving ordering half is a beacon actor that is not running.
+/// Both halves are the same tip: marshal's ordering tip off `FluentApp::report`,
+/// which writes the ordering half and publishes the watch the `DkgActor` reads; the
+/// actor writes the DKG half off its monotone clamp when it has taken the tip. Two
+/// gauges over one value show an actor that has stopped taking it: a growing lag
+/// with a moving ordering half is a beacon actor that is not running.
 ///
-/// The ordering half is BFT-attested, but it is NOT independent of execution,
-/// and the pair must not be read as if it were. Measured on a 4-validator stand
-/// with the victim's execution halted for 300 s while the chain ran 300 → 637:
-/// its ordering gauge stepped 303 → 319 → 383 → 447 on epoch ends and then
-/// froze at 447 for the remaining 167 s. The ceiling is
-/// `last(epoch(EL_finalized − K) + 2)` — the committee source is the node's own
-/// EL state, so a halted node can only see two epochs past the committees it
-/// already read. Warning time is that window, not unbounded (FLU-1173).
+/// The ordering half is BFT-attested, but it is not independent of execution, and
+/// the pair must not be read as if it were: the committee source is the node's own EL
+/// state, so a halted node can only see two epochs past the committees it already
+/// read. The warning time is that window, not unbounded.
 ///
-/// Registered by the plane builder (the node crate, where the registry lives),
-/// mirroring [`SyncMetrics`]'s clone-shares-one-gauge topology.
+/// Registered by the plane builder, mirroring [`SyncMetrics`]'s
+/// clone-shares-one-gauge topology.
 #[derive(Clone, Debug)]
 pub struct PlaneClock {
     ordering: Gauge<i64>,
@@ -291,8 +274,8 @@ pub struct PlaneClock {
 
 impl Default for PlaneClock {
     /// Hand-written for one field: the lag starts at `-1`, not at the `Gauge`
-    /// default of 0. A clock nobody has written yet is exactly the "not
-    /// comparable" state, and 0 is the value that reads as perfect health.
+    /// default of 0. A clock nobody has written yet is exactly the "not comparable"
+    /// state, and 0 is the value that reads as perfect health.
     fn default() -> Self {
         let lag = Gauge::<i64>::default();
         lag.set(-1);
@@ -342,7 +325,7 @@ impl PlaneClock {
     }
 
     /// The `DkgActor` took a tip off the watch and clamped it into its running
-    /// max. The ONE writer of this half.
+    /// max. The one writer of this half.
     pub fn record_dkg_clock(&self, height: u64) {
         self.dkg.set(height as i64);
         self.seen.fetch_or(0b10, Ordering::Relaxed);
@@ -355,11 +338,10 @@ impl PlaneClock {
     /// the "nothing to report" it is.
     fn refresh_lag(&self) {
         if self.seen.load(Ordering::Relaxed) != 0b11 {
-            // Never written on one side: a fail-soft node with no DkgActor
-            // (`beacon/plane.rs`'s unfrozen-geometry branch) and the post-restart
-            // window before the actor takes its first tip would otherwise report the
-            // whole chain height as lag. -1 is out of the domain of a real lag and
-            // says "not yet comparable" instead of "healthy".
+            // Never written on one side: a fail-soft node with no DkgActor and the
+            // post-restart window before the actor takes its first tip would otherwise
+            // report the whole chain height as lag. -1 is out of the domain of a real
+            // lag and says "not yet comparable" instead of "healthy".
             self.lag.set(-1);
             return;
         }
@@ -372,56 +354,44 @@ impl PlaneClock {
     }
 }
 
-/// Fork-safety latch (Phase 3 `SafetyHalt`). A node that detects it would extend
-/// a branch honest peers reject — #2/#3 result divergence, #15 an EL `Invalid`
-/// verdict on a locally-derived block, #10 an L1-fork (`holds()==false`) after an
-/// EL-sync jump — HALTS instead of `process::exit`-ing OR (worse) trusting the
-/// cert and continuing. Engaging it:
+/// Fork-safety latch. A node that detects it would extend a
+/// branch honest peers reject — result divergence, an EL `Invalid` verdict on a
+/// locally-derived block, or an L1 fork (`holds()==false`) after an EL-sync jump —
+/// halts instead of exiting or trusting the cert and continuing. Engaging it:
 ///
 /// 1. raises `dpos_sync_degraded{reason}=1` (`result_divergence` / `el_invalid` /
-///    `l1_fork`) — the alertable "this node refuses the chain" signal;
-/// 2. LATCHES so [`crate::epoch_manager::Actor::reconcile_roles`] never
-///    (re-)promotes the node to a participating `Signer` — demoted to verify-only
-///    permanently (stop signing/proposing/voting);
-/// 3. publishes the 0→1 EDGE — a `watch<bool>` every [`Self::engaged_edge`]
-///    waiter sees, however many there are and whenever they arm — so the epoch
-///    manager aborts any running engine and the beacon's agreement launcher
-///    aborts any running agreement instance immediately (not just at the next
-///    boundary, and not at the next finalized height).
+///    `l1_fork`), the alertable "this node refuses the chain" signal;
+/// 2. latches so [`crate::epoch_manager::Actor::reconcile_roles`] never (re-)promotes
+///    the node to a participating `Signer` — it is demoted to verify-only
+///    permanently;
+/// 3. publishes the 0→1 edge — a `watch<bool>` every [`Self::engaged_edge`] waiter
+///    sees — so the epoch manager aborts any running engine and the beacon's
+///    agreement launcher aborts any running agreement instance immediately, not at
+///    the next boundary.
 ///
-/// The executor then stops driving reth forward, and the OuterEngine supervisor
-/// keeps marshal + `consensus`-RPC alive (it does NOT abort-all — that is
-/// reserved for a genuine subsystem CRASH) so the node stays observable and can
-/// be recovered by the L1 SP1 validity proof + social/governance action. It is
-/// a permanent latch: there is deliberately no `disengage` — recovery is
-/// external (a fresh, re-synced start after the fork is resolved on L1).
+/// The executor then stops driving reth forward, and the OuterEngine supervisor keeps
+/// marshal + `consensus`-RPC alive so the node stays observable and can be recovered
+/// by the L1 SP1 validity proof + social/governance action. It is a permanent latch:
+/// there is deliberately no `disengage`.
 ///
-/// "Permanent" has to survive a process restart, so engaging also writes a
-/// one-line marker into the datadir ([`Self::restoring`]). Without it a
-/// `docker restart` silently cleared a latch that has no in-process
-/// `disengage`: the node came back a full signer, on the same disk, with no
-/// record of what it had refused. The marker is cleared by an OPERATOR deleting
-/// the file — never by the node. Automatic recovery is deliberately absent:
-/// neither arming class is separable from network evidence with the data the
-/// node holds at arming time, and "wipe local state and resync" after network
-/// evidence destroys the only thing that distinguishes this node's view from
-/// the disputed quorum certificate.
+/// "Permanent" has to survive a process restart, so engaging also writes a one-line
+/// marker into the datadir ([`Self::restoring`]). The marker is cleared by an
+/// operator deleting the file, never by the node: automatic recovery would destroy
+/// the only thing that distinguishes this node's view from the disputed quorum
+/// certificate.
 ///
-/// Arc-backed → cheap to clone; every clone shares one latch + one gauge family.
+/// Arc-backed, so it is cheap to clone and every clone shares one latch and gauge
+/// family.
 #[derive(Clone, Default)]
 pub struct SafetyHalt {
-    /// The latch bit AND its edge, one value: a `watch` whose `true` is
-    /// published exactly once (`send_if_modified` on the 0→1 transition), read
-    /// by [`Self::is_engaged`] and awaited by [`Self::engaged_edge`]. One state,
-    /// so the bit a reader sees and the edge a waiter gets cannot disagree; the
-    /// `Sender` is what every clone holds, so the channel closes only with the
-    /// last clone. (`watch::Sender<bool>: Default` — `false`.)
+    /// The latch bit and its edge, one value: a `watch` whose `true` is published
+    /// exactly once, read by [`Self::is_engaged`] and awaited by
+    /// [`Self::engaged_edge`]. One state, so the bit a reader sees and the edge a
+    /// waiter gets cannot disagree.
     engaged: watch::Sender<bool>,
-    /// The verdict that engaged the latch — the FIRST one wins (a later engage
-    /// is a consequence of the first, not a second diagnosis). Typed rather
-    /// than reconstructed from a prometheus label or an eyre display string, so
-    /// the restart gate and the operator log read the same value the arming
-    /// site decided.
+    /// The verdict that engaged the latch; the first one wins. Typed rather than
+    /// reconstructed from a prometheus label or an eyre display string, so the
+    /// restart gate and the operator log read the same value the arming site decided.
     reason: Arc<OnceLock<SyncReason>>,
     /// Datadir marker path. `None` for in-process / test latches, which have no
     /// datadir and must not write one.
@@ -430,9 +400,8 @@ pub struct SafetyHalt {
 }
 
 impl SafetyHalt {
-    /// Build a latch that raises its `reason` gauge on the SHARED (already
-    /// registered) [`SyncMetrics`] from `dpos.rs::launch`. No datadir marker:
-    /// for in-process and test use only.
+    /// Build a latch that raises its `reason` gauge on the shared (already
+    /// registered) [`SyncMetrics`]. No datadir marker: for in-process and test use.
     pub fn new(metrics: SyncMetrics) -> Self {
         Self {
             engaged: watch::Sender::default(),
@@ -442,19 +411,16 @@ impl SafetyHalt {
         }
     }
 
-    /// Build the production latch: bound to a datadir `marker` path, and
-    /// ALREADY ENGAGED when a previous run of this node left one behind.
+    /// Build the production latch: bound to a datadir `marker` path, and already
+    /// engaged when a previous run of this node left one behind.
     ///
-    /// This is the restart gate. A restored latch raises
-    /// `dpos_safety_halt_engaged` + `dpos_sync_degraded{reason}` and logs the
-    /// reason BEFORE the first consensus event, and
-    /// `epoch_manager::reconcile_roles` reads `is_engaged()` when deciding
-    /// membership — so the node comes up permanently verify-only (signs
-    /// nothing, proposes nothing, votes on nothing) until an operator removes
-    /// the file.
+    /// This is the restart gate. A restored latch raises `dpos_safety_halt_engaged` +
+    /// `dpos_sync_degraded{reason}` and logs the reason before the first consensus
+    /// event, and `reconcile_roles` reads `is_engaged()` when deciding membership — so
+    /// the node comes up permanently verify-only until an operator removes the file.
     ///
-    /// A marker this build cannot decode still latches: the file's EXISTENCE is
-    /// the halt record; its content only names the reason.
+    /// A marker this build cannot decode still latches: the file's existence is the
+    /// halt record; its content only names the reason.
     pub fn restoring(metrics: SyncMetrics, marker: PathBuf) -> Self {
         let halt = Self {
             engaged: watch::Sender::default(),
@@ -524,10 +490,9 @@ impl SafetyHalt {
             .send_if_modified(|engaged| !std::mem::replace(engaged, true));
     }
 
-    /// Latch the halt + raise `dpos_sync_degraded{reason}=1`, and persist the
-    /// reason to the datadir marker so a restart re-engages instead of silently
-    /// clearing. Idempotent; the edge is published once, on the 0→1 transition,
-    /// and the FIRST reason is the one recorded.
+    /// Latch the halt, raise `dpos_sync_degraded{reason}=1`, and persist the reason
+    /// to the datadir marker so a restart re-engages. Idempotent; the edge is
+    /// published once, and the first reason is the one recorded.
     pub fn engage(&self, reason: SyncReason) {
         self.metrics.degrade(reason);
         let first = self.reason.set(reason).is_ok();
@@ -539,9 +504,9 @@ impl SafetyHalt {
         }
     }
 
-    /// Best-effort marker write. A failure NEVER fails the halt — the in-process
-    /// latch already holds — but it is loud, because it means this node WILL
-    /// come back as a signer after a restart.
+    /// Best-effort marker write. A failure never fails the halt — the in-process
+    /// latch already holds — but it is loud, because it means this node will come
+    /// back as a signer after a restart.
     fn persist_marker(&self, reason: SyncReason) {
         let Some(path) = self.marker.as_deref() else {
             return;
@@ -580,22 +545,18 @@ impl SafetyHalt {
     }
 
     /// Whether the node is safety-halted — read by `reconcile_roles` (never
-    /// re-promote), by the OuterEngine supervisor (park instead of abort-all),
-    /// by the executor before it dispatches, and by the beacon's agreement
-    /// launcher before it spawns. An uncontended read lock on the watch value.
+    /// re-promote), by the OuterEngine supervisor (park instead of abort-all), by the
+    /// executor before it dispatches, and by the beacon's agreement launcher before
+    /// it spawns.
     pub fn is_engaged(&self) -> bool {
         *self.engaged.borrow()
     }
 
-    /// Await the 0→1 engage edge. Resolves for EVERY waiter, and at once for a
-    /// waiter that arms after the engage (`watch::Receiver::wait_for` tests the
-    /// current value before it waits) — no lost wakeup, no single-consumer
-    /// permit. The waiters: the epoch manager's engine-abort arm and the beacon
-    /// launcher's agreement-abort arm. Because the value never goes back to
-    /// `false`, the future resolves on EVERY call once engaged: a `select!`
-    /// loop must arm it ONCE and disarm the arm after the first firing
-    /// (`if !halt_seen`) — a completed pinned future re-polled panics, and one
-    /// re-created per iteration spins the loop.
+    /// Await the 0→1 engage edge. Resolves for every waiter, and at once for a
+    /// waiter that arms after the engage. Because the value never goes back to
+    /// `false`, the future resolves on every call once engaged: a `select!` loop must
+    /// arm it once and disarm the arm after the first firing — a completed pinned
+    /// future re-polled panics, and one re-created per iteration spins the loop.
     pub async fn engaged_edge(&self) {
         let mut edge = self.engaged.subscribe();
         // `Err` needs every `Sender` gone, and `&self` holds one.
@@ -608,7 +569,7 @@ mod tests {
     use super::*;
     use commonware_runtime::{deterministic::Runner, Runner as _};
 
-    // The lag is the whole point of the pair, and it is written by TWO
+    // The lag is the whole point of the pair, and it is written by two
     // independent tasks — so it must be recomputed by whichever wrote last, and
     // must not render the ordinary between-writes overshoot as a negative spike.
     #[test]
@@ -635,7 +596,7 @@ mod tests {
         assert_eq!(clock.snapshot().2, 0);
     }
 
-    // Zero is a healthy lag, so a half that has NEVER reported must not be
+    // Zero is a healthy lag, so a half that has never reported must not be
     // allowed to render as one. Two shapes reach here: a fail-soft node that
     // starts no DkgActor at all, and the window after a restart before the actor
     // takes its first tip off the watch — in both, `ordering − 0` is the whole chain
@@ -688,7 +649,7 @@ mod tests {
         // engaged and never clears — recovery is external, not in-node.
         halt.engage(SyncReason::L1Fork);
         assert!(halt.is_engaged());
-        // ...and the FIRST verdict stays the recorded diagnosis; the second is
+        // ...and the first verdict stays the recorded diagnosis; the second is
         // downstream of it.
         assert_eq!(halt.reason(), Some(SyncReason::ResultDivergence));
         assert_eq!(metrics.safety_halt_engaged.get(), 1);
@@ -716,12 +677,12 @@ mod tests {
         assert!(!first.is_engaged(), "a fresh datadir starts healthy");
         first.engage(SyncReason::ResultDivergence);
 
-        // A new process, a new latch, the SAME datadir.
+        // A new process, a new latch, the same datadir.
         let metrics = SyncMetrics::default();
         let restarted = SafetyHalt::restoring(metrics.clone(), marker.clone());
         assert!(restarted.is_engaged(), "the marker re-engages the latch");
         assert_eq!(restarted.reason(), Some(SyncReason::ResultDivergence));
-        // Both the labeled reason and the unlabeled halt gauge are up BEFORE the
+        // Both the labeled reason and the unlabeled halt gauge are up before the
         // first consensus event — `register` ran on this same `SyncMetrics`.
         assert_eq!(metrics.degraded_value(SyncReason::ResultDivergence), 1);
         assert_eq!(metrics.safety_halt_engaged.get(), 1);
@@ -735,7 +696,7 @@ mod tests {
     }
 
     // A marker written by another build names a reason this one cannot decode.
-    // The FILE is the halt record, so it must still latch — losing the reason
+    // The file is the halt record, so it must still latch — losing the reason
     // must not lose the halt.
     #[test]
     fn an_undecodable_marker_still_comes_up_halted() {
@@ -810,15 +771,9 @@ mod tests {
         });
     }
 
-    /// The edge is MULTICAST and LATE-JOINABLE: the epoch manager and the
-    /// beacon's agreement launcher both wait on it, and a waiter that arms after
-    /// the engage (a launcher built over a latch restored from the marker) must
-    /// not park forever. A single-consumer permit gave exactly one of two waiters
-    /// the edge, which is why the launcher used to learn of a halt only from the
-    /// actor's next height tick.
-    ///
-    /// Falsifier: one of the two armed waiters still pending after the engage;
-    /// the late waiter pending.
+    /// The edge is multicast and late-joinable: the epoch manager and the beacon's
+    /// agreement launcher both wait on it, and a waiter that arms after the engage (a
+    /// launcher built over a latch restored from the marker) must not park forever.
     #[test]
     fn every_engaged_edge_waiter_resolves_and_a_late_one_resolves_at_once() {
         use std::{future::Future as _, pin::pin, task::Context as TaskContext};
@@ -845,7 +800,7 @@ mod tests {
                 "the second armed waiter did not get the edge"
             );
 
-            // Armed AFTER the engage: resolves on the first poll.
+            // Armed after the engage: resolves on the first poll.
             let mut late = pin!(halt.engaged_edge());
             assert!(
                 late.as_mut().poll(&mut cx).is_ready(),

@@ -1,31 +1,23 @@
 //! BLS12-381 multisig wrapper for Fluent DPoS consensus signing.
 //!
-//! This crate is a thin layer over [`commonware_cryptography::bls12381`] and
-//! [`commonware_consensus::simplex::scheme::bls12381_multisig`]. It pins the
-//! `MinSig` variant (pubkey in G2 96 B, signature in G1 48 B) and re-exports
-//! the macro-generated `Scheme` rather than the public-field `Generic`.
+//! A thin layer over [`commonware_cryptography::bls12381`] and
+//! [`commonware_consensus::simplex::scheme::bls12381_multisig`], pinned to the
+//! `MinSig` variant (pubkey in G2 96 B, signature in G1 48 B).
 //!
 //! # Invariants
 //!
-//! - **Variant pin**: `MinSig` only. Never instantiated with `MinPk`.
-//! - **Scheme wrapper**: Only the macro-generated [`Scheme`] is exposed.
-//!   The underlying `Generic` has a `pub signer: Option<(Participant, Private)>`
-//!   field and must never be re-exported.
-//! - **Stock PoP**: [`pop::sign_pop`] delegates straight to
-//!   `ops::sign_proof_of_possession::<MinSig>`. Address binding was considered
-//!   and explicitly rejected.
+//! - **Variant pin**: `MinSig` only, never `MinPk` — we use the low-level
+//!   [`commonware_cryptography::bls12381::primitives::group::Private`] with
+//!   `ops::*::<MinSig>`, because the high-level
+//!   [`commonware_cryptography::bls12381::PrivateKey`] wrapper hardcodes `MinPk`.
+//! - **Scheme wrapper**: only the macro-generated [`Scheme`] is exposed. The
+//!   underlying `Generic` has a `pub signer: Option<(Participant, Private)>` field
+//!   and must never be re-exported.
 //! - **Attestation handling**: `Attestation<S>` is *not* exposed by this crate.
-//!   The Simplex Engine pipeline calls `verify_attestations` (with subgroup
-//!   check) before any attestation contributes to a `Certificate`. If a future
-//!   consumer needs to forward raw attestations (gossip, DA proofs, observers),
-//!   it MUST call `attestation.signature.get()` to force blst decode + subgroup
-//!   check before trusting the bytes.
-//!
-//! # Why not [`commonware_cryptography::bls12381::PrivateKey`]?
-//!
-//! That high-level wrapper hardcodes the `MinPk` variant. We use the low-level
-//! [`commonware_cryptography::bls12381::primitives::group::Private`] together
-//! with `ops::*::<MinSig>` to stay on MinSig.
+//!   The Simplex Engine calls `verify_attestations` (with subgroup check) before
+//!   any attestation contributes to a `Certificate`; a consumer that forwards raw
+//!   attestations must call `attestation.signature.get()` to force blst decode +
+//!   subgroup check before trusting the bytes.
 
 use commonware_consensus::simplex::scheme::bls12381_multisig;
 use commonware_cryptography::bls12381::primitives::variant::MinSig;
@@ -61,12 +53,12 @@ pub type BlsPubkey =
 pub type BlsSignature =
     <MinSig as commonware_cryptography::bls12381::primitives::variant::Variant>::Signature;
 
-/// Inner multisig signing scheme — the attributable VOTE half of the
-/// [`Scheme`] (`CombinedScheme`). Used directly only by the combined scheme's
-/// delegation and by verifier-only consumers that need just the vote half.
+/// Inner multisig signing scheme — the attributable vote half of [`Scheme`]. Used
+/// directly only by the combined scheme's delegation and by verifier-only
+/// consumers that need just the vote half.
 ///
 /// `bls12381_multisig::Scheme<P, V>` is a thin wrapper around the underlying
-/// `Generic<P, V, N>` — see [crate doc](crate) for why we only expose this.
+/// `Generic<P, V, N>` — see the crate doc for why only this is exposed.
 pub type VoteScheme = bls12381_multisig::Scheme<PeerPubkey, Variant>;
 
 /// The Fluent DPoS consensus scheme: an attributable multisig vote (for
@@ -75,14 +67,10 @@ pub type VoteScheme = bls12381_multisig::Scheme<PeerPubkey, Variant>;
 /// notarization/finalization certificate. See [`combined_scheme`].
 pub type Scheme = combined_scheme::CombinedScheme;
 
-/// Key and signature widths on the wire.
-///
-/// The staking contract checks incoming keys and proofs of possession against
-/// the same four numbers (as `BLS_PUBKEY_LENGTH`, `BLS_SIGNATURE_LENGTH`,
-/// `BLS_PUBKEY_UNCOMPRESSED_LENGTH`, `BLS_POP_UNCOMPRESSED_LENGTH`), so they are
-/// declared once in `fluentbase-types` and imported by both sides. Compressed:
-/// G2 pubkey / G1 signature under MinSig. Uncompressed: the EIP-2537 forms, G2
-/// as 4 × 64 and G1 as 2 × 64.
+/// Key and signature widths on the wire, declared once in `fluentbase-types` and
+/// imported by both sides: the staking contract checks incoming keys and proofs of
+/// possession against the same four numbers. Compressed: G2 pubkey / G1 signature
+/// under MinSig. Uncompressed: the EIP-2537 forms, G2 as 4 × 64 and G1 as 2 × 64.
 pub use fluentbase_types::staking_protocol::{
     BLS_PUBKEY_LENGTH as PUBKEY_BYTES, BLS_PUBKEY_UNCOMPRESSED_LENGTH as PUBKEY_EIP2537_BYTES,
     BLS_SIGNATURE_LENGTH as SIGNATURE_BYTES,
@@ -102,14 +90,12 @@ pub const SECRET_BYTES: usize = 32;
 /// ```
 ///
 /// Per-subject suffixes (`_NOTARIZE`, `_NULLIFY`, `_FINALIZE`, `_SEED`) are
-/// appended by Commonware internally — our wrapper does NOT add them.
+/// appended by commonware internally; this wrapper does not add them. `chain_id`
+/// prevents cross-chain replay.
 ///
-/// `chain_id` is included to prevent cross-chain replay (a signature valid on
-/// testnet must not verify on mainnet).
-///
-/// The literal `"FLUENT_DPOS_V1_"` is immutable for the lifetime of the V1
-/// chain. Any change to the variant, scheme, curve, or canonical encoding
-/// requires a hard fork with a new chain_id and namespace `"FLUENT_DPOS_V2_"`.
+/// The literal `"FLUENT_DPOS_V1_"` is immutable for the lifetime of the V1 chain:
+/// changing the variant, scheme, curve, or canonical encoding requires a hard fork
+/// with a new `chain_id` and the namespace `"FLUENT_DPOS_V2_"`.
 pub fn fluent_namespace(chain_id: u64) -> Vec<u8> {
     let mut ns = Vec::with_capacity(15 + 8);
     ns.extend_from_slice(b"FLUENT_DPOS_V1_");

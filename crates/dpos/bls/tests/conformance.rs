@@ -1,9 +1,5 @@
-//! Integration test: validator registration → consensus signing → verify.
-//!
-//! This walks the canonical happy path end-to-end using only the public
-//! `fluentbase_bls::*` surface — no `pub(crate)` shortcuts. If this test
-//! compiles and passes, the public API is sufficient for downstream callers
-//! (`04_consensus`, `06_node_assembly`).
+//! End-to-end registration → PoP → signer/verifier through the public API only;
+//! a compiling, passing test shows downstream callers need no crate internals.
 
 use commonware_codec::DecodeExt;
 use commonware_cryptography::{ed25519::PrivateKey as Ed25519PrivateKey, Signer};
@@ -42,18 +38,14 @@ fn registration_to_signing_happy_path() {
     let ns = fluent_namespace(CHAIN_ID);
     let (bimap, blses) = committee(4);
 
-    // Phase 1: each validator signs their own PoP, contract verifies.
     for kp in &blses {
         let sig = pop::sign_pop(kp, &ns);
         pop::verify_pop(&kp.public_bytes(), &ns, &sig).expect("PoP must verify at registration");
     }
 
-    // Phase 2: build a signer scheme for validator 0 — proves the scheme
-    // wraps the same key material that produced the PoP. Note we pass
-    // `&blses[0]` — the secret never leaves the crate.
+    // Signer must wrap the same key material that produced the PoP above.
     let _signer: Scheme = scheme::build_signer(&ns, bimap.clone(), &blses[0], 1, None)
         .expect("validator 0 must be able to sign in committee");
 
-    // Phase 3: verifier-only scheme can be constructed by an observer.
     let _verifier: Scheme = scheme::build_verifier(&ns, bimap, 1, None);
 }

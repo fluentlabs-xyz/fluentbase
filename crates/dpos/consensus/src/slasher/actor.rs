@@ -2,25 +2,18 @@
 //! charge for a block, or hand it to the transaction fallback once its epoch has
 //! ended.
 //!
-//! The producer keeps the votes it used to discard. Simplex only raises a
-//! `Conflicting*` activity when one node sees both halves of an equivocation,
-//! which a split-delivering equivocator never allows; [`VoteStore`] pairs the
-//! halves instead. Every charge — assembled here or witnessed as a
-//! `Conflicting*` — is verified and held in the shared [`ChargeStore`], which
+//! Simplex only raises a `Conflicting*` activity when one node sees both halves of
+//! an equivocation, so [`VoteStore`] keeps the peer votes and pairs the halves
+//! itself. Every charge is verified and held in the shared [`ChargeStore`], which
 //! [`ChargeStore::next_charge`] hands to a proposer one charge per block.
 //!
-//! **A charge is block-eligible only inside its own epoch**: the vote-time gate
-//! ([`super::evidence::verify_block_charge`]) refuses any other, because only
-//! that epoch's committee can resolve a verifier for it. So an epoch turn — the
-//! event [`Actor::handle`] watches for — strands whatever is still queued, and
-//! [`Actor::drain_stale_charges`] hands those to the transaction route instead.
-//! That route is the actor's producer/consumer split: the producer enqueues
-//! `(victim || calldata)` blobs onto a `commonware_storage::queue::shared` WAL,
-//! and `run_consumer` dequeues, hands them to the [`SlasherTxSink`], and acks on
-//! Mined / AlreadySlashed (goal achieved on-chain) or leaves the entry un-acked
-//! on submission failure. NOTE: an un-acked entry is re-delivered ONLY after a
-//! process restart — `recv` advances `read_pos` unconditionally, so there is no
-//! automatic in-session retry.
+//! A charge is block-eligible only inside its own epoch: only that epoch's
+//! committee can resolve a verifier for it. An epoch turn therefore strands
+//! whatever is still queued, and [`Actor::drain_stale_charges`] hands those to the
+//! transaction route — a WAL the consumer drains, acking on Mined / AlreadySlashed
+//! and leaving an entry un-acked on submission failure. An un-acked entry is
+//! re-delivered only after a process restart: `recv` advances `read_pos`
+//! unconditionally, so there is no in-session retry.
 
 use super::evidence::{
     attributable_signer_idx, extract_from_conflicting_finalize, extract_from_conflicting_notarize,
@@ -58,14 +51,9 @@ use std::{
 use tokio::sync::{mpsc, Mutex as TokioMutex};
 use tracing::{debug, error, info, instrument, warn};
 
-// The three slash entry points come from `fluentbase-staking-abi`, the ONE
-// declaration the contract derives its dispatch selectors from. This used to be
-// a second `sol!` block here, kept in step with a merge checklist that described
-// a delta against an unmerged contract branch; the branch merged as `f16fdd90`
-// and the contract now sits in `contracts/staking` of this tree, so the delta and
-// the checklist are both gone. The production encoder and the conformance tests
-// still go through one declaration — the tests must never re-declare it, or they
-// would validate the code against itself.
+// The three slash entry points come from `fluentbase-staking-abi`, the one
+// declaration the contract derives its dispatch selectors from. Tests must go
+// through it too, or they would validate the encoder against itself.
 pub use fluentbase_staking_abi::{
     slashEquivocationFinalizeCall, slashEquivocationNotarizeCall,
     slashEquivocationNullifyFinalizeCall,
@@ -73,18 +61,16 @@ pub use fluentbase_staking_abi::{
 
 /// Backoff between producer retries of a transient `handle` failure.
 const SLASHER_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_secs(2);
-/// Max producer attempts for one Activity before it is dropped (a missing
-/// committee/scheme/finalized-hash at startup resolves within seconds; a
-/// dependency that is still down after this bound is an operational failure
-/// surfaced by the drop log + metric, not a silent loss on the first hiccup).
+/// Max producer attempts for one Activity before it is dropped. A dependency still
+/// down after this bound is an operational failure, surfaced by the drop log and
+/// metric rather than a silent loss on the first hiccup.
 const SLASHER_MAX_RETRIES: u32 = 30;
 
-/// Outcome of [`Actor::handle`] classifying a failure by retry-ability.
-/// TRANSIENT failures (startup races: no finalized hash, RPC/state read error,
-/// scheme/committee not yet registered, storage hiccup) are re-attempted by the
-/// producer; PERMANENT failures (malformed/variant-mismatch evidence, BiMap
-/// divergence, an epoch that was never committed) are dropped — retrying the same
-/// bytes can never succeed.
+/// Outcome of [`Actor::handle`] classifying a failure by retry-ability. Transient
+/// failures (startup races: no finalized hash, state read error, scheme/committee
+/// not yet registered, storage hiccup) are re-attempted; permanent failures
+/// (malformed evidence, BiMap divergence, an epoch never committed) are dropped,
+/// since retrying the same bytes can never succeed.
 enum HandleError {
     Transient(eyre::Report),
     Permanent(eyre::Report),
@@ -99,14 +85,10 @@ impl HandleError {
     }
 }
 
-/// Transport abstraction over the reth `TransactionPool`. Production
-/// impl in `dpos.rs` owns the slasher EOA key + `node.pool` + `node.provider`
-/// and signs + submits + awaits transaction inclusion. Tests provide a
-/// recording stub.
-///
-/// The consumer task hands `(target, calldata)` and waits for an outcome;
-/// the sink is responsible for nonce management and on-chain confirmation
-/// semantics (no HTTP RPC; uses `TransactionPool::add_consensus_transaction`).
+/// Transport abstraction over the reth `TransactionPool`. Production owns the
+/// slasher EOA key, the pool and the provider, and signs, submits and awaits
+/// inclusion; tests provide a recording stub. The sink owns nonce management and
+/// on-chain confirmation.
 pub trait SlasherTxSink: Send + Sync + 'static {
     fn submit<'a>(
         &'a self,
@@ -116,33 +98,28 @@ pub trait SlasherTxSink: Send + Sync + 'static {
 }
 
 /// Outcome categories used by the consumer to decide whether to ack the WAL
-/// entry. The production sink **pre-flight-simulates** the slash call before
-/// submitting (a receipt carries only a success bit, not the revert reason, so
-/// revert classification must happen at simulation time):
-/// - `Mined` — tx submitted AND confirmed on-chain with `status == 1`. Ack.
-/// - `AlreadySlashed` — pre-flight simulation reverted with
-///   `AlreadySlashedForEquivocation` (victim already tombstoned). The goal is
-///   already achieved; ack without submitting a tx.
-/// - `Failed` — simulation or submission failed (a deterministic encoding bug,
-///   an unexpected revert, or a transient pool/inclusion error). Do NOT ack;
-///   the entry is re-delivered after a process restart (NOT in-session).
-///   Always paired with a loud log.
+/// entry. The production sink pre-flight-simulates the slash call because a receipt
+/// carries only a success bit, not the revert reason.
+/// - `Mined` — submitted and confirmed with `status == 1`. Ack.
+/// - `AlreadySlashed` — simulation reverted with `AlreadySlashedForEquivocation`
+///   (victim already tombstoned): the goal is achieved, so ack without a tx.
+/// - `Failed` — simulation or submission failed. Do not ack; the entry is
+///   re-delivered after a process restart, never in-session.
 #[derive(Debug, Clone)]
 pub enum SubmitOutcome {
     /// Tx submitted and confirmed on-chain with receipt `status == 1`.
     Mined { tx_hash: B256 },
     /// Pre-flight simulation showed the victim is already tombstoned
-    /// (`AlreadySlashedForEquivocation`); no tx submitted. Goal achieved → ack.
+    /// (`AlreadySlashedForEquivocation`); no tx submitted.
     AlreadySlashed,
     /// Simulation/submission failed (bug, unexpected revert, or transient). Not
     /// acked; retried only after a process restart.
     Failed(String),
 }
 
-/// Configuration passed to [`Actor::init`]. The WAL queue handles are
-/// constructed by the outer layer (via [`init_wal_queue`]) — they cannot
-/// be built inside `Actor::init` because `init` is a synchronous function
-/// and `queue::shared::init` is async.
+/// Configuration passed to [`Actor::init`]. The WAL queue handles are constructed
+/// by the outer layer because `init` is synchronous and `queue::shared::init` is
+/// async.
 pub struct Config<E>
 where
     E: Clock + Metrics + Spawner + Storage + Send + 'static,
@@ -151,10 +128,9 @@ where
     pub staking_address: Address,
     /// L2 chain id — used to rebuild a verifier scheme (`fluent_namespace`) for
     /// an evidence epoch whose scheme the provider has pruned but whose
-    /// committee is still on chain (§14).
+    /// committee is still on chain.
     pub chain_id: u64,
-    /// Committee resolution — the node's ONE committee module, not a reader and
-    /// a cursor of this actor's own.
+    /// Committee resolution — the node's one committee module.
     pub committee: Arc<dyn crate::committee::Committee>,
     /// TxPool transport. Production impl wraps signer + pool + provider.
     pub sink: Arc<dyn SlasherTxSink>,
@@ -176,12 +152,11 @@ where
 /// reads it through [`Self::next_charge`] while building a block, which is why
 /// it is a shared handle rather than a field of [`Actor`].
 ///
-/// **Charges outlive votes, deliberately.** [`VoteStore`] is pruned on the
-/// engine's own 64-view window; a charge is not. A block carries at most one
-/// charge and a holder may not reach a leader slot before that window would have
-/// expired — dropping the charge there would lose a provable fault while the
-/// mechanism was working perfectly. The set is small by construction (one entry
-/// per equivocator per epoch), so it needs no cap.
+/// Charges outlive votes deliberately: [`VoteStore`] is pruned on the engine's
+/// own 64-view window, but a block carries at most one charge and a holder may not
+/// reach a leader slot before that window expires, so dropping the charge there
+/// would lose a provable fault. The set is small by construction (one entry per
+/// equivocator per epoch).
 ///
 /// Not persisted, and it does not need to be: every node that assembled the same
 /// pair holds the same charge, so losing one node's copy loses nothing.
@@ -193,18 +168,12 @@ impl ChargeStore {
     /// block it is building.
     ///
     /// The epoch argument is not optional: only the committee of a charge's own
-    /// epoch can verify it, so offering an older charge would produce a block
-    /// every voter rejects, and `BTreeMap` ordering would keep re-offering that
-    /// same lowest key. Deterministic order means successive proposers drain the
-    /// queue without coordinating — two proposers picking the same victim is
-    /// harmless, the second system call is idempotent.
-    ///
-    /// A charge whose victim `tombstoned` reports as already slashed is DROPPED,
-    /// not skipped: the verdict it carries has landed, so nothing it could still
-    /// achieve is lost, and leaving it in place would let the lowest such key
-    /// occupy the one-charge-per-block slot ahead of every later charge for the
-    /// same epoch. That is the whole reason the walk prunes as it goes rather
-    /// than filtering on the way out.
+    /// epoch can verify it, so offering an older charge would produce a block every
+    /// voter rejects, and `BTreeMap` ordering would keep re-offering that same
+    /// lowest key. A victim whose `tombstoned` reports as already slashed is dropped
+    /// rather than skipped: the verdict has landed, and leaving it in place would
+    /// let the lowest such key occupy the one-charge-per-block slot ahead of every
+    /// later charge for the epoch.
     pub fn next_charge(
         &self,
         epoch: u64,
@@ -234,12 +203,10 @@ impl ChargeStore {
         self.read().contains_key(&(epoch, accused))
     }
 
-    /// Every charge held for an epoch below `epoch`, cloned out in key order.
-    ///
     /// The drain reads rather than takes: an entry is released only once its
-    /// transaction is on the WAL, so a committee that will not resolve yet
-    /// leaves the charge queued for the next epoch turn to retry instead of
-    /// dropping a provable fault.
+    /// transaction is on the WAL, so a committee that will not resolve yet leaves
+    /// the charge queued for the next epoch turn instead of dropping a provable
+    /// fault.
     fn stale(&self, epoch: u64) -> Vec<((u64, u8), Message)> {
         self.read()
             .range(..(epoch, u8::MIN))
@@ -279,16 +246,15 @@ impl ChargeStore {
 /// read handle for the evidence-gossip consumer.
 ///
 /// A shared handle for the same reason [`ChargeStore`] and
-/// [`super::TombstoneSet`] are: the reader — the node's evidence task — is built
-/// before the actor that writes it exists.
+/// [`super::TombstoneSet`] are: the reader is built before the actor that writes
+/// it exists.
 ///
-/// **Single writer, monotone.** [`Actor::handle`] is the only writer and only
-/// ever raises it, and only for [`Provenance::Engine`] activities: a
-/// peer-forwarded vote names whatever epoch its signer chose, so letting gossip
-/// move this would hand one member of a future committee a switch for the
-/// in-block charge route (see [`Provenance`]). Monotone and single-writer is why
-/// this is an atomic rather than the `RwLock` its two sibling handles use — there
-/// is no multi-field invariant to hold across the update.
+/// Single writer and monotone: [`Actor::handle`] is the only writer and only ever
+/// raises it, and only for [`Provenance::Engine`] activities. A peer-forwarded vote
+/// names whatever epoch its signer chose, so letting gossip move this would hand one
+/// member of a future committee a switch for the in-block charge route. Monotone
+/// single-writer is why this is an atomic rather than the `RwLock` its sibling
+/// handles use.
 #[derive(Clone, Default, Debug)]
 pub struct EpochCursor(Arc<AtomicU64>);
 
@@ -299,13 +265,9 @@ impl EpochCursor {
     }
 
     /// Whether a forwarded vote naming `epoch` is inside the window
-    /// [`VoteStore::retain_floor`] actually keeps entries for.
-    ///
-    /// Anything outside it is work with no possible product: a vote for an older
-    /// epoch is pruned the moment it lands, and one for a later epoch names a
-    /// round this node has no reason to believe exists. Checked **before** the
-    /// committee is resolved, so an unbounded claimed epoch cannot buy a state
-    /// read per message either.
+    /// [`VoteStore::retain_floor`] actually keeps entries for. Anything outside it
+    /// is work with no possible product, and the check runs before the committee is
+    /// resolved, so an unbounded claimed epoch cannot buy a state read per message.
     pub fn retains(&self, epoch: u64) -> bool {
         let current = self.get();
         epoch <= current && epoch >= current.saturating_sub(1)
@@ -314,9 +276,8 @@ impl EpochCursor {
     /// Raise the cursor. `fetch_max` rather than a store because the cursor is
     /// monotone by contract, not by the order calls happen to arrive in.
     ///
-    /// `pub(crate)` only so a test elsewhere in the crate can stand the cursor
-    /// up without a running engine; [`Actor::handle`] is the sole production
-    /// writer, and it writes only for [`Provenance::Engine`].
+    /// `pub(crate)` only so a test can stand the cursor up without a running
+    /// engine; [`Actor::handle`] is the sole production writer.
     pub(crate) fn advance(&self, epoch: u64) {
         self.0.fetch_max(epoch, Ordering::Relaxed);
     }
@@ -329,8 +290,8 @@ const RETAIN_VIEWS: u64 = 64;
 
 /// `(epoch, view, signer_index)` — the round and signer a vote is bound to.
 /// Two votes of one kind under the same key are either a duplicate or the two
-/// halves of an equivocation; the key already pins the round and signer
-/// equality that `Conflicting*::new` asserts on.
+/// halves of an equivocation; the key already pins the round and signer equality
+/// that `Conflicting*::new` asserts on.
 type VoteKey = (u64, u64, u32);
 
 fn vote_key(round: Round, signer_idx: u32) -> VoteKey {
@@ -345,15 +306,13 @@ fn round_key_span(round: Round) -> (VoteKey, VoteKey) {
 
 /// The peers' own signed votes, one map per kind.
 ///
-/// A split-delivered equivocation never produces a `Conflicting*` activity on
-/// any single node — each half reaches a disjoint set of peers and the halves
-/// only meet if someone keeps them. Keeping them is this store's whole job:
-/// a second vote under an existing key is paired into the matching evidence.
+/// A split-delivered equivocation never produces a `Conflicting*` activity on any
+/// single node — each half reaches a disjoint set of peers — so a second vote
+/// under an existing key is paired into the matching evidence here.
 ///
-/// Simplex reports votes BEFORE signature verification
-/// (`COMMONWARE_INTERNALS.md`, "Reporter sees unverified votes"), so a pair
-/// assembled here is a *candidate*. The crypto gate is [`verify_charge`],
-/// applied before the charge is held.
+/// Simplex reports votes before signature verification, so a pair assembled here is
+/// a candidate; the crypto gate is [`verify_charge`], applied before the charge is
+/// held.
 #[derive(Default)]
 struct VoteStore {
     notarizes: BTreeMap<VoteKey, Notarize<BlsScheme, Digest>>,
@@ -387,7 +346,7 @@ impl VoteStore {
     fn remember_finalize(&mut self, finalize: Finalize<BlsScheme, Digest>) -> Option<Message> {
         let key = vote_key(finalize.round(), finalize.signer().get());
         // A nullify and a finalize for the same round contradict each other on
-        // their own — a nullify carries no proposal to compare.
+        // their own: a nullify carries no proposal to compare.
         if let Some(nullify) = self.nullifies.get(&key) {
             return Some(Activity::NullifyFinalize(NullifyFinalize::new(
                 nullify.clone(),
@@ -423,10 +382,9 @@ impl VoteStore {
 
     /// Every proposal-bearing vote held for `round`.
     ///
-    /// Nullifies are left out on purpose: a nullify carries no proposal, so it
-    /// can only pair with a finalize, and the node holding that finalize
-    /// publishes it from here. Publishing both sides would double the traffic
-    /// and pair nothing extra.
+    /// Nullifies are left out on purpose: a nullify carries no proposal, so it can
+    /// only pair with a finalize, and the node holding that finalize publishes it
+    /// from here.
     fn round_votes(&self, round: Round) -> EvidenceBatch {
         let (lo, hi) = round_key_span(round);
         self.notarizes
@@ -440,7 +398,7 @@ impl VoteStore {
             .collect()
     }
 
-    /// The votes held for `proposal`'s round that back a DIFFERENT proposal.
+    /// The votes held for `proposal`'s round that back a different proposal.
     /// The certificate settled the round, so each of these is one half of an
     /// equivocation whose partner is on some other node.
     fn votes_against(&self, proposal: &Proposal<Digest>) -> EvidenceBatch {
@@ -466,20 +424,16 @@ impl VoteStore {
         }
     }
 
-    /// House pattern: explicit floor-retain (cf. `epoch_manager.rs`,
-    /// `cert_inlet.rs`) — but those key on `epoch`, which is monotonic. View
-    /// numbers restart per epoch, so the two components have to be composed:
-    /// the view floor is reset when the epoch turns, and the epoch bound is
-    /// what finally evicts an entry a restarted view floor can no longer reach.
+    /// House pattern: explicit floor-retain — but those key on `epoch`, which is
+    /// monotonic, while view numbers restart per epoch. The two components are
+    /// composed: the view floor resets when the epoch turns, and the epoch bound
+    /// evicts an entry a restarted view floor can no longer reach.
     ///
-    /// **The one-epoch grace is load-bearing, not slack.** Pruning at exactly
-    /// `current_epoch` would discard a vote half at the instant the epoch
-    /// turns, including one whose conflicting partner is still in flight —
-    /// nothing orders that round trip against the epoch counter. Such a pair
-    /// can no longer become an in-block charge, but it can still become a
-    /// fallback transaction, and an attacker already controls delivery timing
-    /// and would simply equivocate at a boundary to lose it on both routes at
-    /// once.
+    /// The one-epoch grace is load-bearing. Pruning at exactly `current_epoch` would
+    /// discard a vote half at the instant the epoch turns, including one whose
+    /// conflicting partner is still in flight; such a pair can still become a fallback
+    /// transaction, and an attacker who controls delivery timing would equivocate at a
+    /// boundary to lose it on both routes at once.
     fn retain_floor(&mut self, current_epoch: u64) {
         if current_epoch > self.floor_epoch {
             self.floor_epoch = current_epoch;
@@ -494,25 +448,17 @@ impl VoteStore {
     }
 }
 
-/// Local cryptographic gate for a charge, ALWAYS vote-only (bug 4). On-chain
-/// `_slashEquivocation` accepts evidence over the ATTRIBUTABLE VOTE HALF only
-/// (the threshold seed partial is non-attributable and dropped —
-/// `evidence.rs`), so verifying exactly that half against a `VoteScheme`
-/// verifier rebuilt from the recovered `committee.bimap` is correct and
-/// sufficient. The prior asymmetry — full-verify via the registered
-/// `CombinedScheme` when `scoped()` returned `Some` — WRONGLY rejected a
-/// genuine seeded Notarize/Finalize equivocation whenever that scheme was
-/// verifier-flavored (`beacon = None`): `verify_attestation`'s
-/// `_ => combined.seed.is_none()` arm rejects a present seed. Vote-only adds
-/// nothing for submission even when the full scheme is available (the seed
-/// never reaches the chain), and rebuilding the verifier from the committee's
-/// own `bimap` means the gate depends on no registered per-epoch scheme:
-/// `resolve_committee` reads the frozen committee for ANY epoch off the latest
-/// finalized head, so a charge stays verifiable after the local schemes for its
-/// epoch have been pruned.
+/// Local cryptographic gate for a charge, always vote-only. On-chain
+/// `_slashEquivocation` accepts evidence over the attributable vote half only (the
+/// threshold seed partial is non-attributable and dropped in `evidence.rs`), so
+/// verifying exactly that half against a `VoteScheme` verifier rebuilt from the
+/// recovered `committee.bimap` is correct and sufficient. Rebuilding from the
+/// committee's own `bimap` means the gate depends on no registered per-epoch
+/// scheme, so a charge stays verifiable after the local schemes for its epoch have
+/// been pruned.
 ///
-/// Structural invariants are NOT re-checked here — `Conflicting*::new`
-/// asserted them at assembly.
+/// Structural invariants are not re-checked here — `Conflicting*::new` asserted
+/// them at assembly.
 fn verify_charge(
     charge: &Message,
     committee: &EpochCommittee,
@@ -533,7 +479,6 @@ fn accused_index(signer_idx: u32) -> Result<u8, HandleError> {
     })
 }
 
-/// **** Actor не лучшее название, очень просто в них потеряться если их несколько п о проекту
 pub struct Actor<E>
 where
     E: Clock + Metrics + Spawner + Storage + Send + 'static,
@@ -550,12 +495,12 @@ where
     wal_reader: Option<wal_queue::Reader<E, Vec<u8>>>,
     /// Dedup: victim addresses where an attempt has been observed on-chain
     /// this session. Producer checks before enqueue; consumer populates after
-    /// `Mined`/`Reverted` outcome.
+    /// a `Mined`/`AlreadySlashed` outcome.
     submitted_this_session: Arc<TokioMutex<HashSet<Address>>>,
     votes: VoteStore,
     /// Shared with the proposer — see [`ChargeStore`].
     charges: ChargeStore,
-    /// Highest epoch the LOCAL ENGINE has reported an activity for. A charge for
+    /// Highest epoch the local engine has reported an activity for. A charge for
     /// anything below it can no longer enter a block, which is what
     /// [`Self::drain_stale_charges`] acts on. Shared with the evidence consumer,
     /// which bounds a forwarded batch against it — see [`EpochCursor`].
@@ -578,9 +523,7 @@ where
             bridge.bind_slasher(&mailbox);
         }
         // The cursor lives on the bridge because that is the seam the consumer
-        // reads it through. With no bridge there is no evidence channel and
-        // nobody but this actor ever reads it, so a private one is the same
-        // object with a shorter reach.
+        // reads it through. With no bridge nobody but this actor reads it.
         let epoch_cursor = cfg
             .evidence
             .as_ref()
@@ -606,11 +549,10 @@ where
     }
 
     pub fn start(mut self) -> Handle<()> {
-        // Spawn the consumer first so the WAL has a reader ready before any
-        // producer enqueues fire. The consumer's `Handle` is detached: when
-        // the producer exits (mailbox closed) it drops the writer, the
-        // consumer's `recv()` then returns `None` after draining, and the
-        // consumer task exits naturally.
+        // Spawn the consumer first so the WAL has a reader ready before any producer
+        // enqueues. Its `Handle` is detached: when the producer exits (mailbox
+        // closed) it drops the writer, the consumer's `recv()` returns `None` after
+        // draining, and the consumer task exits.
         let reader = self
             .wal_reader
             .take()
@@ -628,13 +570,10 @@ where
 
     async fn run_producer(mut self) {
         info!("slasher producer starting");
-        // Transient-error retry buffer: a `handle` failure on a TRANSIENT cause
-        // (no finalized hash yet at startup, RPC Err, scheme/committee not yet
-        // registered for the evidence epoch) must NOT lose the Activity —
-        // simplex reports a conflict exactly once and there is no replay path.
-        // Re-attempt with a short backoff before pulling the next mailbox item,
-        // up to a bound; only a PERMANENT failure (malformed/variant-mismatch
-        // evidence, BiMap divergence) is dropped.
+        // A `handle` failure on a transient cause (no finalized hash yet at
+        // startup, RPC error, scheme/committee not yet registered) must not lose the
+        // Activity: simplex reports a conflict exactly once and there is no replay
+        // path. Re-attempt with a short backoff before pulling the next mailbox item.
         let mut retry: Option<(Envelope, u32)> = None;
         loop {
             if let Some((entry, attempts)) = retry.take() {
@@ -689,26 +628,22 @@ where
 
     /// Resolve an epoch's committee through the committee module.
     ///
-    /// The WHOLE record is returned, not just the BiMap, because victim
-    /// resolution needs the validator ADDRESSES the BiMap does not carry — the
-    /// record's `members` are the contract array verbatim, which is exactly what
-    /// the snapshot used to supply.
+    /// The whole record is returned, not just the BiMap, because victim resolution
+    /// needs the validator addresses the BiMap does not carry; the record's members
+    /// are the contract array verbatim.
     ///
-    /// There is no second source and no cursor of this actor's own: the module
-    /// reads at the node's ordering-finalized anchor, holds the record
-    /// write-once, and answers every epoch inside its window from that one map.
-    /// The mapping onto the actor's two outcomes is the §5.4 rule:
+    /// The module reads at the node's ordering-finalized anchor, holds the record
+    /// write-once, and answers every epoch inside its window from that one map. The
+    /// mapping onto the two outcomes:
     ///
-    /// * `NotReadable` ⇒ TRANSIENT. Includes the empty-committee answer, which
-    ///   used to be reported PERMANENT here (R-027). An epoch reads empty while
-    ///   this node's anchor has not reached its commit, so calling it
-    ///   unrecoverable threw away real evidence during catch-up; the contract
-    ///   only ever skips a commit together with halting the chain.
-    /// * `OutOfWindow` ⇒ its own predicate decides. ABOVE the window is an
-    ///   anchor that has not caught up — transient. BELOW it the contract's
-    ///   weight ring has wrapped and no anchor will ever bring the epoch back:
-    ///   permanent, which is what ends the eternal spin of a stale charge.
-    /// * `Read` ⇒ the reader's own transient/permanent split.
+    /// * `NotReadable` is transient, including the empty-committee answer: an epoch
+    ///   reads empty while this node's anchor has not reached its commit, so calling
+    ///   it unrecoverable would throw away real evidence during catch-up.
+    /// * `OutOfWindow` lets its own predicate decide. Above the window is an anchor
+    ///   that has not caught up — transient. Below it the contract's weight ring has
+    ///   wrapped and no anchor will ever bring the epoch back: permanent, which is
+    ///   what ends the eternal spin of a stale charge.
+    /// * `Read` uses the reader's own transient/permanent split.
     async fn resolve_committee(
         &self,
         epoch: u64,
@@ -724,15 +659,14 @@ where
         })
     }
 
-    /// Broadcast the votes this node personally received for a round that has
-    /// just been decided against them, so the peers holding the other half of a
-    /// split-delivered equivocation can pair them.
+    /// Broadcast the votes this node received for a round that has just been
+    /// decided against them, so the peers holding the other half of a split-delivered
+    /// equivocation can pair them.
     ///
-    /// Best-effort by design. A committee that will not resolve (startup, no
-    /// finalized hash yet) costs this round's publication and nothing else — the
-    /// votes stay in the store and the next trigger publishes them. Propagating
-    /// the failure instead would re-run the whole `handle`, whose WAL enqueue is
-    /// not idempotent.
+    /// Best-effort by design. A committee that will not resolve costs this round's
+    /// publication and nothing else: the votes stay in the store and the next trigger
+    /// publishes them. Propagating the failure instead would re-run the whole
+    /// `handle`, whose WAL enqueue is not idempotent.
     async fn republish(&self, epoch: u64, votes: EvidenceBatch) {
         let Some(bridge) = self.evidence.as_ref() else {
             return;
@@ -776,8 +710,6 @@ where
         let signer_idx = attributable_signer_idx(&charge)
             .ok_or_else(|| HandleError::permanent("charge carries no attributable signer"))?;
         let accused = accused_index(signer_idx)?;
-        // Skip the committee resolve and the two pairings when the same
-        // equivocator is already charged for this epoch.
         if self.charges.contains(epoch, accused) {
             return Ok(());
         }
@@ -785,11 +717,9 @@ where
         verify_charge(&charge, &record.bls, self.chain_id).map_err(|e| {
             HandleError::permanent(format!("charge failed vote-only verify: {e:?}"))
         })?;
-        // [`VoteStore`] keeps one epoch of grace, so a half arriving just after
-        // a boundary can still pair — into a charge for an epoch that is
-        // already past. Queueing that for a block it can never enter would
-        // strand it forever, the drain for its epoch having already run. The
-        // grace exists for exactly this pair; send it the only way still open.
+        // [`VoteStore`] keeps one epoch of grace, so a half arriving just after a
+        // boundary can pair into a charge for an already-past epoch. Queueing that
+        // for a block it can never enter would strand it; send it the only way open.
         if epoch < self.epoch_cursor.get() {
             return self.enqueue_fallback(&charge, &record).await;
         }
@@ -800,11 +730,10 @@ where
     /// Hand every charge queued for an epoch below `epoch` to the transaction
     /// sink, because the epoch turn just took the block route away from them.
     ///
-    /// Best-effort, and deliberately not propagating: a charge whose committee
-    /// will not resolve yet stays in the store and is drained again at the next
-    /// epoch turn — the same event, no timer — whereas propagating would park
-    /// the producer's mailbox behind up to [`SLASHER_MAX_RETRIES`] backoffs for
-    /// a charge that has nothing to do with the activity being handled.
+    /// Best-effort and deliberately not propagating: a charge whose committee will
+    /// not resolve yet stays in the store and is drained again at the next epoch
+    /// turn, whereas propagating would park the producer's mailbox for a charge
+    /// unrelated to the activity being handled.
     async fn drain_stale_charges(&mut self, epoch: u64) {
         for (key, charge) in self.charges.stale(epoch) {
             let (charged_epoch, accused) = key;
@@ -862,10 +791,9 @@ where
                 extract_from_nullify_finalize(ev, committee)
                     .map_err(|e| HandleError::permanent(format!("{e:?}")))?
             }
-            // `SlashKind::from_activity` already filtered to a slashable variant,
-            // so this is unreachable today; degrade gracefully (log + skip) rather
-            // than panic the accountability actor if a future variant desyncs
-            // `from_activity` from this match.
+            // `SlashKind::from_activity` already filtered to a slashable variant, so
+            // this is unreachable today; degrade gracefully rather than panic if a
+            // future variant desyncs it from this match.
             _ => {
                 return Err(HandleError::permanent(format!(
                     "SlashKind/Activity variant mismatch ({kind:?}); skipping"
@@ -892,10 +820,8 @@ where
             .address;
         tracing::Span::current().record("victim", tracing::field::display(victim));
 
-        // Skip enqueue if a Mined/Reverted outcome already observed
-        // this session (preserves the existing dedup behaviour). The
-        // consumer populates `submitted_this_session` after a non-Failed
-        // outcome.
+        // Skip enqueue if a Mined/AlreadySlashed outcome was already observed this
+        // session; the consumer populates `submitted_this_session` after either.
         {
             let dedup = self.submitted_this_session.lock().await;
             if dedup.contains(&victim) {
@@ -930,26 +856,23 @@ where
             provenance,
         } = entry;
         let epoch = activity.epoch().get();
-        // The epoch turning is what strands a charge: from here on no committee
-        // can verify one for an older epoch from the block in front of it, so
-        // whatever is still queued has only the transaction route left. Draining
-        // first also means a pair assembled further down from a half that
-        // arrived late takes that route rather than joining a queue whose drain
-        // has already run.
+        // The epoch turning is what strands a charge: no committee can verify one
+        // for an older epoch from the block in front of it, so whatever is queued has
+        // only the transaction route left. Draining first also means a pair assembled
+        // below from a late half takes that route rather than joining a queue whose
+        // drain has already run.
         //
-        // ONLY the local engine may move the cursor. A peer-forwarded vote names
-        // an epoch of its signer's choosing, so honouring it here would let one
-        // member of a future committee flush the vote store and push every live
-        // charge onto the transaction route at will — repeatedly, since the
-        // cursor is monotone. See [`Provenance`].
+        // Only the local engine may move the cursor. A peer-forwarded vote names an
+        // epoch of its signer's choosing, so honouring it here would let one member
+        // of a future committee flush the vote store and push every live charge onto
+        // the transaction route at will.
         if provenance == Provenance::Engine && epoch > self.epoch_cursor.get() {
             self.epoch_cursor.advance(epoch);
             self.drain_stale_charges(epoch).await;
         }
-        // Every vote reaches this mailbox and the filter below used to throw the
-        // non-slashable ones away. A split-delivered equivocation is visible
-        // ONLY as two halves that never meet on the cert path, so the halves are
-        // kept here and paired as they arrive.
+        // A split-delivered equivocation is visible only as two halves that never
+        // meet on the cert path, so the halves are kept here and paired as they
+        // arrive.
         let assembled = match &activity {
             Activity::Notarize(n) => self.votes.remember_notarize(n.clone()),
             Activity::Finalize(f) => self.votes.remember_finalize(f.clone()),
@@ -960,10 +883,8 @@ where
             }
             _ => None,
         };
-        // Retain around the CURSOR, not around the activity's own epoch: a
-        // forwarded vote's epoch is not this node's clock, and even an
-        // out-of-order engine activity would otherwise widen the window rather
-        // than hold it.
+        // Retain around the cursor, not around the activity's own epoch: a
+        // forwarded vote's epoch is not this node's clock.
         self.votes.retain_floor(self.epoch_cursor.get());
         if let Some(charge) = assembled {
             self.hold_charge(charge).await?;
@@ -973,14 +894,11 @@ where
         // votes held for it become worth putting in front of the rest of the
         // network.
         let republish = match &activity {
-            // The view failed with no notarization, so nothing local will ever
-            // explain the proposals this node was shown for it. If the leader
-            // split its proposal, these are one side of the split; if it merely
-            // ran late, they are a handful of identical votes and cost a
-            // message.
+            // The view failed with no notarization, so nothing local will explain
+            // the proposals this node was shown for it.
             Activity::Nullification(nullification) => self.votes.round_votes(nullification.round),
-            // A certificate settled the round, and a held vote disagrees with
-            // it — one half of an equivocation, its partner on another node.
+            // A certificate settled the round and a held vote disagrees with it —
+            // one half of an equivocation, its partner on another node.
             Activity::Notarization(notarization) => {
                 self.votes.votes_against(&notarization.proposal)
             }
@@ -996,8 +914,8 @@ where
         tracing::Span::current().record("kind", tracing::field::debug(kind));
         tracing::Span::current().record("epoch", epoch);
 
-        // A conflict simplex witnessed for us is a charge like any other, and
-        // takes the same two routes an assembled one does.
+        // A conflict simplex witnessed for us takes the same routes an assembled
+        // charge does.
         self.hold_charge(activity).await
     }
 }
@@ -1038,8 +956,8 @@ async fn run_consumer<E>(
                         }
                     }
                     SubmitOutcome::AlreadySlashed => {
-                        // Pre-flight sim confirmed the victim is already
-                        // tombstoned — goal achieved, ack without a tx.
+                        // Pre-flight simulation confirmed the victim is already
+                        // tombstoned, so ack without a tx.
                         info!(%victim, "victim already tombstoned (pre-flight); acking");
                         metrics::counter!("slasher_already_slashed_total").increment(1);
                         submitted.lock().await.insert(victim);
@@ -1048,10 +966,9 @@ async fn run_consumer<E>(
                         }
                     }
                     SubmitOutcome::Failed(msg) => {
-                        // Do NOT ack — entry re-delivered only after a restart
-                        // (no automatic in-session retry). A simulated revert
-                        // here is a deterministic bug (calldata/EIP-2537
-                        // encoding) — alert; retrying the same bytes won't help.
+                        // Do not ack: the entry is re-delivered only after a restart.
+                        // A simulated revert here is a deterministic encoding bug, so
+                        // retrying the same bytes would not help.
                         error!(%victim, %msg, "slash submission/simulation failed");
                         metrics::counter!("slasher_submit_failed_total").increment(1);
                     }
@@ -1066,9 +983,9 @@ async fn run_consumer<E>(
     info!("slasher consumer exiting");
 }
 
-/// Convenience constructor: initialize the WAL queue under the slasher's
-/// own context label. Called from `outer.rs::build` (async); the returned
-/// `(Writer, Reader)` is passed into [`Config`].
+/// Convenience constructor: initialize the WAL queue under the slasher's own
+/// context label. Called from `outer.rs::build`; the returned `(Writer, Reader)`
+/// goes into [`Config`].
 pub async fn init_wal_queue<E>(
     context: E,
     partition: String,
@@ -1116,9 +1033,9 @@ fn kind_label(kind: SlashKind) -> &'static str {
 
 /// ABI-encode one slash charge into the calldata the sink submits.
 ///
-/// Public so the conformance tests can pin THIS encoder — the production one —
-/// against literal selectors and literal calldata, instead of re-declaring the
-/// ABI privately and checking it against itself.
+/// Public so the conformance tests can pin this production encoder against literal
+/// selectors and literal calldata, instead of checking a private re-declaration
+/// against itself.
 pub fn encode_calldata(args: &SlashCallArgs) -> Vec<u8> {
     let evidence = Bytes::from(args.evidence.clone());
     let pk = Bytes::from(args.pk_uncompressed.to_vec());
@@ -1215,7 +1132,7 @@ mod tests {
         (bls_kps, EpochCommittee::from_unverified(TEST_EPOCH, bimap))
     }
 
-    /// A signer BOUND to `epoch`: a scheme refuses a subject from any other, so
+    /// A signer bound to `epoch`: a scheme refuses a subject from any other, so
     /// a test that spans epochs needs one per epoch.
     fn offender_signer_at(
         kps: &[ValidatorBlsKeypair],

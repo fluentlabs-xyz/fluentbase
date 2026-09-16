@@ -1,27 +1,17 @@
-//! Event-driven DKG ceremony state machine — `run_local_dkg`'s logic decomposed
-//! into message handlers so the networked actor can drive one node's dealer +
-//! player roles over `BEACON_CHANNEL` (Model B: `committee[E]` deals to itself,
-//! dealers == players).
+//! Event-driven DKG ceremony state machine: the dealer and player roles one node
+//! runs over `BEACON_CHANNEL` (Model B: `committee[E]` deals to itself, dealers
+//! == players).
 //!
-//! Lifecycle (two phases, separated by the height-pinned collection deadline):
-//! 1. DEALING — [`DkgCeremony::start`] emits this node's commitment (broadcast) +
-//!    one private share per other player (point-to-point); incoming
-//!    `Commitment`+`Share` from each dealer are buffered until both are present,
-//!    then acked; incoming `Ack`s prune this node's own-dealer `unsent` set + feed
-//!    its dealer. Delivery is RELIABLE on BOTH legs (§8.11.1): the dealer re-sends
-//!    each un-acked dealing every pre-seal tick ([`DkgCeremony::retransmit`]), and a
-//!    player re-emits its CACHED ack on any re-receipt of a dealing it already acked
-//!    ([`DkgCeremony::try_ack`]'s re-receipt arm), so a member reachable ≥ 1
-//!    round-trip before seal is never reveal-forced by a single dropped packet.
-//! 2. At the deadline [`DkgCeremony::seal_dealings`] finalizes this node's dealer
-//!    into a signed log (broadcast as `Reveal`, recorded locally); incoming
-//!    `Reveal`s are recorded. [`DkgCeremony::finalize_over_pinned`] then derives the
-//!    agreed [`Output`] (`PK_E`) + this node's secret [`Share`] over EXACTLY the
-//!    dealer-log set the epoch-key agreement certified.
+//! Dealing emits this node's commitment and one private share per other player;
+//! both legs are reliable — the dealer re-sends un-acked dealings every pre-seal
+//! tick, and a player re-emits its cached ack on any re-receipt.
 //!
-//! `Player::finalize` is intentionally DEFERRED to
-//! [`finalize_over_pinned`](DkgCeremony::finalize_over_pinned) (the boundary), never
-//! over a locally-selected `Q` mid-flight.
+//! At the deadline the dealer is finalized into a signed log and broadcast as a
+//! `Reveal`. The agreed `Output` and this node's share are then derived over
+//! exactly the dealer-log set the epoch-key agreement certified.
+//!
+//! [`Player::finalize`] waits for the agreed pinned set to be fully held and
+//! quorum-ready, never a locally-selected quorum mid-flight.
 
 use crate::beacon::dkg_agree::PinnedDerive;
 use crate::beacon::dkg_msg::{Ack, DealerCommitment, DealerReveal, DkgBody, DkgMsg};
@@ -50,27 +40,22 @@ use std::collections::BTreeMap;
 pub(crate) type CeremonyOutput = Output<MinSig, PeerPubkey>;
 
 /// The identity of one recorded dealer log: the dealer that signed it and the
-/// content hash of the signed bytes ([`log_hash`]). A dealer is NOT a log: a
-/// Byzantine dealer can sign two `check`-valid logs over the same `Info`, and every
-/// map that used to be keyed by the dealer alone silently kept one of them and
-/// dropped the other (R-002/E5-14). Keying by `(dealer, hash)` is what lets the
-/// ceremony hold both, name which one the agreement pinned, and re-fetch exactly
-/// that one.
+/// content hash of the signed bytes ([`log_hash`]). A dealer is not a log — a
+/// Byzantine dealer can sign two valid logs over the same `Info` — so keying by
+/// `(dealer, hash)` lets the ceremony hold both and name which one the agreement
+/// pinned.
 pub(crate) type LogId = (PeerPubkey, B256);
 
-/// THE content hash of a signed dealer log — `keccak256(encode(SignedDealerLog))`.
-/// The one hash every identity in this module, the resolver key
-/// (`log_resolver::DkgLogKey::hash`), the published `recorded_dkg_logs` index and
-/// the agreement's pinned set share, so "the log the artifact pinned" and "the log
-/// this node holds" can never be compared under two different functions.
+/// The content hash of a signed dealer log, `keccak256(encode(SignedDealerLog))`.
+/// Shared by the resolver key, the published index and the agreement's pinned
+/// set, so a log is never compared under two different functions.
 pub(crate) fn log_hash(signed: &DealerReveal) -> B256 {
     keccak256(signed.encode())
 }
 
-/// The two `check`-valid logs one dealer signed for one epoch — the evidence a
-/// local ban rests on, kept as the pair of content hashes (the bodies stay in the
-/// ceremony's recorded set under their own [`LogId`]s). `first` is the hash this
-/// node recorded first, which is also the one it proposes and confirms.
+/// The two valid logs one dealer signed for one epoch, as their content hashes
+/// (the bodies stay in the recorded set under their own [`LogId`]s). `first` is
+/// the hash this node recorded first, which is the one it proposes and confirms.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DealerEquivocation {
     pub first: B256,
@@ -93,25 +78,19 @@ pub(crate) struct Outgoing {
     pub msg: DkgMsg,
 }
 
-/// What one ceremony step produced: outgoing messages to broadcast/send AND the
-/// durable [`JournalRecord`]s the actor appends so a restart can `resume` (§8.11.1).
+/// What one ceremony step produced: outgoing messages and the durable
+/// [`JournalRecord`]s the actor appends so a restart can resume.
 #[derive(Default)]
 pub(crate) struct Step {
     pub outgoing: Vec<Outgoing>,
     pub journal: Vec<JournalRecord>,
-    /// The log this step newly recorded — its dealer as returned by
-    /// [`SignedDealerLog::check`] (the ceremony is what AUTHENTICATED that identity,
-    /// so it travels out from here rather than being re-derived downstream) and its
-    /// content hash. The dealer is NOT the sender: `handle` binds the record to the
-    /// log's signer, so a peer relaying another dealer's valid `Reveal` records it
-    /// under that dealer. The actor needs the id to name which claim a failed journal
+    /// The log this step newly recorded, with its content hash. The dealer is the
+    /// log's signer, not the sender, so a relayed valid `Reveal` is recorded under
+    /// that dealer. The actor needs the id to name which claim a failed journal
     /// append left unbacked.
     pub recorded_log: Option<LogId>,
-    /// A dealer this step PROVED equivocating: the recorded log is its SECOND
-    /// `check`-valid log for this epoch under a different hash. Set exactly once per
-    /// `(epoch, dealer)` — on the pair's creation — so the actor's WARN line and
-    /// counter fire once. The pair itself is readable through
-    /// [`DkgCeremony::equivocation`].
+    /// A dealer this step proved equivocating: the recorded log is its second valid
+    /// log for this epoch under a different hash. Set once per `(epoch, dealer)`.
     pub equivocation: Option<PeerPubkey>,
 }
 
@@ -125,11 +104,9 @@ impl Step {
         }
     }
 
-    /// `true` iff this step recorded a NEW dealer log (its own seal or a peer's) into the
-    /// finalizable set — the ONLY journal records that can change finalizability. An
-    /// ack-only / `ReceivedDealing`-only step does not, so the actor can skip the
-    /// `drive_finalization` (= `observe` batch-BLS over a `Logs` clone) it would otherwise
-    /// run after EVERY inbound body (review [806]).
+    /// Whether this step recorded a new dealer log into the finalizable set, the only
+    /// journal records that can change finalizability, so the actor can skip
+    /// `drive_finalization` after an ack-only step.
     pub fn recorded_a_log(&self) -> bool {
         self.journal.iter().any(|r| {
             matches!(
@@ -148,7 +125,7 @@ enum Inserted {
     Duplicate,
     /// The dealer's first log this epoch.
     First,
-    /// The dealer's SECOND log under a different hash: the equivocation pair was
+    /// The dealer's second log under a different hash: the equivocation pair was
     /// created now, `first` being the log recorded before this one.
     Equivocation { first: Box<DealerReveal> },
     /// A further log of a dealer already proven equivocating (reachable only through
@@ -157,28 +134,16 @@ enum Inserted {
 }
 
 /// A ceremony reconstructed from its journal by [`DkgCeremony::resume`]: the
-/// rebuilt ceremony + the messages to re-emit. Seal-state is NOT returned as a
-/// flag — the actor derives it from the ceremony itself ([`DkgCeremony::dealing_closed`]
-/// = dealing closed; [`DkgCeremony::own_log_recorded`] = own-log-recorded/sealed-for-
-/// finalize), so a torn-own-seal resume needs no special bit.
+/// rebuilt ceremony and the messages to re-emit. Seal state is not a separate
+/// flag — the actor derives it from the ceremony
+/// ([`DkgCeremony::dealing_closed`] and [`DkgCeremony::own_log_recorded`]).
 ///
-/// Resume has TWO shapes, chosen by the actor's `reconstruct_dealer` TIMING GATE
-/// (`height < seal_deadline`, §8.11.1):
-/// - **PRE-seal (reconstruct):** the dealer is RE-DERIVED via the deterministic
-///   [`dealer_seed_rng`] seed, so it reproduces the byte-identical commitment + shares
-///   (idempotent re-deal — no self-equivocation). The node keeps a LIVE dealer, resumes
-///   BOTH delivery legs (retransmit un-acked dealings + the player ack-cache), replays
-///   the acks its dealer already collected (journaled [`JournalRecord::OwnDealerAck`]),
-///   feeds its OWN self-ack so the restarted dealer does NOT reveal itself, and seals
-///   ONCE at the deadline. This is provably safe: `height < seal_deadline ⇒ we never
-///   sealed ⇒ no original log was ever broadcast`, so re-deriving is idempotent-first.
-/// - **At/after the seal deadline (player-only):** the dealer role is RETIRED — a torn
-///   journal cannot prove we did not already seal + broadcast a possibly-divergent log,
-///   so we NEVER re-seal. `outgoing` carries (a) one [`DkgBody::Ack`] per peer dealing
-///   replayed by [`Player::resume`] (the resolver cannot heal a missing ack), and (b)
-///   iff we had already sealed, our journaled own log re-broadcast VERBATIM. A node that
-///   crashed BEFORE sealing sits out as one of the ≤f tolerated absent dealers — the
-///   ceremony still finalizes on the n−f survivors and we recover our SHARE as a player.
+/// Resume has two shapes, chosen by the caller's timing gate:
+/// - pre-seal: the dealer is re-derived from [`dealer_seed_rng`], reproducing the
+///   byte-identical commitment and shares, and both delivery legs resume;
+/// - at or after the deadline: the dealer role is retired and never re-seals,
+///   because a torn journal cannot prove the node did not already seal and
+///   broadcast a divergent log. A journaled own log is re-broadcast verbatim.
 pub(crate) struct Resumed {
     pub ceremony: DkgCeremony,
     pub outgoing: Vec<Outgoing>,
@@ -188,62 +153,46 @@ pub(crate) struct Resumed {
 pub(crate) struct DkgCeremony {
     epoch: u64,
     info: Info<MinSig, PeerPubkey>,
-    /// The ceremony's roster — `committee[epoch]`, the one set `info` was built
-    /// over (Model B, [`info_for`]: dealers == players == this). Kept beside
-    /// `info` because commonware's `Info` exposes neither set, and the actor
-    /// needs to ask [`has_seat`](Self::has_seat) before it hands a frame in.
+    /// `committee[epoch]`, the set `info` was built over (dealers == players). Kept
+    /// beside `info` because commonware's `Info` exposes neither set, and the actor
+    /// asks [`has_seat`](Self::has_seat) before handing a frame in.
     roster: Set<PeerPubkey>,
     /// This node's dealer (consumed by `seal_dealings`).
     dealer: Option<Dealer<MinSig, Ed25519PrivateKey>>,
     /// This node's player (consumed by `finalize`).
     player: Option<Player<MinSig, Ed25519PrivateKey>>,
     /// Buffered commitments/shares awaiting their counterpart (a player needs both
-    /// a dealer's commitment AND its private share before it can ack).
+    /// a dealer's commitment and its private share before it can ack).
     pending_pub: BTreeMap<PeerPubkey, DealerCommitment>,
     pending_priv: BTreeMap<PeerPubkey, DealerPrivMsg>,
-    /// Every `check`-valid SIGNED log this ceremony holds, by [`LogId`] — our own at
-    /// seal, each peer's `Reveal`, each resolver delivery. The signed form is what the
-    /// actor SERVES to a peer fetching `(epoch, dealer, hash)` and RE-BROADCASTS for
-    /// our own log on a resume, and it is what the pinned-set finalize selects from
-    /// by exact `(dealer, hash)`. One dealer may own more than one entry: that is an
-    /// equivocation (`equivocations`), never a replacement.
+    /// Every valid signed log this ceremony holds, by [`LogId`]. The signed form is
+    /// what the actor serves and re-broadcasts, and what the pinned-set finalize
+    /// selects from by exact `(dealer, hash)`. One dealer may own more than one
+    /// entry: that is an equivocation, never a replacement.
     signed_logs: BTreeMap<LogId, DealerReveal>,
-    /// The hash this node recorded FIRST for each dealer — the one it publishes into
-    /// the shared `recorded_dkg_logs` index, so what it proposes and confirms is
-    /// stable across ticks and equal to what its own `ShareConfirm` named. Also the
-    /// per-dealer "a log of this dealer is held" fact (`own_log_recorded`).
+    /// The hash this node recorded first for each dealer, which is what it publishes
+    /// into the shared index, proposes and confirms. Stable for the ceremony's life.
     first_log: BTreeMap<PeerPubkey, B256>,
-    /// Dealers proven to have signed two distinct `check`-valid logs this epoch, with
-    /// the pair (RAM copy of the journaled [`JournalRecord::DealerEquivocation`]).
-    /// A dealer in here is LOCALLY BANNED from gossip: a further `Reveal` of its is
-    /// dropped by [`handle`](Self::handle). A targeted fetch of one of its logs by
-    /// exact hash is still honoured — the agreement's pinned set is the truth about
-    /// which of its logs is in force, and this node must be able to finalize over it.
-    /// Nothing is sent on-chain (Д-6 defer).
+    /// Dealers proven to have signed two distinct valid logs this epoch, with the
+    /// pair. A dealer in here is locally banned from gossip: a further `Reveal` from
+    /// it is dropped by [`handle`](Self::handle), while a targeted fetch by exact
+    /// hash is still honoured.
     equivocations: BTreeMap<PeerPubkey, DealerEquivocation>,
     /// Our own dealer commitment, retained so [`retransmit`](Self::retransmit) can
-    /// re-send it point-to-point to any player still in `unsent` (the DEALER LEG of
-    /// reliable delivery). `Some` while we have a live dealer (start / pre-seal resume),
-    /// `None` on a player-only resume.
+    /// re-send it to any player still in `unsent`. `None` on a player-only resume.
     own_pub_msg: Option<DealerCommitment>,
-    /// Players who have NOT yet acked our dealing → the retransmit targets, holding the
-    /// private share we owe each. Pruned as acks land (`handle(Ack)`), so it SHRINKS to
-    /// ∅; retransmit is bounded by it.
+    /// Players who have not yet acked our dealing, holding the private share we owe
+    /// each. Pruned as acks land, so retransmit is bounded by it.
     unsent: BTreeMap<PeerPubkey, DealerPrivMsg>,
-    /// The ack WE emitted as a PLAYER, keyed by dealer — the ack re-emit cache (the
-    /// PLAYER LEG of reliable delivery). On a re-receipt of a dealing we already acked
-    /// (its dealer redelivered because our prior ack was lost), `try_ack` re-emits the
-    /// cached ack instead of dropping it, so the ack retries on the dealer's retransmit
-    /// cadence until it lands.
+    /// The ack we emitted as a player, keyed by dealer. On a re-receipt of a dealing
+    /// we already acked, [`try_ack`](Self::try_ack) re-emits this cached ack instead
+    /// of dropping it, until it lands.
     emitted_acks: BTreeMap<PeerPubkey, Ack>,
 }
 
-/// Build the commonware DKG [`Info`] for `epoch` over `committee` — the SINGLE
-/// place the ceremony's fixed parameters (`N3f1`, `Mode::NonZeroCounter`, dealers ==
-/// players == `committee`) are pinned, so `start`/`resume`/the disk-backed log
-/// re-check can never drift on them. `pub(crate)` so the actor's post-boundary
-/// recompute-heal (`beacon::actor`) can re-`check` one delivered log against the
-/// SAME pinned `Info` before journaling it.
+/// Build the commonware DKG [`Info`] for `epoch` over `committee`: the one place
+/// the ceremony's fixed parameters (`N3f1`, `Mode::NonZeroCounter`, dealers ==
+/// players) are pinned, so `start`, `resume` and the log re-check cannot drift.
 pub(crate) fn info_for(
     namespace: &[u8],
     epoch: u64,
@@ -260,10 +209,8 @@ pub(crate) fn info_for(
 }
 
 /// The signed logs one journal record carries: none for a dealing or an ack, one
-/// for an `OwnSeal`/`PeerLog`, and BOTH halves of a `DealerEquivocation` — first,
-/// then second, the order the live path recorded them in. The one place the
-/// log-bearing records are enumerated, so the serve map, the recompute and the
-/// resume cannot disagree about which records hold a log.
+/// for an `OwnSeal`/`PeerLog`, and both halves of a `DealerEquivocation` in the
+/// order the live path recorded them.
 fn logs_in(record: JournalRecord) -> Vec<DealerReveal> {
     match record {
         JournalRecord::OwnSeal(signed) | JournalRecord::PeerLog(signed) => vec![*signed],
@@ -272,14 +219,10 @@ fn logs_in(record: JournalRecord) -> Vec<DealerReveal> {
     }
 }
 
-/// The `check`-valid logs one journal record EVIDENCES, each with the dealer it
-/// `check`ed as — THE one validity rule for a journaled log, shared by the serve
-/// map ([`checked_serve_map`]) and the resume ([`DkgCeremony::resume`]) so a body
-/// the resumed ceremony would not hold is never served either. An `OwnSeal`/`PeerLog`
-/// yields its one body if it checks. A `DealerEquivocation` is taken WHOLE or not at
-/// all: both halves must `check` as the SAME dealer under DIFFERENT hashes, else the
-/// record evidences nothing and NEITHER body is taken from it (a body the journal also
-/// holds on its own is taken from there) — a WARN names the drop.
+/// The valid logs one journal record evidences, each with the dealer it checked
+/// as. A `DealerEquivocation` is taken whole or not at all: both halves must
+/// check as the same dealer under different hashes, else neither body is taken
+/// from it.
 fn checked_logs_in(
     record: JournalRecord,
     info: &Info<MinSig, PeerPubkey>,
@@ -308,18 +251,12 @@ fn checked_logs_in(
     checked
 }
 
-/// Re-`check` a finalized epoch's journaled logs into a `(dealer, hash) →
-/// SignedDealerLog` serve map — the cold-load path
-/// [`DealerLogStore`](crate::beacon::log_store) takes on a miss after a restart (the
-/// journal is the durable source; this rebuilds the in-memory copy). Each
-/// `OwnSeal`/`PeerLog`/`DealerEquivocation` log is `check`-verified against the
-/// epoch's `Info` under the SAME rule the resume applies ([`checked_logs_in`]: cheap
-/// once-per-epoch, bounding a tampered on-disk journal a node would otherwise serve to
-/// peers); logs that fail `check` are dropped, and a pair record that evidences no
-/// pair is dropped whole. Keyed by [`LogId`], so an equivocating dealer's two logs are
-/// BOTH servable — a peer fetches by exact hash and gets exactly that body. A bad
-/// committee/namespace surfaces as `Err` so the caller declines to serve
-/// (retry-elsewhere), never serving un-verifiable logs.
+/// Re-check a finalized epoch's journaled logs into a `(dealer, hash)` serve map,
+/// the cold-load path the log store takes on a miss after a restart.
+///
+/// Each log is checked against the epoch's `Info` under the same rule the resume
+/// applies, so a body the resumed ceremony would not hold is never served. A bad
+/// committee or namespace surfaces as `Err` so the caller declines to serve.
 pub(crate) fn checked_serve_map(
     namespace: &[u8],
     epoch: u64,
@@ -339,17 +276,15 @@ pub(crate) fn checked_serve_map(
 
 /// The namespace domain-separating the dealer-polynomial seed derivation.
 ///
-/// SECRECY-CRITICAL: the intermediate signature this seeds from fully determines the
-/// dealer polynomial (hence the whole share) — it MUST NEVER be logged or transmitted.
+/// The intermediate signature this seeds from determines the dealer polynomial,
+/// hence the whole share, so it must never be logged or transmitted.
 const DEALER_SEED_NS: &[u8] = b"FLUENT_DPOS_DKG_DEALER_SEED_V1";
 
-/// Deterministic dealer-polynomial RNG derived from the validator key + epoch, so
-/// re-creating the dealer after a restart reproduces the byte-identical commitment +
-/// shares (idempotent re-deal — no self-equivocation, §8.11.1). Standard Ed25519
-/// signing (RFC 8032) is deterministic ⇒ stable per `(me_key, epoch)`; it needs the
-/// secret key ⇒ the seed is secret; nothing is persisted ⇒ it survives datadir loss
-/// (unlike the former `OsRng` re-deal, which diverged across restarts). The idempotency
-/// + ed25519-determinism are pinned by the `seed_*` unit tests.
+/// Deterministic dealer-polynomial RNG derived from the validator key and epoch,
+/// so re-creating the dealer after a restart reproduces the byte-identical
+/// commitment and shares. Ed25519 signing is deterministic, so the seed is stable
+/// per `(me_key, epoch)`; it needs the secret key and is never persisted, so it
+/// survives datadir loss.
 fn dealer_seed_rng(me_key: &Ed25519PrivateKey, epoch: u64) -> impl CryptoRngCore {
     let sig = me_key.sign(DEALER_SEED_NS, &epoch.to_be_bytes());
     let mut t = Transcript::new(DEALER_SEED_NS);
@@ -357,14 +292,10 @@ fn dealer_seed_rng(me_key: &Ed25519PrivateKey, epoch: u64) -> impl CryptoRngCore
     Transcript::resume(t.summarize()).noise(b"dealer-rng")
 }
 
-/// The DEALER setup that both [`DkgCeremony::start`] and the pre-seal reconstruct
-/// branch of [`DkgCeremony::resume`] run IDENTICALLY (the loop-break, §8.11.1): derive
-/// the seeded RNG, `Dealer::start`, and split the private shares into our OWN (returned
-/// separately for the self-ack + journal) and the per-player `unsent` retransmit set
-/// (every OTHER player). Extracted so the dealer polynomial + `unsent` can never diverge
-/// or be half-populated between the two paths. The self-ack differs only in SOURCE
-/// (`start` mints it fresh; `resume` replays it from `Player::resume`), so it is fed by
-/// the caller, not here.
+/// The dealer setup that [`DkgCeremony::start`] and the pre-seal branch of
+/// [`DkgCeremony::resume`] run identically. Splits the private shares into our
+/// own (returned for the self-ack and journal) and the per-player retransmit set.
+/// The self-ack is fed by the caller because its source differs.
 #[allow(clippy::type_complexity)]
 fn init_dealer(
     me_key: &Ed25519PrivateKey,
@@ -400,14 +331,12 @@ fn init_dealer(
 }
 
 impl DkgCeremony {
-    /// Begin a fresh ceremony for `epoch` over `committee` (Model B: dealers ==
-    /// players == `committee`). The dealer polynomial is derived DETERMINISTICALLY from
-    /// the validator key + epoch ([`dealer_seed_rng`]), so a restart re-derives the
-    /// IDENTICAL commitment + shares (no `OsRng` divergence / self-equivocation).
-    /// Returns the initial outgoing messages: this node's commitment (broadcast) + one
-    /// private share per OTHER player; this node's own dealing is fed into its own
-    /// player/dealer locally. The [`Step`]'s journal carries our self-dealing as a
-    /// `ReceivedDealing` so a resume rebuilds `Player.view[me]`.
+    /// Begin a fresh ceremony for `epoch` over `committee`. The dealer polynomial is
+    /// derived deterministically from the validator key and epoch ([`dealer_seed_rng`]),
+    /// so a restart re-derives the identical commitment and shares.
+    ///
+    /// Returns this node's commitment (broadcast), one private share per other player,
+    /// and the journal record of our own self-dealing.
     pub fn start(
         namespace: &[u8],
         epoch: u64,
@@ -419,10 +348,9 @@ impl DkgCeremony {
         let mut player = Player::new(info.clone(), me_key.clone())?;
         let (mut dealer, pub_msg, unsent, self_priv) = init_dealer(&me_key, epoch, &info)?;
 
-        // Self-dealing: process our own commitment+share locally so our player counts it
-        // and our dealer collects its own self-ack (else the dealer would REVEAL its own
-        // point at seal, burning an f-slot). Cache the self-ack (symmetry with the
-        // resume reconstruct path, which re-derives it from `Player::resume`).
+        // Self-dealing: process our own commitment and share locally so our player counts
+        // it and our dealer collects its own self-ack, else the dealer reveals its own
+        // point at seal and burns an f-slot.
         let mut emitted_acks: BTreeMap<PeerPubkey, Ack> = BTreeMap::new();
         if let Some(ack) =
             player.dealer_message::<N3f1>(me.clone(), pub_msg.clone(), self_priv.clone())
@@ -475,7 +403,7 @@ impl DkgCeremony {
 
     /// Handle one incoming ceremony message from peer `from`. Invalid messages are
     /// dropped (the commonware primitives validate internally); returns the outgoing
-    /// messages this triggers (an ack on a complete dealing) AND the journal records
+    /// messages this triggers (an ack on a complete dealing) and the journal records
     /// the actor must persist (the accepted dealing, or a peer's recorded log).
     pub fn handle(&mut self, from: PeerPubkey, body: DkgBody) -> Step {
         match body {
@@ -492,41 +420,35 @@ impl DkgCeremony {
                 if let Some(dealer) = self.dealer.as_mut() {
                     let _ = dealer.receive_player_ack(from.clone(), ack.clone());
                 }
-                // Prune the acking player from our retransmit set and journal the ack so
-                // a pre-seal-reconstruct resume can replay it (else the restarted dealer
-                // would re-reveal an already-acked player). A wrong-sig ack from a
-                // Byzantine peer still prunes — it only self-harms (≤ f); honest acks pass
-                // `receive_player_ack`'s sig-verify.
+                // Prune the acking player from the retransmit set and journal the ack so a
+                // pre-seal resume can replay it. A wrong-signature ack still prunes: it only
+                // self-harms by at most f.
                 if self.unsent.remove(&from).is_some() {
                     step.journal
                         .push(JournalRecord::OwnDealerAck(from, Box::new(ack)));
                 }
                 step
             }
-            // GOSSIP INGRESS, and the one place the local ban applies: a dealer
-            // already proven equivocating gets no further log recorded from gossip.
-            // Its pinned log still reaches the ceremony through the targeted fetch
-            // (`ingest_signed_log`), which is keyed by exact hash and never gossip.
+            // Gossip ingress, and the one place the local ban applies: a dealer already
+            // proven equivocating records no further log from gossip. Its pinned log still
+            // arrives through a targeted fetch by exact hash.
             DkgBody::Reveal(signed) => match (*signed).clone().check(&self.info) {
                 Some((pk, _)) if self.equivocations.contains_key(&pk) => Step::default(),
                 Some((pk, _)) => self.record_checked_log(pk, *signed),
                 None => Step::default(),
             },
-            // A share-confirmation is not ceremony traffic: it is consumed by the
-            // epoch-key agreement plane, and the actor intercepts it before this
-            // dispatch. Present so the match stays exhaustive over the envelope.
+            // A share-confirmation is not ceremony traffic: the actor intercepts it before
+            // this dispatch. Present so the match stays exhaustive.
             DkgBody::Confirm(_) => Step::default(),
         }
     }
 
-    /// THE recording rule, shared by every path a `check`-valid log enters on — our
-    /// own seal, a gossip `Reveal`, a resolver delivery, a journal replay — so all of
-    /// them key the log identically. Inserts `signed` under its [`LogId`] and says
-    /// what that made it: the dealer's first log, a duplicate, the second half of a
-    /// fresh equivocation pair, or a further log of an already-proven equivocator.
-    /// The ban is NOT applied here: it is a property of gossip ingress
-    /// ([`handle`](Self::handle)), not of recording, and a targeted pinned fetch or
-    /// a replay must record what gossip would refuse.
+    /// The recording rule shared by every path a valid log enters on — our own seal, a
+    /// gossip `Reveal`, a resolver delivery, a journal replay — so all key the log
+    /// identically. Inserts `signed` under its [`LogId`] and says what that made it.
+    ///
+    /// The ban is not applied here: it is a property of gossip ingress, and a targeted
+    /// fetch or a replay must record what gossip would refuse.
     fn insert_log(&mut self, pk: PeerPubkey, signed: DealerReveal) -> Inserted {
         let hash = log_hash(&signed);
         if self.signed_logs.contains_key(&(pk.clone(), hash)) {
@@ -557,19 +479,12 @@ impl DkgCeremony {
         inserted
     }
 
-    /// Record a peer's `check`-valid log, returning the journal record that backs it
-    /// and the [`LogId`] it went in under — an EMPTY step on a duplicate (the dedup
-    /// that bounds journal growth + fsync churn). Shared by the gossip-Reveal path
-    /// ([`handle`](Self::handle)) and the resolver-ingest path
-    /// ([`ingest_signed_log`](Self::ingest_signed_log)) so both grow the journal
-    /// symmetrically under one rule and surface the id identically. Emits no
-    /// outgoing: recording a log answers nobody.
+    /// Record a peer's valid log, returning the journal record that backs it and the
+    /// [`LogId`] it went in under. An empty step on a duplicate bounds journal growth.
     ///
-    /// A dealer's SECOND log under a different hash is journaled as ONE
-    /// [`JournalRecord::DealerEquivocation`] carrying the pair — the second body
-    /// rides inside the evidence rather than beside it as a `PeerLog`, so the record
-    /// that restores the ban after a restart is the same record that restores the
-    /// body, and a journal without it holds neither.
+    /// A dealer's second log under a different hash is journaled as one
+    /// [`JournalRecord::DealerEquivocation`] carrying the pair, so the record that
+    /// restores the ban after a restart is the record that restores the body.
     fn record_checked_log(&mut self, pk: PeerPubkey, signed: DealerReveal) -> Step {
         let hash = log_hash(&signed);
         let mut step = Step::default();
@@ -605,16 +520,9 @@ impl DkgCeremony {
         }
     }
 
-    /// If both the commitment and private share from `dealer_pk` are buffered,
-    /// process the dealing and emit an ack (point-to-point) if the player accepts.
-    /// On accept, the dealing entered `Player.view`, so journal it (`ReceivedDealing`)
-    /// — the resume must re-feed it — and CACHE the emitted ack.
-    ///
-    /// On a RE-RECEIPT (the dealer redelivered a dealing we already acked — our prior
-    /// ack was likely lost — so `Player::dealer_message` returns `None`, view already
-    /// holds it), RE-EMIT the cached ack instead of dropping it (the PLAYER LEG of
-    /// reliable delivery). No new `ReceivedDealing` journal (already durable ⇒ the
-    /// empty-journal `Step` passes the write-before-ack gate trivially).
+    /// Process the buffered dealing from `dealer_pk` once both halves are present and
+    /// emit an ack if the player accepts. On accept, journal the dealing and cache the
+    /// ack. On a re-receipt, re-emit the cached ack instead of dropping it.
     fn try_ack(&mut self, dealer_pk: PeerPubkey) -> Step {
         if !(self.pending_pub.contains_key(&dealer_pk)
             && self.pending_priv.contains_key(&dealer_pk))
@@ -656,26 +564,17 @@ impl DkgCeremony {
         }
     }
 
-    /// Forget the ack this node emitted as a player for `dealer`'s dealing — the
-    /// actor's step-1f gate found the paired `ReceivedDealing` record NOT durable and
-    /// withheld the ack. Without this the dealer's next retransmit would re-receive
-    /// the dealing and [`try_ack`](Self::try_ack)'s cache would re-emit the ack with
-    /// an EMPTY journal, which the gate takes as "already durable" — an ack this node
-    /// cannot back after a restart, the exact record the gate exists to prevent. The
-    /// dealing itself stays in the player's `view` (this process can still finalize
-    /// with it); the dealer reveals the point in its log, which is what a restart
-    /// recovers from.
+    /// Forget the ack this node emitted as a player for `dealer`'s dealing: the
+    /// actor's durability gate found the paired `ReceivedDealing` not durable and
+    /// withheld the ack. Without this the next retransmit would re-emit an ack with an
+    /// empty journal, which the gate reads as already durable.
     pub fn withhold_ack(&mut self, dealer: &PeerPubkey) {
         self.emitted_acks.remove(dealer);
     }
 
-    /// Re-send each un-acked dealing (`Commitment` + `Share`) point-to-point while the
-    /// dealing phase is open — the DEALER LEG of reliable delivery (§8.11.1). A member
-    /// that missed our initial dealing (or whose ack we lost) receives it again and
-    /// (re-)acks; `unsent` SHRINKS to ∅ as acks land (`handle(Ack)` prunes it), so this
-    /// converges in ~1–2 ticks. A no-op once the ceremony has sealed or resumed
-    /// player-only (`dealing_closed()` ⇒ no dealer). BOTH halves are sent — a missed
-    /// player missed both, and the receiver's `try_ack` needs the pair to ack.
+    /// Re-send each un-acked dealing (`Commitment` and `Share`) point-to-point while
+    /// the dealing phase is open. `unsent` shrinks as acks land, so this converges in a
+    /// tick or two; it is a no-op once sealed.
     pub fn retransmit(&self) -> Vec<Outgoing> {
         if self.dealing_closed() {
             return Vec::new();
@@ -703,18 +602,13 @@ impl DkgCeremony {
         out
     }
 
-    /// Close the dealing phase: finalize this node's dealer into a signed log,
-    /// record it locally, and broadcast it as a `Reveal` so every player can
-    /// include it. The [`Step`] journal carries our `OwnSeal` log so a resume
-    /// re-broadcasts THAT log (no divergent re-deal). Idempotent — a second call is a
-    /// no-op (dealer already taken).
+    /// Close the dealing phase: finalize this node's dealer into a signed log, record
+    /// it locally, and broadcast it as a `Reveal`. Idempotent.
     ///
-    /// The `OwnSeal` record + the `Reveal` broadcast are produced ONLY when our own
-    /// freshly-finalized log `check`s against our own `Info` — mirroring the resume
-    /// side, which only marks the epoch sealed after `check` succeeds. Journaling an
-    /// `OwnSeal` whose log is absent from `signed_logs` would let a resume mark the
-    /// epoch sealed with no log to re-broadcast (a silent absent/stall); broadcasting
-    /// an un-`check`able Reveal only spends bandwidth on a log peers reject.
+    /// The `OwnSeal` record and the `Reveal` are produced only when our freshly
+    /// finalized log checks against our own `Info`: journaling an `OwnSeal` whose log
+    /// is absent would let a resume mark the epoch sealed with no log to re-broadcast,
+    /// and broadcasting an uncheckable `Reveal` only spends bandwidth.
     pub fn seal_dealings(&mut self) -> Step {
         let Some(dealer) = self.dealer.take() else {
             return Step::default();
@@ -722,14 +616,10 @@ impl DkgCeremony {
         let signed = dealer.finalize::<N3f1>();
         let mut step = Step::default();
         if let Some((pk, _)) = signed.clone().check(&self.info) {
-            // Our own log goes in under the same rule as every other, and it can
-            // only ever be the FIRST log of `me`: the dealer is `take`n once, nobody
-            // holds our log before this broadcast, and a log of ours under another
-            // hash would be a self-equivocation — which the seeded dealer
-            // (`dealer_seed_rng`: one polynomial per `(key, epoch)`, §8.11.1) exists
-            // to make impossible. Any other outcome is a broken invariant, not a
-            // case: it panics in debug and is reported in release, where the seal
-            // still goes out (the log IS ours and IS valid).
+            // Our own log goes in under the same rule as every other, and it can only be the
+            // first log of `me`: the dealer is taken once, nobody holds our log before this
+            // broadcast, and the seeded dealer makes a second hash impossible. Any other
+            // outcome is a broken invariant, reported below.
             let inserted = self.insert_log(pk, signed.clone());
             debug_assert!(
                 matches!(inserted, Inserted::First),
@@ -756,11 +646,9 @@ impl DkgCeremony {
                 "live DKG: dealings sealed — own log broadcast"
             );
         } else {
-            // Our OWN freshly-finalized dealer log failed self-`check` (a library/encoding
-            // edge or `Info`/variant mismatch). Emitting no `OwnSeal`/`Reveal` is correct
-            // (above), but otherwise SILENT — surface it so the fault is visible instead of
-            // the node quietly self-removing from the dealer quorum with no diagnostic
-            // (review [3150]).
+            // Our own freshly-finalized log failed self-check. Emitting no `OwnSeal`/`Reveal`
+            // is correct, but otherwise silent — surface it so the node does not quietly
+            // self-remove from the dealer quorum with no diagnostic.
             tracing::warn!(
                 epoch = self.epoch,
                 "live DKG: own sealed dealer log failed self-check — no OwnSeal/Reveal emitted; \
@@ -770,9 +658,8 @@ impl DkgCeremony {
         step
     }
 
-    /// Count of DISTINCT `(dealer, hash)` logs recorded so far (our own at seal +
-    /// each peer's `Reveal` + each resolver delivery). An equivocating dealer counts
-    /// once per log it signed, so this is a count of bodies held, not of dealers.
+    /// The number of distinct `(dealer, hash)` logs recorded so far. An equivocating
+    /// dealer counts once per log, so this counts bodies held, not dealers.
     #[cfg(test)]
     pub fn recorded_log_count(&self) -> usize {
         self.signed_logs.len()
@@ -780,7 +667,7 @@ impl DkgCeremony {
 
     /// Whether this ceremony holds the log `id` names — the exact body, by content
     /// hash. What the pinned-set fetch asks before requesting a body: a dealer whose
-    /// held log is a DIFFERENT body than the pinned one is `false` here and gets
+    /// held log is a different body than the pinned one is `false` here and gets
     /// re-fetched by hash, where a per-dealer check would have called it held.
     pub fn holds(&self, id: &LogId) -> bool {
         self.signed_logs.contains_key(id)
@@ -798,88 +685,59 @@ impl DkgCeremony {
         &self.equivocations
     }
 
-    /// The dealing phase is closed (we sealed — normally OR check-failed — or resumed
-    /// player-only). The dealer `Option` is the durable in-ceremony seal state: it is
-    /// `take`n at [`seal_dealings`](Self::seal_dealings) BEFORE its `check`. A PRE-seal
-    /// [`resume`](Self::resume) (reconstruct) keeps a LIVE dealer (`Some`); an at/after-
-    /// deadline resume is player-only (`None`). The actor derives seal-suppression /
-    /// stop-buffering from this instead of a duplicated `sealed` flag.
+    /// The dealing phase is closed: we sealed, or check-failed, or resumed player-only.
+    /// The dealer `Option` is the durable in-ceremony seal state, taken before its
+    /// check, so the actor derives seal suppression from it rather than a flag.
     pub fn dealing_closed(&self) -> bool {
         self.dealer.is_none()
     }
 
-    /// Whether `peer` holds a seat in this ceremony — is in `committee[epoch]`,
-    /// which under Model B ([`info_for`]: dealers == players == the committee) is
-    /// both "one of its dealers" and "one of its players". The consumer-side
-    /// answer to "may this sender speak for this epoch": [`handle`](Self::handle)
-    /// keys a dealing and an ack by the sender, and commonware answers a stranger
-    /// silently (`Player::dealer_message` → `None` on `dealer_index` failing,
-    /// `Dealer::receive_player_ack` → `Err(UnknownPlayer)`, both swallowed there),
-    /// so the actor asks this first and refuses out loud.
+    /// Whether `peer` holds a seat in this ceremony, which under Model B is both "one
+    /// of its dealers" and "one of its players". The actor asks this before handing a
+    /// frame in, because commonware answers a stranger silently.
     pub fn has_seat(&self, peer: &PeerPubkey) -> bool {
         self.roster.position(peer).is_some()
     }
 
-    /// Our own valid log is recorded — the seal-before-finalize precondition AND the
-    /// torn-own-seal recovery target. `seal_dealings` files `me`'s log at the instant
-    /// of a successful seal; a torn-own-seal node makes this true again the moment the
-    /// resolver re-fetches its own log by the pinned hash. The actor's finalize gate
-    /// derives from this, so a check-failed seal (no log of `me` held) correctly does
-    /// NOT finalize over a set missing its own valid log.
+    /// Our own valid log is recorded: the seal-before-finalize precondition and the
+    /// torn-own-seal recovery target. A check-failed seal correctly does not finalize
+    /// over a set missing its own valid log.
     pub fn own_log_recorded(&self, me: &PeerPubkey) -> bool {
         self.first_log.contains_key(me)
     }
 
-    /// The SIGNED form of one recorded dealer log, by exact [`LogId`], if held —
-    /// served to a peer over the DKG-log recovery resolver (`log_resolver::Producer`),
-    /// which asks by `(epoch, dealer, hash)` and is answered with that body or
-    /// nothing. Each is `check`-valid by construction (only checked logs are
-    /// inserted), so a served log always re-verifies on the requester.
+    /// The signed form of one recorded dealer log, by exact [`LogId`], served to a
+    /// peer over the DKG-log recovery resolver. Every entry is check-valid by
+    /// construction, so a served log always re-verifies on the requester.
     pub fn signed_log(&self, id: &LogId) -> Option<&DealerReveal> {
         self.signed_logs.get(id)
     }
 
-    /// Take this ceremony's recorded signed logs, leaving it with an empty map. The
-    /// actor calls this immediately BEFORE the finalize (which
-    /// consumes `self`) to eagerly seed the finalized epoch's entry in the dealer-log
-    /// serve store ([`DealerLogStore`](crate::beacon::log_store), a bounded
-    /// subset-copy of the journal), so the DKG-log recovery `Producer` can keep serving
-    /// them to a late-restarting peer until the past-boundary sweep — an O(1) lookup
-    /// with no disk read / no per-request `check` on the actor's hot path.
+    /// Take this ceremony's recorded signed logs, leaving it empty. The actor calls
+    /// this before the finalize to seed the finalized epoch's entry in the serve store,
+    /// so the recovery producer can keep serving them without a disk read or per-request
+    /// check.
     pub fn take_signed_logs(&mut self) -> BTreeMap<LogId, DealerReveal> {
         std::mem::take(&mut self.signed_logs)
     }
 
-    /// Re-`check` and record one `SignedDealerLog` recovered via the resolver
-    /// (`log_resolver::Consumer`) for the fetched `expected` log. The log must
-    /// `check`-verify, be signed by `expected.0` AND hash to `expected.1` — a peer
-    /// that answers a targeted fetch for `(D, h)` with a valid log for a DIFFERENT
-    /// dealer, or with D's OTHER log, must NOT satisfy the fetch (and the log is not
-    /// recorded under it). Returns `(accepted, step)`:
-    /// - `accepted == true` — the log is exactly the one fetched (now recorded, or
-    ///   an honest duplicate already held);
-    /// - `accepted == false` — `check` failed (a forgery), or the log is not the
-    ///   `(dealer, hash)` asked for (a mis-targeted answer). The caller returns the
-    ///   resolver `deliver→false` (block the peer + re-fetch the key).
+    /// Re-check and record one signed log recovered via the resolver. The log must
+    /// check-verify, be signed by `expected.0` and hash to `expected.1`; a valid log
+    /// for a different dealer or of the other body does not satisfy the fetch.
     ///
-    /// The local ban does NOT apply here: this is the path the AGREED log of a
-    /// banned dealer arrives on. The pinned set is the truth about which of its logs
-    /// is in force, and a node holding only the other one finalizes exactly by
-    /// fetching the pinned one by hash.
-    ///
-    /// The `step` carries the journal record to persist and the `recorded_log` it
-    /// belongs to — both empty when the log was a duplicate or rejected. Its
-    /// `outgoing` is always empty: recording a log answers nobody.
+    /// Returns whether the log was accepted, and the step carrying the journal record.
+    /// The local ban does not apply here: this is how the agreed log of a banned dealer
+    /// arrives.
     pub fn ingest_signed_log(&mut self, expected: &LogId, signed: DealerReveal) -> (bool, Step) {
         match signed.clone().check(&self.info) {
             Some((pk, _)) if pk != expected.0 || log_hash(&signed) != expected.1 => {
-                // A valid log, but not the one fetched — do NOT record it under
+                // A valid log, but not the one fetched — do not record it under
                 // this fetch; the resolver re-fetches `expected` elsewhere.
                 (false, Step::default())
             }
             Some((pk, _)) => {
                 // Valid + exactly the body asked for: record (deduped) and accept. An
-                // honest duplicate (already held) returns an EMPTY step — valid, no
+                // honest duplicate (already held) returns an empty step — valid, no
                 // journal.
                 (true, self.record_checked_log(pk, signed))
             }
@@ -887,46 +745,17 @@ impl DkgCeremony {
         }
     }
 
-    /// Reconstruct a ceremony for `epoch` from its on-disk journal after a restart
-    /// (§8.11.1). Rebuilds `Player.view` via [`Player::resume`] over the journaled
-    /// received dealings + recorded logs, repopulates the recorded `(dealer, hash)` set
-    /// (incl. any journaled equivocation pair and the ban it implies),
-    /// and RE-EMITS one [`DkgBody::Ack`] per PEER dealing [`Player::resume`] replayed
-    /// (the resolver cannot heal a missing ack, so a peer must still be able to seal).
+    /// Reconstruct a ceremony for `epoch` from its journal after a restart. Rebuilds
+    /// `Player.view` from the journaled dealings and logs, repopulates the recorded
+    /// set including any equivocation pair, and re-emits one ack per peer dealing.
     ///
-    /// `reconstruct_dealer` (the actor's TIMING GATE, `height < seal_deadline`) selects
-    /// the resume shape:
-    /// - **`true` (PRE-seal):** RE-DERIVE the dealer via the deterministic
-    ///   [`init_dealer`]/[`dealer_seed_rng`] seed (byte-identical commitment + shares ⇒
-    ///   idempotent, never self-equivocating), repopulate `own_pub_msg`/`unsent`, replay
-    ///   the acks our dealer already collected (journaled [`JournalRecord::OwnDealerAck`]
-    ///   → `receive_player_ack` + prune `unsent`), and FEED OUR OWN SELF-ACK from
-    ///   `Player::resume`'s `acks[me]` (`Dealer::start` seeds `results[me] = Reveal`; only
-    ///   a self-ack flips it, else the restarted dealer reveals ITSELF and burns an
-    ///   f-slot). The node keeps a LIVE dealer, resumes BOTH delivery legs, and seals ONCE
-    ///   at the deadline. Safe because `height < seal_deadline ⇒ we never sealed ⇒ no
-    ///   original log was ever broadcast` (idempotent-first). On a `Dealer::start`/seed
-    ///   error we degrade to player-only rather than fail the whole resume.
-    /// - **`false` (at/after the deadline):** PLAYER-ONLY — the dealer role is RETIRED and
-    ///   we NEVER re-seal (a torn journal cannot prove we did not already seal + broadcast
-    ///   a possibly-divergent log). If a valid `OwnSeal` record is present we re-broadcast
-    ///   THAT exact log verbatim; otherwise we sit out as one of the ≤f tolerated absent
-    ///   dealers and recover our SHARE as a player over the n−f survivors.
+    /// `reconstruct_dealer` selects the shape described on [`Resumed`]. `preferred`
+    /// names, per dealer, the body the rebuilt player should stand on when the journal
+    /// holds more than one of that dealer's; an unknown or absent hash falls back to
+    /// the first-recorded body, the one this node proposes and confirms.
     ///
-    /// The peer acks in `Player::resume`'s map are ALWAYS re-emitted outbound (`!= me`);
-    /// only the `me` entry is redirected to our own reconstructed dealer, so no peer ack
-    /// is ever dropped or double-handled. `emitted_acks` is rebuilt from that map in BOTH
-    /// shapes so the player ack-cache re-emit works after any resume.
-    ///
-    /// `preferred` names, per dealer, the body the rebuilt player should stand on
-    /// when the journal holds more than one of that dealer's (an equivocation pair):
-    /// the actor passes the artifact's pinned `dealer → hash` when it already holds
-    /// the artifact (D-10), and an empty map otherwise, in which case the
-    /// FIRST-recorded body is used — the one this node proposes and confirms. A
-    /// preferred hash the journal does not hold falls back to first-recorded too.
-    ///
-    /// `MissingPlayerDealing` (a truncated journal dropped a publicly-acked dealing)
-    /// surfaces as `Err` so the caller can sit out the epoch gracefully — never crash.
+    /// A truncated journal that dropped a publicly-acked dealing surfaces as `Err` so
+    /// the caller can sit out the epoch gracefully.
     pub fn resume(
         namespace: &[u8],
         epoch: u64,
@@ -939,12 +768,9 @@ impl DkgCeremony {
         let me = me_key.public_key();
         let info = info_for(namespace, epoch, committee.clone())?;
 
-        // The recorded set is rebuilt through the SAME `insert_log` the live path
-        // uses, in journal order — so a replayed journal keys every log by
-        // `(dealer, hash)` exactly as the process that wrote it did: a dealer's
-        // second log lands as the second half of its pair, never as a replacement
-        // of the first. Filled on a bare shell first; the shell becomes the ceremony
-        // once the player is rebuilt.
+        // Rebuild the recorded set through the same `insert_log` the live path uses, in
+        // journal order, so a dealer's second log lands as the second half of its pair
+        // rather than as a replacement of the first.
         let mut shell = Self {
             epoch,
             info: info.clone(),
@@ -960,11 +786,9 @@ impl DkgCeremony {
             unsent: BTreeMap::new(),
             emitted_acks: BTreeMap::new(),
         };
-        // One `DealerLog` per dealer for `Player::resume`'s integrity check (a
-        // verified log acking `me` for a dealing `me` cannot replay ⇒
-        // `MissingPlayerDealing`): the PREFERRED (pinned) body of each dealer where
-        // the caller names one and the journal holds it, else the FIRST-recorded
-        // log of each dealer, the same one this node proposes and confirms.
+        // One `DealerLog` per dealer for `Player::resume`'s integrity check: the preferred
+        // body where the caller names one and the journal holds it, else the first-recorded
+        // log of each dealer.
         let mut log_map: BTreeMap<PeerPubkey, DealerLog<MinSig, PeerPubkey>> = BTreeMap::new();
         let mut file_log = |pk: PeerPubkey, log: DealerLog<MinSig, PeerPubkey>, hash: B256| {
             if preferred.get(&pk) == Some(&hash) {
@@ -974,12 +798,11 @@ impl DkgCeremony {
             }
         };
         let mut own_seal = false;
-        // (dealer, pub, priv) dealings to feed `Player::resume` (incl. our own
-        // self-dealing — it rebuilds `view[me]` AND regenerates our self-ack).
+        // Dealings to feed `Player::resume`, including our own self-dealing, which
+        // rebuilds `view[me]` and regenerates our self-ack.
         let mut received: Vec<(PeerPubkey, DealerCommitment, DealerPrivMsg)> = Vec::new();
-        // Acks our OWN dealer collected from players before the crash (journaled by
-        // `handle(Ack)`) — replayed into the reconstructed dealer so it does not re-reveal
-        // an already-acked player. Ignored on the player-only shape (no live dealer).
+        // Acks our own dealer collected before the crash, replayed into the reconstructed
+        // dealer so it does not re-reveal an already-acked player. Ignored player-only.
         let mut own_dealer_acks: Vec<(PeerPubkey, Ack)> = Vec::new();
         for record in records {
             match record {
@@ -989,10 +812,8 @@ impl DkgCeremony {
                 JournalRecord::OwnDealerAck(player, ack) => {
                     own_dealer_acks.push((player, *ack));
                 }
-                // Mark `own_seal` only AFTER `check` succeeds and files our log — a
-                // tampered `OwnSeal` frame that fails `check` must NOT mark the epoch
-                // sealed (which would leave us with no log to re-broadcast → a
-                // silent absent/stall).
+                // Mark `own_seal` only after `check` succeeds and files our log: a tampered
+                // `OwnSeal` frame that fails check must not mark the epoch sealed.
                 JournalRecord::OwnSeal(_) => {
                     for (pk, log, signed) in checked_logs_in(record, &info, epoch) {
                         own_seal = true;
@@ -1000,14 +821,9 @@ impl DkgCeremony {
                         let _ = shell.insert_log(pk, signed);
                     }
                 }
-                // An evidence record is taken WHOLE or not at all (`checked_logs_in`).
-                // Its order is READ: `first` is the hash this node recorded first —
-                // what it proposes and confirms — and `insert_log` files the halves in
-                // that order when the pair is the dealer's first appearance. The
-                // journal's own order wins otherwise, so the record's claim is checked
-                // against it: a disagreement can only come from a journal that was not
-                // written by this code (the writer emits `(first_log, new)` and the
-                // journal is append-only) and is named, not honoured.
+                // An evidence record is taken whole or not at all. Its order is read — `first` is
+                // the hash this node recorded first — and checked against the journal's own order,
+                // which wins otherwise.
                 JournalRecord::DealerEquivocation(..) => {
                     let halves = checked_logs_in(record, &info, epoch);
                     let claimed = match &halves[..] {
@@ -1047,21 +863,18 @@ impl DkgCeremony {
             }
         }
 
-        // Rebuild `Player.view` and capture the regenerated per-dealer acks
-        // (`Player::resume` re-emits one ack for every dealing it replays, INCLUDING our
-        // own self-ack under `me`).
+        // Rebuild `Player.view` and capture the regenerated per-dealer acks, including our
+        // own self-ack under `me`.
         let (player, acks) =
             Player::resume::<N3f1>(info.clone(), me_key.clone(), &log_map, received)?;
 
-        // Player ack-cache (BOTH shapes): every dealer we validly acked as a player, so a
-        // later re-receipt of that dealing re-emits the cached ack (`try_ack`'s re-receipt
-        // arm) — the player leg stays reliable after a restart too.
+        // Player ack-cache in both shapes: every dealer we validly acked, so a later
+        // re-receipt re-emits the cached ack after a restart too.
         let emitted_acks: BTreeMap<PeerPubkey, Ack> =
             acks.iter().map(|(d, a)| (d.clone(), a.clone())).collect();
 
-        // Re-emit a point-to-point Ack to every PEER dealer whose dealing we replayed, so
-        // a peer that lost our prior ack can still seal its log. The `me` self-ack is NOT
-        // networked — it feeds our OWN reconstructed dealer below (or is moot player-only).
+        // Re-emit an ack to every peer dealer whose dealing we replayed. The `me` self-ack
+        // is not networked; it feeds our own reconstructed dealer below.
         let mut outgoing: Vec<Outgoing> = acks
             .iter()
             .filter(|(dealer, _)| **dealer != me)
@@ -1075,17 +888,15 @@ impl DkgCeremony {
             .collect();
 
         let (dealer, own_pub_msg, unsent) = if reconstruct_dealer {
-            // PRE-seal restart: re-derive the identical (seeded) dealer + resume both legs.
+            // Pre-seal restart: re-derive the identical dealer and resume both legs.
             match init_dealer(&me_key, epoch, &info) {
                 Ok((mut dealer, pub_msg, mut unsent, _self_priv)) => {
-                    // Replay the acks our dealer had already collected: flip each player's
-                    // Reveal→Ack and prune it from the retransmit set.
+                    // Replay the acks our dealer had already collected, pruning each from `unsent`.
                     for (player_pk, ack) in own_dealer_acks {
                         let _ = dealer.receive_player_ack(player_pk.clone(), ack);
                         unsent.remove(&player_pk);
                     }
-                    // Feed our OWN self-ack so the restarted dealer does NOT reveal itself
-                    // (`Dealer::start` seeds `results[me] = Reveal`; only this flips it).
+                    // Feed our own self-ack so the restarted dealer does not reveal itself.
                     if let Some(self_ack) = acks.get(&me) {
                         let _ = dealer.receive_player_ack(me.clone(), self_ack.clone());
                         unsent.remove(&me);
@@ -1093,9 +904,8 @@ impl DkgCeremony {
                     (Some(dealer), Some(pub_msg), unsent)
                 }
                 Err(e) => {
-                    // Degenerate (Model B guarantees `me` deals). Degrade to player-only
-                    // rather than sit the epoch out entirely — the n−f survivors finalize
-                    // and we recover our share as a player.
+                    // Degenerate under Model B. Degrade to player-only rather than sit the
+                    // epoch out: the n-f survivors finalize and we recover our share.
                     tracing::warn!(
                         epoch,
                         ?e,
@@ -1105,9 +915,8 @@ impl DkgCeremony {
                 }
             }
         } else {
-            // At/after the seal deadline: PLAYER-ONLY, NEVER re-seal. If we sealed before
-            // the crash, re-broadcast our journaled log verbatim so any peer that missed
-            // it records OURS.
+            // At or after the seal deadline: player-only, never re-seal. If we sealed before
+            // the crash, re-broadcast our journaled log verbatim.
             if own_seal {
                 if let Some(signed) = shell
                     .first_log
@@ -1137,38 +946,24 @@ impl DkgCeremony {
         })
     }
 
-    /// The content hash ([`log_hash`]) of the log this node recorded FIRST for
-    /// `dealer`, if any — the deterministic INDEX over the recorded bodies the
-    /// agreement plane proposes over and a `ShareConfirm` states. Stable for the
-    /// ceremony's life: a later log of the same dealer (an equivocation, or the pinned
-    /// body fetched after it) never moves it, so what this node claimed stays what it
-    /// claimed. `None` if no log of `dealer` is held.
+    /// The content hash of the log this node recorded first for `dealer`, if any — the
+    /// index the agreement proposes over and a `ShareConfirm` states. Stable for the
+    /// ceremony's life, so what this node claimed stays what it claimed.
     pub fn signed_log_hash(&self, dealer: &PeerPubkey) -> Option<B256> {
         self.first_log.get(dealer).copied()
     }
 
-    /// Build a `Logs` restricted to EXACTLY the finalized-consensus pinned dealer-log
-    /// set (AMENDMENT 5 determinism core): for each `(idx, hash)` in `pinned` map
-    /// `idx → committee[idx]` (position order — the agreed on-chain committee), and
-    /// include the recorded signed log held under exactly `(committee[idx], hash)`
-    /// (content-addressed: an absent body — including a dealer of which only a
-    /// DIFFERENT body is held — is reported by `idx`, so every honest node fetches the
-    /// SAME pinned bytes by hash and selects over the IDENTICAL set → identical
-    /// `PK_E`). Returns `(scoped_logs, missing)`; a non-empty `missing` ⇒ those seats'
-    /// pinned bodies are not held (the caller WAITS, never subset-finalizes — the
-    /// resolver fetches exactly those, by hash).
+    /// Build `Logs` restricted to exactly the pinned dealer-log set: for each
+    /// `(idx, hash)` map `idx` to `committee[idx]` and include the recorded log held
+    /// under exactly that `(dealer, hash)`. An absent body is reported by `idx`, so
+    /// every honest node fetches the same pinned bytes and selects over the identical
+    /// set.
     ///
-    /// An idx with no position in `committee` is a different case and is SKIPPED, not
-    /// counted against `all_held`: nothing can ever satisfy it, because the resolver
-    /// fetches a `(dealer, hash)` over the roster and there is no dealer to name. Holding
-    /// `all_held=false` for it wedged the ceremony forever, silently — the deep half
-    /// of the 2026-07-21 idx-stall. The skip stays deterministic because it is a pure
-    /// function of two pieces of agreed data (the consensus-pinned map and the
-    /// committed committee), so every honest node scopes the IDENTICAL set and derives
-    /// the IDENTICAL `PK_E`. If the mappable remainder cannot reach quorum the caller
-    /// falls into the existing below-quorum path instead of hanging. The actor counts
-    /// and logs the occurrence (`dpos_dkg_pinned_idx_out_of_range_total`); with the
-    /// codec bound in `order_block.rs` an honest chain can no longer produce one.
+    /// An `idx` with no position in `committee` is skipped rather than counted against
+    /// `all_held`: nothing can satisfy it, because the resolver fetches over the roster
+    /// and there is no dealer to name. The skip is a pure function of the pinned map and
+    /// the committed committee, so every honest node scopes the identical set. If the
+    /// mappable remainder cannot reach quorum the caller takes the below-quorum path.
     fn scoped_pinned_logs(
         &self,
         committee: &Set<PeerPubkey>,
@@ -1182,12 +977,9 @@ impl DkgCeremony {
             };
             match self.signed_logs.get(&(pk.clone(), *hash)) {
                 Some(signed) => {
-                    // Re-`check` (guaranteed to pass — only checked logs are stored)
-                    // to obtain the `DealerLog` for `Logs::record`. The checked
-                    // signer MUST be the key the body is filed under: every writer
-                    // keys by the `check`-returned signer, so a mismatch is a
-                    // corrupt map, and a corrupt entry is reported and treated as
-                    // not held — never recorded under a seat it does not belong to.
+                    // Re-check (guaranteed to pass) to obtain the `DealerLog` for
+                    // `Logs::record`. The checked signer must be the key the body is
+                    // filed under; a mismatch is a corrupt map, reported as not held.
                     match signed.clone().check(&self.info) {
                         Some((cpk, log)) if cpk == *pk => {
                             logs.record(cpk, log);
@@ -1211,13 +1003,9 @@ impl DkgCeremony {
         (logs, missing)
     }
 
-    /// Non-destructive AM5 finalize probe over the PINNED set: `(ready, all_held)`.
-    /// `ready` = a selectable quorum exists WITHIN the pinned+held dealers (`observe`
-    /// over the scoped `Logs`);
-    /// `all_held` = every MAPPABLE pinned body is held with a matching hash (fetch-
-    /// before-finalize; unmappable indices are skipped, see
-    /// [`scoped_pinned_logs`](Self::scoped_pinned_logs)). Finalize only when
-    /// `all_held && ready` (or the all-`n` fast path).
+    /// Non-destructive finalize probe over the pinned set: `ready` when a selectable
+    /// quorum exists within the pinned and held dealers, `all_held` when every mappable
+    /// pinned body is held with a matching hash. Finalize only when `all_held && ready`.
     pub fn pinned_ready<R: CryptoRngCore>(
         &self,
         rng: &mut R,
@@ -1230,33 +1018,19 @@ impl DkgCeremony {
         (ready, missing.is_empty())
     }
 
-    /// The public half of the ceremony over EXACTLY `pinned` — the ceremony-side
-    /// half of [`crate::beacon::dkg_agree::PinnedLogs`].
+    /// The public half of the ceremony over exactly `pinned` — the ceremony-side half
+    /// of [`crate::beacon::dkg_agree::PinnedLogs`].
     ///
-    /// The arms are not interchangeable and the split is safety-critical: only
-    /// [`PinnedDerive::Unusable`] is a property of the pinned set itself, and it is
-    /// reached ONLY with every named body in hand. A body this node has not received
-    /// is [`PinnedDerive::Missing`] naming exactly the seats to fetch, never
-    /// `Unusable` — the agreement's `verify` turns `Unusable` into a nullified view
-    /// for the whole network, and a node-local delivery gap must never cost that.
-    /// The caller supplies the [`PinnedDerive::Unavailable`] arm for the cases that
-    /// never reach a ceremony at all.
+    /// The arms are not interchangeable: only [`PinnedDerive::Unusable`] is a property
+    /// of the pinned set, and it is reached only with every named body in hand. A body
+    /// this node has not received is [`PinnedDerive::Missing`] naming the seats to
+    /// fetch. The agreement turns `Unusable` into a nullified view for the whole
+    /// network, and a node-local delivery gap must never cost that.
     ///
-    /// `rng` feeds verification only (batched ack check, reveal recombination,
-    /// dealer sampling), so the derived key is a pure function of `pinned` — which
-    /// is what lets the agreement carry it as a checkable field.
-    ///
-    /// An `idx` with no position in `committee` answers `Unavailable` HERE, where
-    /// [`scoped_pinned_logs`](Self::scoped_pinned_logs) silently skips it. The two
-    /// contracts differ because the callers do: on the ordering plane the pinned
-    /// set is already agreed and the skip is what stops one unmappable index from
-    /// wedging the ceremony forever, whereas here the set is a CANDIDATE and the
-    /// skip would let `Unusable` — a `verify → false`, i.e. a nullified view for
-    /// the whole network — be returned over a body this node never examined. The
-    /// two roster reads are independent (`committee` here is the caller's
-    /// `committee_for(epoch)`; the agreement's own structural bound counts seats
-    /// off the roster baked in at spawn), so they CAN disagree, and a disagreement
-    /// is a property of this node, not of the proposal.
+    /// An `idx` with no committee position answers `Unavailable` here, where
+    /// [`scoped_pinned_logs`](Self::scoped_pinned_logs) skips it: on the ordering plane
+    /// the pinned set is already agreed, whereas here it is a candidate and the skip
+    /// could let `Unusable` be returned over a body this node never examined.
     pub fn derive_pinned<R: CryptoRngCore>(
         &self,
         rng: &mut R,
@@ -1276,30 +1050,19 @@ impl DkgCeremony {
         }
     }
 
-    /// AM5 deterministic finalize: `Player::finalize` over EXACTLY the pinned set
-    /// ([`scoped_pinned_logs`](Self::scoped_pinned_logs)). Scoping `select` to the
-    /// agreed set is what makes the derived `PK_E` a pure function of agreed data
-    /// (honest divergence impossible by construction).
+    /// Finalize `Player` over exactly the pinned set, which is what makes the derived
+    /// `PK_E` a pure function of agreed data.
     ///
-    /// NON-DESTRUCTIVE to the ceremony object: it borrows `&mut self` and CONSUMES
-    /// only the `Player` (the commonware `Player::finalize` takes it by value either
-    /// way), leaving the recorded `signed_logs` intact so the ceremony keeps serving
-    /// peers.
+    /// Non-destructive to the ceremony: it consumes only the `Player`, leaving the
+    /// recorded logs intact so the ceremony keeps serving peers.
     ///
-    /// CALLER CONTRACT (the supervisor enforces timing):
-    /// - [`seal_dealings`](Self::seal_dealings) MUST have run first — it is the only
-    ///   place this node's own dealer log enters the recorded set and is broadcast, so
-    ///   finalizing without sealing drops this dealer from the quorum (locally AND
-    ///   for every peer).
-    /// - `all_held && ready` MUST have been confirmed via
-    ///   [`pinned_ready`](Self::pinned_ready), else `Player::finalize` returns
-    ///   `Err(DkgFailed)`.
-    ///
-    /// The player is CONSUMED either way, so this runs at most once per ceremony:
-    /// the actor takes the ceremony out of its `Agreed` phase to call it, moves the
-    /// recorded logs to the serve store, and lands the epoch in the phase the result
-    /// names (`Keyed`, `Acquiring(Logs)` — the journal re-selected over the pinned
-    /// set — or `Unrecoverable`).
+    /// Caller contract: [`pinned_ready`](Self::pinned_ready) must have confirmed
+    /// `ready` — a selectable quorum of the pinned and held dealers, without which
+    /// `Player::finalize` returns `Err(DkgFailed)` — and `all_held`, so the output is
+    /// derived over every mappable pinned body, not a locally held subset. On the
+    /// dealing branch [`seal_dealings`](Self::seal_dealings) must have run first; a
+    /// node resumed at or after the seal deadline is player-only and calls this
+    /// directly. The player is consumed either way, so this runs at most once.
     pub fn finalize_over_pinned<R: CryptoRngCore>(
         &mut self,
         rng: &mut R,
@@ -1315,26 +1078,14 @@ impl DkgCeremony {
     }
 }
 
-/// LOCALLY recompute this node's share for a FINALIZED epoch from its durable
-/// journal, scoped to EXACTLY the `pinned` `dealer → hash` set the epoch's artifact
-/// named — the demote-heal primitive (§8.11.1). Reuses the SAME `Player::resume`
-/// (rebuild `view` from the journaled `ReceivedDealing`s) + `Player::finalize` the
-/// mid-window-restart path runs, but selects over ONLY the pinned bodies: a SUPERSET
-/// would make `Logs::select` pick a different first-`n−f` → a different `PK_E`, and
-/// a dealer's OTHER body (an equivocation the journal also holds) would put a log
-/// into the selection that the network never agreed on. Either way the caller's
-/// self-check fails though safety still holds (see `outcome::validate_share_on_poly`).
-/// Player-only — never re-deals. The caller MUST self-verify the returned share
-/// against the pinned `Output` before adopting; a short / torn / tampered journal
-/// fails that check (or returns `Err` here) and is NEVER adopted, so a
-/// wrong-but-valid-looking share can never leak into consensus. `rng` drives only
-/// `Player::finalize`'s batch verify.
+/// Locally recompute this node's share for a finalized epoch from its journal,
+/// scoped to exactly the pinned `dealer → hash` set the artifact named.
 ///
-/// `pinned` is the artifact's pinned set mapped onto the committee (`dealer → hash`
-/// per pinned seat) — the same input the live `finalize_over_pinned` scopes to, so the
-/// two paths select identically; a member's own point for each selected dealer comes
-/// from its journaled `ReceivedDealing` (acked) OR that dealer's log reveal
-/// (un-acked), so this recovers the share with no live ceremony.
+/// Selecting over a superset would let `Logs::select` pick a different first quorum
+/// and derive a different `PK_E`, so the scope matters. Player-only — never
+/// re-deals. The caller must self-verify the returned share against the pinned
+/// `Output` before adopting; a short, torn or tampered journal fails that check and
+/// is never adopted.
 pub fn recompute_scoped<R: CryptoRngCore>(
     rng: &mut R,
     namespace: &[u8],
@@ -1355,7 +1106,7 @@ pub fn recompute_scoped<R: CryptoRngCore>(
             }
             // The player-state rebuild does not consume dealer-side acks.
             JournalRecord::OwnDealerAck(..) => {}
-            // Keep ONLY the bodies the pinned set names, by exact `(dealer, hash)`.
+            // Keep only the bodies the pinned set names, by exact `(dealer, hash)`.
             JournalRecord::OwnSeal(_)
             | JournalRecord::PeerLog(_)
             | JournalRecord::DealerEquivocation(..) => {
@@ -1392,8 +1143,8 @@ mod tests {
     use rand_core::SeedableRng as _;
     use std::collections::BTreeSet;
 
-    /// A pinned `idx → hash` set mapped onto its committee: `dealer → hash`, the
-    /// shape `recompute_scoped` takes (what the actor's `pinned_by_dealer` builds).
+    /// A pinned `idx → hash` set mapped onto its committee, the shape `recompute_scoped`
+    /// takes.
     fn by_dealer(
         committee: &Set<PeerPubkey>,
         pinned: &BTreeMap<u8, B256>,
@@ -1410,9 +1161,7 @@ mod tests {
     }
 
     /// The ceremony's own recorded dealer logs as a pinned set: every committee seat
-    /// whose log it holds, under the hash it holds. The epoch-key agreement certifies
-    /// exactly such a map, so a node driven to a full recorded set finalizes over the
-    /// same input a live one does.
+    /// whose log it holds, under the hash it holds.
     fn pinned_over_recorded(cer: &DkgCeremony, committee: &Set<PeerPubkey>) -> BTreeMap<u8, B256> {
         committee
             .iter()
@@ -1424,10 +1173,8 @@ mod tests {
             .collect()
     }
 
-    /// Drive N ceremonies to completion purely through the event API (start →
-    /// exchange Outgoing → seal → exchange → finalize), then assert every node
-    /// agreed on `PK_E` and that the resulting shares recover a verifiable seed —
-    /// i.e. the networked event model reproduces `run_local_dkg`.
+    /// Drive N ceremonies to completion through the event API, then assert every node
+    /// agreed on `PK_E` and that the shares recover a verifiable seed.
     #[test]
     fn ceremonies_agree_and_feed_a_verifiable_seed_via_events() {
         let mut rng = StdRng::seed_from_u64(11);
@@ -1438,7 +1185,6 @@ mod tests {
         let ns = b"FLUENT_DPOS_V1_test";
 
         let mut ceremonies: BTreeMap<PeerPubkey, DkgCeremony> = BTreeMap::new();
-        // (sender, outgoing) — the sender is the `from` the receiver's handle needs.
         let mut queue: Vec<(PeerPubkey, Outgoing)> = Vec::new();
         for k in &keys {
             let (cer, step) =
@@ -1448,10 +1194,8 @@ mod tests {
             ceremonies.insert(from, cer);
         }
 
-        // Deliver until quiescent (commitments/shares → acks; acks → nothing).
         deliver_all(&mut ceremonies, &mut queue);
 
-        // Deadline: every node seals its dealings (broadcast Reveal); deliver them.
         let sealers: Vec<PeerPubkey> = ceremonies.keys().cloned().collect();
         for pk in sealers {
             let step = ceremonies.get_mut(&pk).expect("ceremony").seal_dealings();
@@ -1459,7 +1203,6 @@ mod tests {
         }
         deliver_all(&mut ceremonies, &mut queue);
 
-        // Finalize: every node derives the agreed output + its share.
         let mut outputs = Vec::new();
         let mut shares = BTreeMap::new();
         for (pk, mut cer) in ceremonies {
@@ -1476,7 +1219,6 @@ mod tests {
             assert_eq!(group_public_key(o), pk0, "all nodes agree on PK_E");
         }
 
-        // The DKG shares recover a seed that verifies against PK_E.
         let seed_ns = seed_namespace(ns);
         let round = Round::new(Epoch::new(0), View::new(100));
         let partials: Vec<_> = shares
@@ -1490,9 +1232,8 @@ mod tests {
         );
     }
 
-    /// Drive `n=5` ceremonies through start → exchange → seal → exchange so EVERY
-    /// node holds ALL 5 recorded dealer logs; return `(committee, ceremonies)` for the
-    /// AMENDMENT 5 pinned-finalize tests.
+    /// Drive `n=5` ceremonies to the point where every node holds all five recorded
+    /// dealer logs, and return the committee and ceremonies.
     fn run_to_all_sealed(seed: u64) -> (Set<PeerPubkey>, BTreeMap<PeerPubkey, DkgCeremony>) {
         let mut rng = StdRng::seed_from_u64(seed);
         let keys: Vec<Ed25519PrivateKey> = (0..5)
@@ -1519,9 +1260,8 @@ mod tests {
         (committee, ceremonies)
     }
 
-    /// Build the pinned `idx→hash` map (AM5) for a subset of committee positions,
-    /// reading the content hash from `source`'s recorded logs (content-addressed, so
-    /// every node's hash for a given dealer is identical).
+    /// Build the pinned `idx → hash` map for a subset of committee positions, reading
+    /// the content hash from `source`'s recorded logs.
     fn pinned_for(
         committee: &Set<PeerPubkey>,
         source: &DkgCeremony,
@@ -1535,30 +1275,24 @@ mod tests {
             .collect()
     }
 
-    /// AMENDMENT 5 CORE DETERMINISM PIN (test a): two DIFFERENT nodes (different
-    /// players, different p2p arrival orders) that finalize over the IDENTICAL pinned
-    /// dealer-log set derive the IDENTICAL `PK_E` — the finalize is a pure function of
-    /// the finalized set, so honest divergence is impossible by construction. Holds
-    /// for the full set AND a proper subset (a different but still-agreed key).
+    /// Two different nodes that finalize over the identical pinned set derive the
+    /// identical `PK_E`, for the full set and for a proper subset.
     #[test]
     fn finalize_over_pinned_is_pure_in_the_finalized_set() {
         let mut rng = StdRng::seed_from_u64(101);
         let (committee, mut ceremonies) = run_to_all_sealed(101);
         let nodes: Vec<PeerPubkey> = ceremonies.keys().cloned().collect();
-        // n=5, N3f1 ⇒ dealer quorum n−f = 4; `select` picks the LOWEST `quorum` valid
-        // dealers, so `{0,1,2,3,4}` and `{0,1,2,3}` select the same 4 (same key), while
-        // `{1,2,3,4}` selects a DIFFERENT quorum (different key). Content hashes are
-        // node-independent — read them once from node 0.
+        // n=5, N3f1 means dealer quorum n-f = 4; `select` picks the lowest quorum valid
+        // dealers, so `{0,1,2,3,4}` and `{0,1,2,3}` select the same four, while
+        // `{1,2,3,4}` selects a different quorum.
         let lo = pinned_for(&committee, &ceremonies[&nodes[0]], &[0, 1, 2, 3]);
         let hi = pinned_for(&committee, &ceremonies[&nodes[0]], &[1, 2, 3, 4]);
 
-        // Each node's `pinned_ready` over a quorum set: all held + a quorum selectable.
         for pk in &nodes {
             let (ready, all_held) = ceremonies[pk].pinned_ready(&mut rng, &committee, &lo);
             assert!(ready && all_held, "quorum pinned set: ready + all held");
         }
 
-        // Finalize node 0 and node 1 over the SAME pinned set → identical PK_E.
         let (out_a, _) = ceremonies
             .get_mut(&nodes[0])
             .unwrap()
@@ -1575,8 +1309,6 @@ mod tests {
             "same pinned set ⇒ identical PK_E across nodes"
         );
 
-        // A DIFFERENT pinned dealer quorum is a different DKG but still deterministic
-        // across nodes (node 2 and node 3 over `{1,2,3,4}` agree with each other).
         let (out_c, _) = ceremonies
             .get_mut(&nodes[2])
             .unwrap()
@@ -1599,10 +1331,8 @@ mod tests {
         );
     }
 
-    /// AMENDMENT 5 (test b): a node whose local bodies are a SUBSET of the pinned
-    /// hashes reports `all_held=false` — the actor WAITS (never subset-finalizes)
-    /// until the resolver fetches the missing pinned bytes. A hash that does NOT match
-    /// any held body (a not-yet-fetched / equivocated body) is dropped.
+    /// A node whose local bodies are a subset of the pinned hashes reports
+    /// `all_held=false`, so the actor waits instead of subset-finalizing.
     #[test]
     fn unmappable_pinned_idx_is_skipped_and_does_not_wedge() {
         let mut rng = StdRng::seed_from_u64(303);
@@ -1610,10 +1340,6 @@ mod tests {
         let nodes: Vec<PeerPubkey> = ceremonies.keys().cloned().collect();
         let clean = pinned_for(&committee, &ceremonies[&nodes[0]], &[0, 1, 2, 3]);
 
-        // An idx with no position in this committee: nothing can ever satisfy it, since
-        // the resolver fetches `(dealer, hash)` over the roster. Holding `all_held=false` for
-        // it kept the ceremony from EVER finalizing, silently — the deep half of the
-        // 2026-07-21 idx-stall.
         let mut bogus = clean.clone();
         bogus.insert(committee.len() as u8, B256::repeat_byte(0xAB));
 
@@ -1625,8 +1351,6 @@ mod tests {
             );
         }
 
-        // And the skip does not change the outcome: same key as without the bogus entry,
-        // and the same key on every node (the skip is a pure function of agreed data).
         let (out_bogus, _) = ceremonies
             .get_mut(&nodes[0])
             .unwrap()
@@ -1649,11 +1373,9 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(202);
         let (committee, ceremonies) = run_to_all_sealed(202);
         let node = ceremonies.keys().next().unwrap().clone();
-        // Correct full pinned set ⇒ all held.
         let full = pinned_for(&committee, &ceremonies[&node], &[0, 1, 2, 3, 4]);
         let (_ready, all_held) = ceremonies[&node].pinned_ready(&mut rng, &committee, &full);
         assert!(all_held, "matching hashes ⇒ all held");
-        // Corrupt one pinned hash (a body this node does NOT hold) ⇒ not all held.
         let mut missing = full.clone();
         missing.insert(4, B256::repeat_byte(0xEE));
         let (_ready, all_held) = ceremonies[&node].pinned_ready(&mut rng, &committee, &missing);
@@ -1663,18 +1385,14 @@ mod tests {
         );
     }
 
-    /// The three arms of [`PinnedDerive`] the ceremony can reach, and the one
-    /// distinction the agreement's safety rests on: a body this node does not hold
-    /// is `Missing` naming exactly the seats to fetch — never `Unusable`, which is
-    /// the only arm the agreement may turn into a nullified view.
+    /// A body this node does not hold is `Missing` naming the seats to fetch, never
+    /// `Unusable`, which is the only arm the agreement may turn into a nullified view.
     #[test]
     fn derive_pinned_separates_a_missing_body_from_an_unusable_set() {
         let mut rng = StdRng::seed_from_u64(404);
         let (committee, ceremonies) = run_to_all_sealed(404);
         let node = ceremonies.keys().next().unwrap().clone();
 
-        // n=5, N3f1 ⇒ dealer quorum 4: a held quorum derives a key, and every node
-        // derives the SAME one, which is what lets it ride in the proposal.
         let quorum = pinned_for(&committee, &ceremonies[&node], &[0, 1, 2, 3]);
         let PinnedDerive::Derived(key) =
             ceremonies[&node].derive_pinned(&mut rng, &committee, &quorum)
@@ -1693,7 +1411,6 @@ mod tests {
             );
         }
 
-        // A pinned hash no held body matches: a delivery race, reported per seat.
         let mut raced = quorum.clone();
         raced.insert(3, B256::repeat_byte(0xEE));
         assert!(
@@ -1704,8 +1421,6 @@ mod tests {
             "a body this node does not hold must be Missing(seat), never Unusable"
         );
 
-        // Every named body held, and still no key: below the dealer quorum, so no
-        // selection exists. This one IS a property of the set.
         let short = pinned_for(&committee, &ceremonies[&node], &[0, 1, 2]);
         assert!(
             matches!(
@@ -1716,20 +1431,14 @@ mod tests {
         );
     }
 
-    /// The keystone invariant, and the reason it lives in `derive_pinned` and not in
-    /// `scoped_pinned_logs`: an `idx` this node cannot map to a committee seat leaves
-    /// its body unexamined, so the remaining set can fall below the dealer quorum and
-    /// answer `Unusable` — a `verify → false` — over a proposal no honest node with
-    /// the same roster would reject. `Unavailable` parks instead.
+    /// An `idx` this node cannot map to a committee seat leaves its body unexamined, so
+    /// `derive_pinned` answers `Unavailable` rather than a possibly-`Unusable` set.
     #[test]
     fn derive_pinned_is_unavailable_when_a_pinned_idx_has_no_committee_seat() {
         let mut rng = StdRng::seed_from_u64(405);
         let (committee, ceremonies) = run_to_all_sealed(405);
         let node = ceremonies.keys().next().unwrap().clone();
 
-        // A full, derivable set plus one seat this node's roster does not have. The
-        // skip would leave a quorum, so the arm has to come from the unmappable idx
-        // itself and not from what is left after it.
         let mut over = pinned_for(&committee, &ceremonies[&node], &[0, 1, 2, 3]);
         over.insert(committee.len() as u8, B256::repeat_byte(0xAB));
         assert!(
@@ -1740,8 +1449,6 @@ mod tests {
             "an unmappable idx is a disagreement about the roster — park, never vote"
         );
 
-        // The same set MINUS the unmappable entry still derives, so the arm above is
-        // not a blanket refusal.
         let mapped = pinned_for(&committee, &ceremonies[&node], &[0, 1, 2, 3]);
         assert!(matches!(
             ceremonies[&node].derive_pinned(&mut rng, &committee, &mapped),
@@ -1749,16 +1456,12 @@ mod tests {
         ));
     }
 
-    /// AMENDMENT 5 (test c): a pinned set BELOW the reconstruction threshold at the
-    /// deadline is not `ready` (no selectable quorum) ⇒ the ceremony does not finalize
-    /// ⇒ clean deferral. `≥ t` ⇒ ready.
+    /// A pinned set below the reconstruction threshold is not `ready`; at quorum it is.
     #[test]
     fn pinned_ready_false_below_threshold_true_at_quorum() {
         let mut rng = StdRng::seed_from_u64(303);
         let (committee, ceremonies) = run_to_all_sealed(303);
         let node = ceremonies.keys().next().unwrap().clone();
-        // n=5, N3f1 ⇒ dealer quorum n−f = 4. Three pinned dealers ⇒ below quorum ⇒
-        // NOT ready.
         let three = pinned_for(&committee, &ceremonies[&node], &[0, 1, 2]);
         let (ready, all_held) = ceremonies[&node].pinned_ready(&mut rng, &committee, &three);
         assert!(all_held, "the three bodies ARE held");
@@ -1766,17 +1469,13 @@ mod tests {
             !ready,
             "below quorum ⇒ no selectable quorum ⇒ not ready (defer)"
         );
-        // Four pinned dealers ⇒ at quorum ⇒ ready.
         let four = pinned_for(&committee, &ceremonies[&node], &[0, 1, 2, 3]);
         let (ready, _) = ceremonies[&node].pinned_ready(&mut rng, &committee, &four);
         assert!(ready, "at quorum ⇒ a quorum is selectable ⇒ ready");
     }
 
-    /// The seeded dealer is DETERMINISTIC: two `start`s for the same `(key, epoch)`
-    /// produce the byte-identical commitment (the idempotent-re-deal / anti-self-
-    /// equivocation property), while a different epoch differs. ed25519 signing (the
-    /// seed source) is deterministic too — asserted directly, since a non-deterministic
-    /// signer backend would silently re-introduce the divergence this seed removes.
+    /// The seeded dealer is deterministic: two `start`s for the same `(key, epoch)`
+    /// produce the byte-identical commitment, while a different epoch differs.
     #[test]
     fn seed_makes_dealer_start_idempotent() {
         let mut rng = StdRng::seed_from_u64(5);
@@ -1818,9 +1517,8 @@ mod tests {
         );
     }
 
-    /// `retransmit` re-sends only to UN-acked players and is a no-op once sealed: it
-    /// starts non-empty (every peer un-acked at start), shrinks to ∅ as acks land, and
-    /// returns nothing after `dealing_closed()`.
+    /// `retransmit` starts non-empty, shrinks to empty as acks land, and returns nothing
+    /// after `dealing_closed()`.
     #[test]
     fn retransmit_shrinks_as_acks_land_and_stops_after_seal() {
         let mut rng = StdRng::seed_from_u64(8);
@@ -1840,7 +1538,6 @@ mod tests {
             ceremonies.insert(from, cer);
         }
         let d0 = keys[0].public_key();
-        // 3 other players × (Commitment + Share).
         assert_eq!(ceremonies[&d0].retransmit().len(), 6);
 
         deliver_all(&mut ceremonies, &mut queue);
@@ -1857,11 +1554,8 @@ mod tests {
         );
     }
 
-    /// BOTH delivery legs heal via retransmit + ack re-emit. With dealer-0's initial
-    /// dealing to player-1 DROPPED (dealer-leg loss) AND player-2's ack to dealer-0
-    /// DROPPED (ack-leg loss), the per-tick `retransmit` re-delivers to both un-acked
-    /// players and player-2 re-emits its CACHED ack, so dealer-0's sealed log reveals
-    /// NEITHER — reveals track genuine whole-window absence, not a single dropped packet.
+    /// Both delivery legs heal via retransmit and ack re-emit: with a dealing and an ack
+    /// dropped, the dealer's sealed log reveals neither player.
     #[test]
     fn retransmit_heals_dropped_dealing_and_ack_no_reveals() {
         let mut rng = StdRng::seed_from_u64(3);
@@ -1884,8 +1578,6 @@ mod tests {
             ceremonies.insert(from, cer);
         }
 
-        // Lossy initial delivery: drop dealer-0's Commitment+Share to player-1 (dealer
-        // leg) and player-2's Ack to dealer-0 (ack leg).
         let d0c = d0.clone();
         let p1c = p1.clone();
         let p2c = p2.clone();
@@ -1906,7 +1598,6 @@ mod tests {
             "player-2 un-acked (its ack was dropped)"
         );
 
-        // Retransmit ticks (no further loss) heal BOTH legs.
         for _ in 0..2 {
             let retx: Vec<(PeerPubkey, Outgoing)> = ceremonies
                 .iter()
@@ -1920,7 +1611,6 @@ mod tests {
             "both legs healed: dealer-0's unsent drained"
         );
 
-        // Seal + inspect dealer-0's OWN log: it reveals neither p1 nor p2.
         let sealers: Vec<PeerPubkey> = ceremonies.keys().cloned().collect();
         for pk in sealers {
             let step = ceremonies.get_mut(&pk).expect("ceremony").seal_dealings();
@@ -1944,7 +1634,6 @@ mod tests {
             DealerLogSummary::TooManyReveals => panic!("dealer-0 must not be TooManyReveals"),
         }
 
-        // Deliver the reveals + finalize: every node still agrees on PK_E.
         deliver_all(&mut ceremonies, &mut queue);
         let outputs: Vec<CeremonyOutput> = ceremonies
             .into_values()
@@ -1965,9 +1654,8 @@ mod tests {
         }
     }
 
-    /// `deliver_all` but drops any `(from, to, body)` for which `drop` returns true —
-    /// modelling per-leg packet loss (a dropped Commitment/Share = dealer leg, a dropped
-    /// Ack = player leg). Broadcast fan-out applies the predicate per recipient.
+    /// `deliver_all` but drops any `(from, to, body)` for which `drop` returns true,
+    /// modelling per-leg packet loss.
     fn deliver_dropping(
         ceremonies: &mut BTreeMap<PeerPubkey, DkgCeremony>,
         queue: &mut Vec<(PeerPubkey, Outgoing)>,
@@ -2005,10 +1693,8 @@ mod tests {
         }
     }
 
-    /// Drive a fresh 4-party ceremony to the point where node-0 has acked every
-    /// dealer and SEALED, capturing node-0's journal records. Returns
-    /// `(committee, key0, journal0)` — the inputs a resume test reconstructs node-0
-    /// from.
+    /// Drive a four-party ceremony to the point where node 0 has acked every dealer and
+    /// sealed, capturing node 0's journal records.
     fn run_to_node0_sealed(seed: u64) -> (Set<PeerPubkey>, Ed25519PrivateKey, Vec<JournalRecord>) {
         let mut rng = StdRng::seed_from_u64(seed);
         let keys: Vec<Ed25519PrivateKey> = (0..4)
@@ -2047,9 +1733,8 @@ mod tests {
         (committee, keys[0].clone(), journal0)
     }
 
-    /// `deliver_all` but ALSO appends node-`me`'s journal records as it handles each
-    /// message — so a resume test can reconstruct exactly what node-`me` would have
-    /// persisted.
+    /// `deliver_all` but also appends node-`me`'s journal records as it handles each
+    /// message.
     fn deliver_capturing(
         ceremonies: &mut BTreeMap<PeerPubkey, DkgCeremony>,
         queue: &mut Vec<(PeerPubkey, Outgoing)>,
@@ -2088,15 +1773,13 @@ mod tests {
         }
     }
 
-    /// Resume reproduces node-0's exact share: a node that journaled its received
-    /// dealings + own seal + peer logs, then crashed, rebuilds the IDENTICAL
-    /// `(PK_E, share)` via `Player::resume` (no divergent re-deal).
+    /// A node that journaled its dealings, own seal and peer logs rebuilds the identical
+    /// `(PK_E, share)` via `Player::resume`.
     #[test]
     fn resume_after_own_seal_reproduces_identical_share() {
         let (committee, key0, journal0) = run_to_node0_sealed(31);
         let roster = committee.clone();
 
-        // Live node-0: rebuild + finalize from the same network.
         let (committee2, key0b, journal0b) = run_to_node0_sealed(31);
         let mut rng_live = StdRng::seed_from_u64(31);
         let me0 = key0.public_key();
@@ -2124,9 +1807,6 @@ mod tests {
             .finalize_over_pinned(&mut rng_live, &roster, &pinned_live)
             .expect("finalize live");
 
-        // Resumed node-0: rebuild from the journal alone (a DIFFERENT rng seed for
-        // the re-spawn would, under a re-deal, diverge — player-only restore makes it
-        // irrelevant: no rng is consumed).
         let mut rng_res = StdRng::seed_from_u64(99);
         let mut resumed = DkgCeremony::resume(
             b"FLUENT_DPOS_V1_test",
@@ -2158,12 +1838,10 @@ mod tests {
     }
 
     /// A truncated journal that dropped a publicly-acked dealing surfaces
-    /// `MissingPlayerDealing` on resume (graceful sit-out, never a crash).
+    /// `MissingPlayerDealing` on resume.
     #[test]
     fn resume_with_missing_acked_dealing_reports_missing_player_dealing() {
         let (committee, key0, mut journal0) = run_to_node0_sealed(42);
-        // Drop one received PEER dealing (not our own self-deal) — its dealer's log
-        // still records our ack, so resume must fail MissingPlayerDealing.
         let me0 = key0.public_key();
         let idx = journal0
             .iter()
@@ -2186,22 +1864,17 @@ mod tests {
         }
     }
 
-    /// A PRE-deadline resume (reconstruct) RE-DERIVES the identical (seeded) dealer and
-    /// keeps distributing — the INVERSE of the old player-only sit-out. With only its
-    /// received dealings journaled (an early crash), the reconstructed dealer's `unsent`
-    /// covers every peer, so `retransmit` re-sends, and the re-derived commitment is
-    /// byte-identical to what the original `start` would have dealt (seeded idempotency).
+    /// A pre-deadline resume re-derives the identical seeded dealer and keeps
+    /// distributing: the reconstructed dealer's `unsent` covers every peer and its
+    /// commitment is byte-identical to the original `start`.
     #[test]
     fn pre_deadline_resume_reconstructs_identical_dealer() {
         let (committee, key0, journal0) = run_to_node0_sealed(13);
-        // Early-crash journal: keep ONLY our received dealings (view), drop logs/acks so
-        // the reconstructed dealer's `unsent` is the full peer set.
         let received_only: Vec<JournalRecord> = journal0
             .into_iter()
             .filter(|r| matches!(r, JournalRecord::ReceivedDealing(..)))
             .collect();
 
-        // The commitment the ORIGINAL `start` would deal (seeded — deterministic).
         let (_orig, orig_step) =
             DkgCeremony::start(b"FLUENT_DPOS_V1_test", 0, committee.clone(), key0.clone())
                 .expect("start");
@@ -2246,15 +1919,12 @@ mod tests {
         );
     }
 
-    /// R3: a reconstructed dealer that received EVERY player's ack (journaled
-    /// `OwnDealerAck`s) plus its own self-ack seals a log with ZERO reveals — it does NOT
-    /// reveal ITSELF (which would burn an f-slot). Without feeding the self-ack, `me`'s
-    /// entry would stay a Reveal.
+    /// A reconstructed dealer that received every ack plus its own self-ack seals a log
+    /// with zero reveals — it does not reveal itself.
     #[test]
     fn reconstructed_dealer_does_not_reveal_itself() {
         let (committee, key0, journal0) = run_to_node0_sealed(53);
         let me0 = key0.public_key();
-        // Pre-seal (strip OwnSeal); KEEP the OwnDealerAcks (all peers acked us).
         let pre_seal: Vec<JournalRecord> = journal0
             .into_iter()
             .filter(|r| !matches!(r, JournalRecord::OwnSeal(_)))
@@ -2300,14 +1970,12 @@ mod tests {
         }
     }
 
-    /// A resume re-emits one `Ack` per peer dealing it replayed (a peer that lost our
-    /// prior ack can then still seal its log). The own-seal resume path
-    /// also carries the re-broadcast own log.
+    /// A resume re-emits one ack per peer dealing it replayed, and carries the
+    /// re-broadcast own log on the own-seal path.
     #[test]
     fn resume_reemits_peer_acks() {
         let (committee, key0, journal0) = run_to_node0_sealed(17);
         let me0 = key0.public_key();
-        // Peer dealings node-0 replays = the non-self ReceivedDealing records.
         let peer_dealers: BTreeSet<PeerPubkey> = journal0
             .iter()
             .filter_map(|r| match r {
@@ -2341,24 +2009,16 @@ mod tests {
         );
     }
 
-    /// P3 determinism (RED→GREEN): `recompute_scoped` is a DETERMINISTIC function of
-    /// the pinned `dealer → hash` set, independent of journal acquisition order or
-    /// held supersets. Node-0's share recomputed from its journal (scoped to the pinned
-    /// bodies) is byte-identical to its canonically-finalized share AND lies on the
-    /// pinned poly; recomputing from a REVERSED journal yields the byte-identical share.
-    /// This is what makes two honest nodes recompute the SAME share for one seat — the
-    /// fork-safety determinism the heal rests on.
+    /// `recompute_scoped` is a deterministic function of the pinned set, independent of
+    /// journal acquisition order or held supersets, so two honest nodes recompute the
+    /// same share for one seat.
     #[test]
     fn recompute_scoped_is_deterministic_over_pinned_dealers() {
-        // Two byte-identical journals (same seed ⇒ same ceremony) so we can both
-        // finalize the canonical share AND recompute from a copy (journals are not
-        // `Clone` — they hold secret `DealerPrivMsg`).
         let (committee, key0, journal_canon) = run_to_node0_sealed(71);
         let (_c2, _k2, journal_recompute) = run_to_node0_sealed(71);
         let (_c3, _k3, journal_reversed) = run_to_node0_sealed(71);
         let me0 = key0.public_key();
 
-        // Canonical: resume + finalize the way the live actor does.
         let mut rng = StdRng::seed_from_u64(1);
         let mut canon = DkgCeremony::resume(
             b"FLUENT_DPOS_V1_test",
@@ -2376,8 +2036,8 @@ mod tests {
             .finalize_over_pinned(&mut rng, &committee, &pinned_canon)
             .expect("finalize");
 
-        // Recompute scoped to the pinned dealer set from an independent journal copy.
-        let mut rng2 = StdRng::seed_from_u64(999); // a DIFFERENT rng — recompute is deterministic
+        // A different rng, since recompute is deterministic.
+        let mut rng2 = StdRng::seed_from_u64(999); // a different rng — recompute is deterministic
         let scope = by_dealer(&committee, &pinned_canon);
         let (recomputed_out, recomputed_share) = recompute_scoped(
             &mut rng2,
@@ -2404,9 +2064,6 @@ mod tests {
             "the recomputed share self-verifies against the pinned Output"
         );
 
-        // Acquisition-order independence: recompute from the SAME journal REVERSED
-        // (a differently-acquired-but-equal set) yields the byte-identical share —
-        // scoping to dealers() (not raw insertion order) is what makes it deterministic.
         let mut rev = journal_reversed;
         rev.reverse();
         let mut rng3 = StdRng::seed_from_u64(7);
@@ -2428,10 +2085,8 @@ mod tests {
         let _ = me0;
     }
 
-    /// A SECOND `check`-valid log of `dealer` over the same `Info`, dealt from an
-    /// independent polynomial with no acks (so it carries `TooManyReveals`) — the
-    /// shape `testbed::byzantine_roles::TwoRevealSender` mints. Differs from the
-    /// dealer's sealed log by construction.
+    /// A second valid log of `dealer` over the same `Info`, dealt from an independent
+    /// polynomial with no acks.
     fn second_log_of(
         dealer: &Ed25519PrivateKey,
         committee: &Set<PeerPubkey>,
@@ -2449,20 +2104,9 @@ mod tests {
         d.finalize::<N3f1>()
     }
 
-    /// Two `check`-valid logs of one dealer, the identity `(dealer, hash)`, the
-    /// evidence, the ban, and the pinned refetch — on the ceremony's own API.
-    ///
-    /// Node 1 (the dealer) seals `log1`, which every node records. Node 0 ALSO
-    /// receives `log2` (a second valid log of node 1) by gossip. Then:
-    /// - both are held under their own `(dealer, hash)`; node 1 is proven
-    ///   equivocating, once, and the pair names `(log1, log2)` in arrival order;
-    /// - a THIRD log of node 1 by gossip is dropped (the local ban), while the
-    ///   SAME third log fetched by exact hash is recorded (the pinned-refetch path
-    ///   the ban must not close);
-    /// - with `log1` pinned, node 0 derives the key over the pinned set and
-    ///   finalizes to the SAME `PK_E` as a node that never saw `log2`; with `log2`
-    ///   pinned instead, `log1` is not what the set names and the seat is `Missing`
-    ///   for a node holding only `log1` — the fetch is by body, not by dealer.
+    /// Two valid logs of one dealer: both held under their own `(dealer, hash)`, the
+    /// dealer proven equivocating once, a third gossip log dropped while the same log
+    /// fetched by exact hash is recorded, and the pinned set deciding which body counts.
     #[test]
     fn a_dealers_second_valid_log_is_evidence_and_a_ban_but_never_a_replacement() {
         let mut rng = StdRng::seed_from_u64(77);
@@ -2503,7 +2147,6 @@ mod tests {
         let h3 = log_hash(&log3);
         assert!(h3 != h1 && h3 != h2);
 
-        // The second log lands by gossip: recorded beside the first, as evidence.
         let node0 = ceremonies.get_mut(&me0).expect("node 0");
         assert_eq!(node0.recorded_log_count(), 4);
         let step = node0.handle(d1.clone(), DkgBody::Reveal(Box::new(log2.clone())));
@@ -2528,19 +2171,15 @@ mod tests {
             Some(h1),
             "what this node proposes/confirms for the seat stays the FIRST hash"
         );
-        // Re-delivery of either body is a duplicate: no journal, no second evidence.
         let dup = node0.handle(d1.clone(), DkgBody::Reveal(Box::new(log1.clone())));
         assert!(dup.journal.is_empty() && dup.equivocation.is_none());
 
-        // The ban: a third body by GOSSIP is dropped ...
         let banned = node0.handle(d1.clone(), DkgBody::Reveal(Box::new(log3.clone())));
         assert!(banned.journal.is_empty() && banned.recorded_log.is_none());
         assert!(
             !node0.holds(&(d1.clone(), h3)),
             "gossip from a banned dealer records nothing"
         );
-        // ... while the SAME body fetched by exact hash is recorded (a pinned refetch
-        // must reach a banned dealer's agreed body), and only under its own id.
         let (wrong, step) = node0.ingest_signed_log(&(d1.clone(), h1), log3.clone());
         assert!(
             !wrong && step.journal.is_empty(),
@@ -2563,8 +2202,6 @@ mod tests {
             "the evidence stays the first pair"
         );
 
-        // The pinned set decides which body counts. Pin `log1` at node 1's seat: node 0
-        // (holding log1, log2, log3) and node 2 (holding log1 only) derive the SAME key.
         let pinned_log1 = pinned_over_recorded(&ceremonies[&keys[2].public_key()], &committee);
         let seat1 = committee.iter().position(|pk| *pk == d1).expect("seat") as u8;
         assert_eq!(pinned_log1.get(&seat1), Some(&h1));
@@ -2579,8 +2216,6 @@ mod tests {
             panic!("node 2 holds every pinned body");
         };
         assert_eq!(group_public_key(&key_from_0), group_public_key(&key_from_2));
-        // Pin `log2` instead: node 2 holds node 1's OTHER body, and that is `Missing`
-        // for the seat — a per-dealer check would have called it held.
         let mut pinned_log2 = pinned_log1.clone();
         pinned_log2.insert(seat1, h2);
         assert!(matches!(
@@ -2590,7 +2225,6 @@ mod tests {
         let (_ready, all_held) =
             ceremonies[&keys[2].public_key()].pinned_ready(&mut rng, &committee, &pinned_log2);
         assert!(!all_held);
-        // And node 0 finalizes over the `log1`-pinned set to that same key.
         let (out0, _share0) = ceremonies
             .get_mut(&me0)
             .expect("node 0")
@@ -2599,16 +2233,12 @@ mod tests {
         assert_eq!(group_public_key(&out0), group_public_key(&key_from_2));
     }
 
-    /// One journal semantics: a replayed journal rebuilds EXACTLY the recorded
-    /// `(dealer, hash)` set the live ceremony held — both halves of an equivocation
-    /// pair, the evidence and the ban included — because replay records through the
-    /// same rule the live path did. The pair rides its own `DealerEquivocation`
-    /// record: a journal without it holds neither the second body nor the ban.
+    /// A replayed journal rebuilds exactly the recorded `(dealer, hash)` set the live
+    /// ceremony held, both halves of an equivocation pair included.
     #[test]
     fn a_replayed_journal_rebuilds_the_recorded_set_and_the_equivocation_pair() {
         let (committee, key0, mut journal0) = run_to_node0_sealed(83);
         let keys: Vec<Ed25519PrivateKey> = {
-            // Re-derive the committee's keys from the same seed to mint node 1's second log.
             let mut rng = StdRng::seed_from_u64(83);
             (0..4)
                 .map(|_| Ed25519PrivateKey::random(&mut rng))
@@ -2618,7 +2248,6 @@ mod tests {
         let d1 = keys[1].public_key();
         let ns = b"FLUENT_DPOS_V1_test";
 
-        // The live node 0, after the ceremony: it then meets node 1's second log.
         let mut live = DkgCeremony::resume(
             ns,
             0,
@@ -2635,16 +2264,12 @@ mod tests {
         let h2 = log_hash(&log2);
         let step = live.handle(d1.clone(), DkgBody::Reveal(Box::new(log2)));
         assert_eq!(step.equivocation, Some(d1.clone()));
-        // Rebuild node 0's journal as the actor would have written it: the resume
-        // shape re-journals nothing, so take the records back out of the live
-        // ceremony's own recorded set plus the step's evidence record.
         let (_c, _k, mut journal) = run_to_node0_sealed(83);
         journal.extend(step.journal);
         let before: Vec<LogId> = live.signed_logs.keys().cloned().collect();
         assert!(before.contains(&(d1.clone(), h1)) && before.contains(&(d1.clone(), h2)));
         assert_eq!(before.len(), 5);
 
-        // Restart: replay the journal.
         let resumed = DkgCeremony::resume(
             ns,
             0,
@@ -2674,7 +2299,6 @@ mod tests {
             "the evidence pair survives the restart"
         );
         assert!(resumed.own_log_recorded(&keys[0].public_key()));
-        // The ban survives too: a third body by gossip is still dropped.
         let mut resumed = resumed;
         let log3 = second_log_of(&keys[1], &committee, 0, 0x5EC3);
         let h3 = log_hash(&log3);
@@ -2682,14 +2306,9 @@ mod tests {
         assert!(dropped.recorded_log.is_none() && !resumed.holds(&(d1, h3)));
     }
 
-    /// ONE validity rule for a journaled pair, on BOTH readers: what the resume
-    /// would not hold, the cold serve map does not serve. A `DealerEquivocation`
-    /// whose halves name two dealers, or are one body, evidences nothing — neither
-    /// half is taken from it by `checked_serve_map`, exactly as `resume` takes
-    /// neither; a body the journal also holds on its own is still taken from there;
-    /// a genuine pair yields both bodies on both readers. Each shape is appended to
-    /// a journal that holds NO log of the two dealers involved, so what either reader
-    /// ends up holding of them comes from the shape alone.
+    /// One validity rule for a journaled pair on both readers: a pair whose halves name
+    /// two dealers or are one body evidences nothing, while a genuine pair yields both
+    /// bodies. A body the journal also holds on its own is still taken from there.
     #[test]
     fn the_serve_map_takes_a_journaled_pair_under_the_rule_the_resume_applies() {
         let (committee, key0, journal0) = run_to_node0_sealed(89);
@@ -2720,9 +2339,6 @@ mod tests {
         let log1b = second_log_of(&keys[1], &committee, 0, 0x5EC4);
         let (h1, h1b) = (log_hash(&log1), log_hash(&log1b));
         assert_ne!(h1, h1b);
-        // Node 0's journal WITHOUT dealer 1's and dealer 2's logs: the shape under
-        // test is then the only source of either dealer's body. (`JournalRecord` is
-        // not `Clone`; the journal is re-derived from its seed per shape.)
         let base = || -> Vec<JournalRecord> {
             let (_, _, journal) = run_to_node0_sealed(89);
             let n = journal.len();
@@ -2778,7 +2394,6 @@ mod tests {
             JournalRecord::DealerEquivocation(Box::new(a.clone()), Box::new(b.clone()))
         };
 
-        // A genuine pair: both bodies, on both readers.
         let both = BTreeSet::from([(d1.clone(), h1), (d1.clone(), h1b)]);
         assert_eq!(
             served(vec![pair(&log1, &log1b)]),
@@ -2786,7 +2401,6 @@ mod tests {
             "a genuine pair is served whole"
         );
         assert_eq!(held(vec![pair(&log1, &log1b)]), both, "and replayed whole");
-        // Two dealers in one record: evidence of nothing — neither half, on either.
         assert!(
             served(vec![pair(&log1, &log2)]).is_empty(),
             "a pair naming two dealers is not served, half or whole"
@@ -2795,7 +2409,6 @@ mod tests {
             held(vec![pair(&log1, &log2)]).is_empty(),
             "and not replayed"
         );
-        // One body twice: the same.
         assert!(
             served(vec![pair(&log1, &log1)]).is_empty(),
             "a one-body pair is not served"
@@ -2804,8 +2417,6 @@ mod tests {
             held(vec![pair(&log1, &log1)]).is_empty(),
             "and not replayed"
         );
-        // Beside a corrupt pair, a body the journal holds on its own is taken from
-        // there — the drop is of the record, not of the body.
         let with_own = || {
             vec![
                 pair(&log1, &log2),

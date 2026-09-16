@@ -1,26 +1,14 @@
 //! Materialized-state-gated executed-hash probe — the shared source of the
-//! `executed_hash` closure fed to both
-//! [`EpochTransition`](fluentbase_staking_reader::EpochTransition) instances
-//! (the signer boundary hook, `dpos.rs`; the beacon-plane poller,
-//! `node/src/dpos.rs`).
+//! `executed_hash` closure fed to both `EpochTransition` instances (the signer
+//! boundary hook and the beacon-plane poller).
 //!
-//! `provider.block_hash(n)` alone is a HEADER probe: it resolves `Some` the
-//! instant a header is written, which during a reth PIPELINE backfill runs FAR
-//! ahead of executed state. Feeding that to the epoch-boundary hook drove
-//! committee state reads at un-executed hashes → reth `StateForHashNotFound` →
-//! `ReadError::Backend("no state found …")` → the signer's 3-consecutive-error
-//! self-shutdown (`MAX_CONSECUTIVE_ON_FINALIZED_ERRORS`), killing a node that
-//! was merely catching up. This helper gates the probe on reth's MATERIALIZED
-//! head (`best_block_number()` — the executed/canonical head, NOT the
-//! static-file header tip `last_block_number`, which races ahead during
-//! backfill; project memory `reth-sync-progress-best-number-vs-last-block`), so
-//! a not-yet-materialized height reports `Ok(None)` (the EpochTransition Intra
-//! park fires and re-pokes) while a genuine fault at a materialized height stays
-//! a real `Err` (the fail-fast counter still fires) — carrying the CLASS the
-//! error-owning layer gives it, so a consumer routing on
-//! [`ReadError::is_transient`](fluentbase_staking_reader::ReadError::is_transient)
-//! — the committee module, and the slasher behind it — sees a torn static-file
-//! read as the transient it is.
+//! `provider.block_hash(n)` alone is a header probe: it resolves as soon as a
+//! header is written, which during a reth pipeline backfill runs far ahead of
+//! executed state. Feeding that to the boundary hook drives committee reads at
+//! un-executed hashes and trips the signer's consecutive-error self-shutdown, so
+//! the probe gates on reth's materialized head (`best_block_number`, not the
+//! static-file header tip) and reports `Ok(None)` for a not-yet-materialized
+//! height while a genuine fault at a materialized height stays a real `Err`.
 
 use alloy_primitives::B256;
 use fluentbase_staking_reader::ReadError;
@@ -28,32 +16,24 @@ use reth_storage_api::{BlockHashReader, BlockNumReader};
 
 /// Three-valued executed-state probe for a committee read at `height`:
 ///
-/// - `Ok(None)` — STRICTLY when `height > best_block_number()`: the header may
+/// - `Ok(None)` — strictly when `height > best_block_number()`: the header may
 ///   already exist (pipeline backfill writes headers ahead of state) but the
-///   executed STATE is not materialized yet. The caller PARKS — it derives /
-///   reads NOTHING at this un-executed height, only defers the committee read
-///   until materialization.
-/// - `Ok(Some(hash))` — `height <= best_block_number()` and the header
-///   resolves: state is materialized past `height`, the committee read is safe.
-/// - `Err(_)` — `best_block_number()` errored, OR at a materialized height
-///   (`height <= best`) `block_hash(height)` returned `Ok(None)` or `Err`.
-///   Never a park: a fault at a materialized height MUST surface to the hook's
-///   consecutive-error counter, never be folded into the Intra park (which
-///   would strand a corruption behind a never-ticking counter, bypassing the
-///   fail-fast production posture).
+///   executed state is not materialized, so the caller parks and reads nothing at
+///   this height.
+/// - `Ok(Some(hash))` — `height <= best_block_number()` and the header resolves:
+///   state is materialized past `height` and the committee read is safe.
+/// - `Err(_)` — `best_block_number()` errored, or at a materialized height
+///   (`height <= best`) `block_hash(height)` returned `Ok(None)` or `Err`. Never a
+///   park: a fault at a materialized height must surface to the hook's
+///   consecutive-error counter, not be folded into the park behind a never-ticking
+///   counter.
 ///
-///   WHICH error is not cosmetic. Both reth reads below touch the same storage
-///   the staking reader's `eth_call` does, so a torn static-file read or a
-///   clean state-miss can surface HERE just as well, and
-///   [`is_transient`](ReadError::is_transient) is a predicate consumers ROUTE
-///   on — the committee module turns a permanent one into a refused epoch and a
-///   dropped slashing charge. So a provider error is classified by the error-owning
-///   layer ([`fluentbase_staking_reader::classify_transient_provider_error`]),
-///   exactly as the read boundary in `reader.rs` classifies its own, and only
-///   what that function does not recognise becomes [`ReadError::Backend`].
-///   `Ok(None)` at a materialized height is NOT a storage fault of that kind —
-///   it is a header-index inconsistency, and it stays `Backend`, i.e.
-///   permanent.
+/// A provider error is classified by the error-owning layer
+/// ([`fluentbase_staking_reader::classify_transient_provider_error`]) so a torn
+/// static-file read or a clean state-miss keeps the class consumers route on; only
+/// what that function does not recognise becomes [`ReadError::Backend`]. `Ok(None)`
+/// at a materialized height is a header-index inconsistency and stays `Backend`,
+/// i.e. permanent.
 pub fn executed_state_hash<P>(provider: &P, height: u64) -> Result<Option<B256>, ReadError>
 where
     P: BlockHashReader + BlockNumReader,
@@ -72,8 +52,6 @@ where
     }
 }
 
-/// A reth provider error as the error-owning layer classifies it, or
-/// [`ReadError::Backend`] for a genuine fault.
 fn classify(e: reth_storage_api::errors::provider::ProviderError) -> ReadError {
     fluentbase_staking_reader::classify_transient_provider_error(&e)
         .unwrap_or_else(|| ReadError::Backend(e.to_string()))
@@ -95,7 +73,7 @@ mod tests {
         /// A clean state-miss — reth's own "the header is here, the state is
         /// not" answer during a pipeline backfill / unwind.
         StateMiss,
-        /// A torn STATIC-FILE read: the persistence thread appending while this
+        /// A torn static-file read: the persistence thread appending while this
         /// read ran. Typed as `DatabaseError::Decode`.
         TornDecode,
         /// A genuine, permanent fault: the state at that block is pruned and no
@@ -184,9 +162,9 @@ mod tests {
 
     #[test]
     fn above_materialized_head_is_park_edge_none() {
-        // height > best ⇒ Ok(None): state not yet materialized (header may or may
-        // not exist — the probe does not even read it), so the caller PARKS. It
-        // is NEVER Ok(Some) above best (the over-eager header case the bug rode).
+        // height > best ⇒ Ok(None): state is not materialized yet, so the caller
+        // parks; the probe never returns Ok(Some) above best even when a header
+        // exists.
         let h = B256::repeat_byte(0xAB);
         let provider = MockProvider::new(100, HashMode::Present(h));
         assert_eq!(executed_state_hash(&provider, 101).unwrap(), None);
@@ -201,21 +179,17 @@ mod tests {
 
     #[test]
     fn block_hash_fault_at_materialized_height_is_a_real_error_not_a_park() {
-        // The F2 fail-safe at the PROBE level: at a materialized height
-        // (height <= best) a block_hash miss (Ok(None)) or Err is a real
-        // header-index / corruption fault, so the probe returns Err — surfacing
-        // to the hook's consecutive-error counter — and NEVER Ok(None) (which
-        // would silently park a corruption behind the never-ticking counter,
-        // bypassing MAX_CONSECUTIVE_ON_FINALIZED_ERRORS).
+        // At a materialized height a block_hash miss or error is a real fault, so
+        // the probe returns Err and never a park: an Ok(None) here would hide the
+        // corruption behind the never-ticking consecutive-error counter.
         let absent = MockProvider::new(100, HashMode::Absent);
         assert!(
             matches!(executed_state_hash(&absent, 50), Err(ReadError::Backend(_))),
             "block_hash Ok(None) at height <= best must be a real error, not a park"
         );
 
-        // A `block_hash` Err is an Err whatever its cause — which CLASS of Err
-        // is the next test's subject, and the two are kept apart on purpose:
-        // this one owns "never a silent park".
+        // Any `block_hash` error is an error whatever its cause; which class is
+        // the next test's subject.
         for fault in [Fault::StateMiss, Fault::TornDecode, Fault::Permanent] {
             let errored = MockProvider::new(100, HashMode::Errored(fault));
             assert!(
@@ -227,13 +201,9 @@ mod tests {
 
     #[test]
     fn a_transient_storage_fault_keeps_its_transient_class_through_the_probe() {
-        // The anchor probe is a READ BOUNDARY like any other, so a reth storage
-        // hiccup has to come out of it with the class the error-owning layer
-        // gives it (`classify_transient_provider_error`) — not flattened into
-        // `Backend`, which `ReadError::is_transient` reports as PERMANENT. The
-        // committee module routes the slasher on that predicate, so flattening
-        // turns one torn static-file read into a slashing charge dropped for
-        // good.
+        // A reth storage hiccup must keep the class the error-owning layer gives
+        // it, not flatten into `Backend`, which `is_transient` reports as
+        // permanent; the committee module routes the slasher on that predicate.
         let state_miss = MockProvider::new(100, HashMode::Errored(Fault::StateMiss));
         let err = executed_state_hash(&state_miss, 50).expect_err("a fault, not a park");
         assert!(
@@ -248,8 +218,7 @@ mod tests {
             "a torn static-file read is TRANSIENT, got {err:?}"
         );
 
-        // And the other direction, so the classification is not "everything is
-        // transient now": a pruned state is permanent and stays `Backend`.
+        // The other direction: a pruned state is permanent and stays `Backend`.
         let pruned = MockProvider::new(100, HashMode::Errored(Fault::Permanent));
         let err = executed_state_hash(&pruned, 50).expect_err("a fault, not a park");
         assert!(
@@ -257,8 +226,8 @@ mod tests {
             "a permanent provider fault stays a permanent Backend, got {err:?}"
         );
 
-        // The `best_block_number()` leg is classified by the same function —
-        // it reads the same storage, so it can tear the same way.
+        // The materialized-head read is classified the same way; it reads the
+        // same storage.
         let best_torn = MockProvider::with_best_fault(100, Fault::TornDecode);
         let err = executed_state_hash(&best_torn, 50).expect_err("a fault, not a park");
         assert!(
@@ -266,8 +235,8 @@ mod tests {
             "a torn read of the materialized head is TRANSIENT, got {err:?}"
         );
 
-        // `Ok(None)` at a materialized height is NOT a storage fault at all —
-        // it is the header-index inconsistency arm, and it stays permanent.
+        // `Ok(None)` at a materialized height is the header-index inconsistency
+        // arm, and it stays permanent.
         let absent = MockProvider::new(100, HashMode::Absent);
         let err = executed_state_hash(&absent, 50).expect_err("a fault, not a park");
         assert!(

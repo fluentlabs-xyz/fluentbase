@@ -8,8 +8,7 @@ pub mod gossip;
 pub mod ingress;
 pub mod tombstone;
 
-// Re-export the unified trait from staking-reader; the slasher consumes
-// `StakingStateRead`.
+// The unified trait is re-exported from staking-reader, which the slasher consumes.
 pub use actor::{Actor, ChargeStore, Config};
 pub use fluentbase_staking_reader::StakingStateRead;
 pub use gossip::{EvidenceBridge, EvidenceCommitteeFor};

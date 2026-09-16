@@ -1,23 +1,9 @@
 //! Integration: slasher pipeline under the commonware deterministic runtime.
 //!
-//! Two test groups:
-//!
-//! 1. **Reporter multiplex routing** (pre-existing): proves the
-//!    `Reporters::from((marshal, slasher))` multiplex fans out
-//!    `ConflictingNotarize` events to BOTH arms and that
-//!    `extract_from_conflicting_notarize` re-decodes the event into a
-//!    SlashCallArgs containing the offender's signer index.
-//!
-//! 2. **Full actor pipeline**: the producer/consumer split using a
-//!    real `commonware_storage::queue::shared` WAL, a recording
-//!    [`SlasherTxSink`] stub, and a configurable [`StakingStateRead`]
-//!    stub.
-//!
 //! A charge is block-eligible only inside its own epoch, so the transaction
-//! route these cases exercise is the **epoch-boundary fallback**: a charge is
-//! held for a proposer while its epoch runs and only reaches the sink once the
-//! epoch turns. Every case here therefore closes the epoch after driving its
-//! event — see [`report_and_close_epoch`].
+//! route these cases exercise is the epoch-boundary fallback: a charge is held
+//! for a proposer while its epoch runs and only reaches the sink once the epoch
+//! turns. Every case here therefore closes the epoch after driving its event.
 
 use alloy_primitives::{Address, B256};
 use commonware_codec::DecodeExt;
@@ -137,17 +123,16 @@ fn build_consensus_digest_conflicting_notarize() -> (
     (ConflictingNotarize::new(n1, n2), kps, bimap)
 }
 
-/// One signed notarize by OFFENDER. On its own it is not slashable — two of
-/// them for one round with different proposals are, and a single one is also
-/// the cheapest activity that tells the slasher which epoch consensus is in.
+/// One signed notarize by `OFFENDER`; not slashable alone, but the cheapest
+/// activity that tells the slasher which epoch consensus is in.
 fn offender_notarize(
     epoch: u64,
     view: u64,
     tag: u8,
 ) -> Activity<BlsScheme, fluentbase_consensus::Digest> {
     let (kps, bimap) = committee(1);
-    // Bound to the epoch it is about to sign at, which is not always `EPOCH` —
-    // one caller reports at `EPOCH + 1`, and the scheme refuses a foreign epoch.
+    // The signer must be bound to the epoch it signs; the scheme refuses a
+    // foreign epoch, and callers pass epochs other than `EPOCH`.
     let s = build_signer(
         &fluent_namespace(C_MAIN),
         bimap,
@@ -199,14 +184,13 @@ struct StubReader {
     empty: bool,
 }
 
-/// A reth provider whose `block_hash` read TEARS — the shape a static-file
-/// segment being appended concurrently produces (`DatabaseError::Decode`), which
-/// the error-owning layer classifies as `TransientStorage`.
+/// A reth provider whose `block_hash` read tears the way a static-file segment
+/// being appended concurrently does (`DatabaseError::Decode`).
 ///
-/// The production probe (`fluentbase_consensus::executed_state_hash`) is run
-/// over it verbatim rather than hand-rolling a `ReadError`: the class the
-/// slasher routes on is decided INSIDE that probe, so a stub that picked the
-/// variant itself would assert the test's own opinion instead of the seam.
+/// The production probe (`fluentbase_consensus::executed_state_hash`) runs over
+/// it verbatim rather than a hand-rolled `ReadError`: the slasher routes on the
+/// class that probe decides, so a stub choosing the variant itself would assert
+/// the test's own opinion instead of the seam.
 struct TornProvider;
 
 impl reth_storage_api::BlockHashReader for TornProvider {
@@ -234,8 +218,8 @@ impl reth_storage_api::BlockNumReader for TornProvider {
         Ok(reth_chainspec::ChainInfo::default())
     }
     fn best_block_number(&self) -> reth_storage_api::errors::provider::ProviderResult<u64> {
-        // Everything the anchor asks for is materialized, so the tear above is
-        // reached instead of the above-best park.
+        // Everything the anchor asks for is materialized, so the tear is reached
+        // instead of the above-best park.
         Ok(u64::MAX)
     }
     fn last_block_number(&self) -> reth_storage_api::errors::provider::ProviderResult<u64> {
@@ -252,16 +236,13 @@ impl reth_storage_api::BlockNumReader for TornProvider {
 /// The anchor the committee module reads at. [`StubAnchor::healthy`] is a fixed,
 /// already-executed height in `EPOCH`, so the window
 /// `[epoch(anchor) − 8, epoch(anchor) + 2]` admits both `EPOCH` and the
-/// `EPOCH + 1` the boundary turn reports at, and both are past their commit
-/// heights.
+/// `EPOCH + 1` the boundary turn reports at.
 ///
-/// Both legs are movable by the test, because the slasher's whole
-/// transient/permanent routing is a function of them and nothing else: the
-/// window side comes from the HEIGHT, and the anchor-fault class from the
-/// PROBE. Moving the height DOWN is a deliberate divergence from production
-/// (the real cursor is monotone) — it is how a test proves that a charge
-/// already refused for good is not revived by an anchor that later admits its
-/// epoch.
+/// Both legs are movable: the slasher's transient/permanent routing is a
+/// function of the window side (from the height) and the anchor-fault class
+/// (from the probe). Moving the height down diverges from production, whose
+/// cursor is monotone, to prove a charge refused for good is not revived by an
+/// anchor that later admits its epoch.
 #[derive(Clone)]
 struct StubAnchor {
     height: Arc<std::sync::atomic::AtomicU64>,
@@ -285,12 +266,10 @@ impl StubAnchor {
             .store(epoch * EPOCH_INTERVAL, std::sync::atomic::Ordering::SeqCst);
     }
 
-    /// The persistence thread starts appending under the probe.
     fn tear(&self) {
         self.torn.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
-    /// The append settles.
     fn heal(&self) {
         self.torn.store(false, std::sync::atomic::Ordering::SeqCst);
     }
@@ -332,8 +311,7 @@ fn stub_committee(
         reader,
         Arc::new(anchor),
         tokio::sync::watch::Sender::new(Some((0, EPOCH_INTERVAL))).subscribe(),
-        // No scheme producer: the slasher reads records, never schemes, and a
-        // verifier here would only be a surface nothing in this test exercises.
+        // No scheme producer: the slasher reads records, never schemes.
         Arc::new(|_| None),
     ))
 }
@@ -345,8 +323,8 @@ impl StakingStateRead for StubReader {
         _at: B256,
     ) -> Result<ValidatorSetSnapshot, ReadError> {
         if self.empty {
-            // An epoch with no committee on chain — never committed, since
-            // committees are no longer pruned.
+            // An epoch with no committee: never committed, since committees are
+            // not pruned.
             Ok(ValidatorSetSnapshot {
                 block_hash: B256::ZERO,
                 block_number: 0,
@@ -413,9 +391,8 @@ impl SlasherTxSink for RecordingSink {
     }
 }
 
-/// Counting Reporter — stands in for the marshal mailbox arm of the
-/// multiplex. Marshal drops `Conflicting*` events; this stub
-/// just counts everything so we can prove the multiplex fanned out.
+/// Stands in for the marshal arm of the multiplex, counting every event it
+/// receives so the test can prove the fan-out reached that arm too.
 #[derive(Clone)]
 struct CountingReporter {
     tx: mpsc::UnboundedSender<()>,
@@ -469,19 +446,11 @@ fn reporter_multiplex_routes_conflicting_notarize_to_slasher() {
     });
 }
 
-/// Build the slasher Actor with stub dependencies and start it under the
-/// deterministic context. Returns:
-/// - the mailbox sender for driving the test
-/// - the recorded calls handle (read after exercising the pipeline)
-/// - the charge store the actor fills, standing in for the proposer's read
-/// - the actor handle for graceful shutdown
 async fn spawn_actor_with_stubs(
     ctx: commonware_runtime::deterministic::Context,
     reader: StubReader,
     sink_outcome: SubmitOutcomeKind,
     partition: &str,
-    // Retained in the signature (callers pass their committee) but no longer used
-    // to register a scheme: pre-submit verify is vote-only from the committee (bug 4).
     _scheme_bimap: &BiMap<PeerPubkey, BlsPubkey>,
 ) -> (
     slasher::Mailbox,
@@ -518,8 +487,8 @@ async fn spawn_actor_with_evidence(
     .await
 }
 
-/// As [`spawn_actor_with_stubs`], but with the committee module's read ANCHOR in
-/// the case's hands — the only input that decides how the slasher routes an
+/// As [`spawn_actor_with_stubs`], but with the committee module's read anchor in
+/// the case's hands, the only input that decides how the slasher routes an
 /// unresolvable epoch.
 async fn spawn_actor_with_anchor(
     ctx: commonware_runtime::deterministic::Context,
@@ -557,17 +526,13 @@ async fn spawn_actor(
         outcome: sink_outcome,
     });
 
-    // Initialize the WAL under the deterministic runtime.
     let (wal_writer, wal_reader) =
         slasher::actor::init_wal_queue(ctx.with_label("wal"), partition.into())
             .await
             .expect("queue::shared::init under deterministic runtime");
 
-    // The slasher pre-submit verify is ALWAYS vote-only now (bug 4), rebuilding a
-    // `VoteScheme::verifier` from the recovered committee — no scheme provider.
-
-    // No proposer here, so nothing drains what the actor holds for a block —
-    // the epoch boundary is the only thing that empties it.
+    // No proposer here, so the epoch boundary is the only thing that drains a
+    // held charge.
     let charges = slasher::ChargeStore::default();
     let cfg = slasher::actor::Config {
         staking_address,
@@ -584,12 +549,10 @@ async fn spawn_actor(
     (mailbox, sink_calls, charges, handle)
 }
 
-/// Drive `activity`, then an activity in the next epoch.
-///
-/// The epoch turn is the event that hands a charge to the transaction
-/// fallback: while its own epoch runs, a charge is held for a proposer to put
-/// in a block, and only members of that epoch's committee could verify it
-/// there — so once the epoch ends the transaction is the only route left.
+/// The epoch turn hands a charge to the transaction fallback: while its own
+/// epoch runs, a charge is held for a proposer to put in a block, and only
+/// members of that epoch's committee could verify it there, so once the epoch
+/// ends the transaction is the only route left.
 async fn report_and_close_epoch(
     mb: &mut slasher::Mailbox,
     activity: Activity<BlsScheme, fluentbase_consensus::Digest>,
@@ -599,9 +562,6 @@ async fn report_and_close_epoch(
     mb.report(offender_notarize(EPOCH + 1, 1, 0x11)).await;
 }
 
-/// Helper: drive a `ConflictingNotarize` event into the mailbox and wait
-/// (bounded by ~100 polling iterations) for the sink to record at least
-/// `n` calls.
 async fn wait_for_sink_calls(calls: &Arc<TokioMutex<Vec<RecordedCall>>>, n: usize) -> bool {
     for _ in 0..200 {
         let len = { calls.lock().await.len() };
@@ -614,8 +574,8 @@ async fn wait_for_sink_calls(calls: &Arc<TokioMutex<Vec<RecordedCall>>>, n: usiz
     false
 }
 
-/// The Phase-6 property: a charge that never reaches a block before its epoch
-/// ends is not lost — the epoch turn hands it to the transaction route.
+/// A charge that never reaches a block before its epoch ends is not lost: the
+/// epoch turn hands it to the transaction route.
 #[test]
 fn a_charge_stranded_by_the_epoch_boundary_lands_by_transaction() {
     let runtime = commonware_runtime::deterministic::Runner::default();
@@ -665,8 +625,6 @@ fn a_charge_stranded_by_the_epoch_boundary_lands_by_transaction() {
             Address::repeat_byte(0xEE),
             "sink called with the configured staking address"
         );
-        // The calldata must be a `slashEquivocationNotarize` call — confirm the
-        // exact ABI selector (not merely "len >= 4"), against the literal pin.
         assert_eq!(
             recorded[0].calldata[..4],
             slash_abi::SEL_NOTARIZE,
@@ -678,16 +636,14 @@ fn a_charge_stranded_by_the_epoch_boundary_lands_by_transaction() {
         );
 
         drop(recorded);
-        // Cleanup: drop the mailbox so producer + consumer exit cleanly.
         drop(mb);
         handle.abort();
     });
 }
 
-/// The other half of the one-epoch grace [`slasher::ChargeStore`]'s vote store
-/// keeps: a half that arrives after the boundary still pairs, and the charge it
-/// makes is for an epoch whose drain has already run. It must go straight to
-/// the sink rather than joining a queue nothing will empty again.
+/// A half that arrives after the boundary still pairs, and the charge it makes
+/// is for an epoch whose drain has already run; it goes straight to the sink
+/// rather than joining a queue nothing will empty again.
 #[test]
 fn a_charge_assembled_after_the_boundary_goes_straight_to_the_sink() {
     let runtime = commonware_runtime::deterministic::Runner::default();
@@ -709,7 +665,6 @@ fn a_charge_assembled_after_the_boundary_goes_straight_to_the_sink() {
 
         use commonware_consensus::Reporter as _;
         let mut mb = mailbox;
-        // The epoch turns FIRST, with nothing queued for the old one.
         mb.report(offender_notarize(EPOCH + 1, 1, 0x11)).await;
         for _ in 0..200 {
             tokio::task::yield_now().await;
@@ -720,7 +675,6 @@ fn a_charge_assembled_after_the_boundary_goes_straight_to_the_sink() {
             "an epoch turn with an empty queue submits nothing"
         );
 
-        // Only now do the two halves of an EPOCH equivocation meet.
         mb.report(offender_notarize(EPOCH, VIEW, 0xaa)).await;
         mb.report(offender_notarize(EPOCH, VIEW, 0xbb)).await;
 
@@ -771,13 +725,11 @@ async fn settle() {
 
 /// Gossip may add votes; it must never move the epoch cursor.
 ///
-/// A member of the committee for `EPOCH + 2` — already committed on chain under
-/// the two-epoch ahead-commit horizon — signs one genuine `Notarize` for a round
-/// in its own future epoch and publishes it. Signing is not bound to the live
-/// view, so the signature is real. If that were allowed to set the cursor, every
-/// receiving node would prune its vote store past the live epoch and push every
-/// live charge onto the transaction route, at one Byzantine member's discretion
-/// and permanently, since the cursor is monotone.
+/// A committee member for `EPOCH + 2`, already committed on chain, signs a
+/// genuine `Notarize` for its own future epoch; signing is not bound to the live
+/// view, so the signature is real. Letting it set the cursor would prune every
+/// receiving node's vote store past the live epoch and push every live charge
+/// onto the transaction route, permanently, since the cursor is monotone.
 #[test]
 fn a_gossiped_vote_naming_a_future_epoch_neither_moves_the_cursor_nor_flushes_the_store() {
     let runtime = commonware_runtime::deterministic::Runner::default();
@@ -799,8 +751,6 @@ fn a_gossiped_vote_naming_a_future_epoch_neither_moves_the_cursor_nor_flushes_th
 
         use commonware_consensus::Reporter as _;
         let mut mb = mailbox;
-        // The local engine is at EPOCH, and this node holds one half of a
-        // split-delivered equivocation for it.
         mb.report(offender_notarize(EPOCH, VIEW, 0xaa)).await;
         settle().await;
         assert_eq!(
@@ -809,8 +759,6 @@ fn a_gossiped_vote_naming_a_future_epoch_neither_moves_the_cursor_nor_flushes_th
             "the engine sets the cursor"
         );
 
-        // The Byzantine publication. It reaches the vote store as gossip — that
-        // is allowed — but says nothing about where consensus is.
         bridge
             .gossip_sink()
             .expect("the actor bound its sink at init")
@@ -822,8 +770,8 @@ fn a_gossiped_vote_naming_a_future_epoch_neither_moves_the_cursor_nor_flushes_th
             "a forwarded vote must not move the epoch cursor"
         );
 
-        // The other half arrives. It can only pair if the first half survived,
-        // which is what a cursor jump would have destroyed.
+        // The pair can only assemble if the first half survived, which a cursor
+        // jump would have destroyed.
         mb.report(offender_notarize(EPOCH, VIEW, 0xbb)).await;
         settle().await;
         assert!(
@@ -842,9 +790,8 @@ fn a_gossiped_vote_naming_a_future_epoch_neither_moves_the_cursor_nor_flushes_th
 }
 
 /// The bound rejects a claim, not the feature: a forwarded vote inside the
-/// retained window still lands in the store and still pairs into a charge. This
-/// is the whole reason the channel exists — without it a cleanly split
-/// equivocation leaves no node holding both halves.
+/// retained window still pairs into a charge. Without the channel, a cleanly
+/// split equivocation leaves no node holding both halves.
 #[test]
 fn a_gossiped_vote_inside_the_window_still_assembles_a_charge() {
     let runtime = commonware_runtime::deterministic::Runner::default();
@@ -866,7 +813,6 @@ fn a_gossiped_vote_inside_the_window_still_assembles_a_charge() {
 
         use commonware_consensus::Reporter as _;
         let mut mb = mailbox;
-        // This node was shown only one half by the equivocator.
         mb.report(offender_notarize(EPOCH, VIEW, 0xaa)).await;
         settle().await;
         assert!(
@@ -874,8 +820,9 @@ fn a_gossiped_vote_inside_the_window_still_assembles_a_charge() {
             "one half is not evidence"
         );
 
-        // A peer that was shown the other half republishes it, through the full
-        // inbound path: decode, epoch bound, committee resolve, signature verify.
+        // A peer that saw the other half forwards it; `ingest_batch` runs the
+        // full inbound path (sender bound, decode, epoch cursor, committee
+        // resolve, signature verify).
         let batch = slasher::gossip::encode_batch(&vec![offender_vote(EPOCH, VIEW, 0xbb)]);
         slasher::gossip::ingest_batch(
             &commonware_cryptography::ed25519::PrivateKey::from_seed(0x5e).public_key(),
@@ -883,8 +830,7 @@ fn a_gossiped_vote_inside_the_window_still_assembles_a_charge() {
             C_MAIN,
             &evidence_committee_for(&bimap),
             &bridge,
-            // No peer set registered in this harness: the sender bound has no
-            // opinion, which is exactly what this test wants to leave alone.
+            // No peer set registered here, so the sender bound has no opinion.
             &fluentbase_p2p::TrackedWindow::default(),
         );
         settle().await;
@@ -904,17 +850,10 @@ fn a_gossiped_vote_inside_the_window_still_assembles_a_charge() {
     });
 }
 
-// There is no second source for a committee any more. This case used to assert
-// that an empty on-chain read fell through to the durable cache and still
-// submitted; the cache is gone, because it could only ever be consulted in a
-// state where it had nothing to give.
-//
-// An empty read is now TRANSIENT, not permanent (R-027): the contract only ever
-// skips a commit together with halting the chain, so "empty" is "this anchor
-// cannot see it yet" and treating it as unrecoverable threw real evidence away
-// during catch-up. What the case asserts is unchanged and is the part that
-// matters — an epoch that never resolves puts NOTHING on the wire; the retry
-// budget bounds the attempts instead of the first answer doing it.
+// An empty on-chain read is transient, not permanent: the contract skips a
+// commit only together with halting the chain, so "empty" means this anchor
+// cannot see the epoch yet. An epoch that never resolves puts nothing on the
+// wire, and the retry budget bounds the attempts rather than the first answer.
 #[test]
 fn slasher_drops_evidence_for_an_uncommitted_epoch() {
     let runtime = commonware_runtime::deterministic::Runner::default();
@@ -951,11 +890,10 @@ fn slasher_drops_evidence_for_an_uncommitted_epoch() {
 
 /// Let the producer's retry backoff fire.
 ///
-/// `settle()` alone cannot do it: yielding keeps a task runnable, so the
-/// deterministic runtime's virtual clock never moves and a sleeping retry never
-/// wakes. Sleeping HERE is what empties the run queue. The duration is longer
-/// than the producer's backoff and the rounds are more than the one retry these
-/// cases need, so a green result is not a race won.
+/// Yielding keeps a task runnable, so the deterministic runtime's virtual clock
+/// never moves and a sleeping retry never wakes; sleeping is what advances it.
+/// The duration exceeds the producer's backoff and the rounds exceed the one
+/// retry these cases need.
 async fn let_the_retry_fire(ctx: &commonware_runtime::deterministic::Context) {
     use commonware_runtime::Clock as _;
     for _ in 0..4 {
@@ -964,14 +902,13 @@ async fn let_the_retry_fire(ctx: &commonware_runtime::deterministic::Context) {
     }
 }
 
-/// A torn static-file read under the committee module's ANCHOR probe costs the
+/// A torn static-file read under the committee module's anchor probe costs the
 /// evidence a retry, not its life.
 ///
-/// The probe reads the same reth storage the staking `eth_call` does, so the
-/// persistence thread appending a segment can tear it. That is a sub-second
-/// condition; simplex reports a conflict exactly once and there is no replay, so
-/// classifying it as permanent means one disk hiccup on a cache miss silently
-/// destroys a slashing charge.
+/// The probe reads the same reth storage the staking `eth_call` does, so a
+/// persistence thread appending a segment can tear it. Simplex reports a
+/// conflict exactly once and there is no replay, so treating the tear as
+/// permanent would silently destroy a slashing charge.
 #[test]
 fn a_torn_anchor_probe_costs_the_evidence_a_retry_not_its_life() {
     let runtime = commonware_runtime::deterministic::Runner::default();
@@ -982,8 +919,8 @@ fn a_torn_anchor_probe_costs_the_evidence_a_retry_not_its_life() {
             empty: false,
         };
         let anchor = StubAnchor::healthy();
-        // The epoch is in the window and committed — the ONLY thing wrong is the
-        // storage read under the anchor.
+        // The epoch is in the window and committed; only the storage read under
+        // the anchor is wrong.
         anchor.tear();
 
         let (ev, _kps_unused, _bimap_d) = build_consensus_digest_conflicting_notarize();
@@ -1005,7 +942,7 @@ fn a_torn_anchor_probe_costs_the_evidence_a_retry_not_its_life() {
             "with the probe torn the committee does not resolve, so no charge is held yet"
         );
 
-        // The append settles, and the epoch turn takes the block route away.
+        // The append settles.
         anchor.heal();
         mb.report(offender_notarize(EPOCH + 1, 1, 0x11)).await;
         let_the_retry_fire(&ctx).await;
@@ -1021,7 +958,7 @@ fn a_torn_anchor_probe_costs_the_evidence_a_retry_not_its_life() {
     });
 }
 
-/// An epoch ABOVE the read window is an anchor that has not caught up, so the
+/// An epoch above the read window means the anchor has not caught up, so the
 /// charge is retried and lands once it does.
 #[test]
 fn an_epoch_above_the_window_is_retried_until_the_anchor_reaches_it() {
@@ -1032,8 +969,8 @@ fn an_epoch_above_the_window_is_retried_until_the_anchor_reaches_it() {
             snapshot: snapshot_from_bimap(&bimap),
             empty: false,
         };
-        // Window `[0, 2]`: `EPOCH` is above it, which is what a node whose
-        // executor cursor is still behind sees.
+        // Window `[0, 2]`: `EPOCH` is above it, as a node whose executor cursor
+        // is behind sees.
         let anchor = StubAnchor::at_epoch(0);
 
         let (ev, _kps_unused, _bimap_d) = build_consensus_digest_conflicting_notarize();
@@ -1055,7 +992,6 @@ fn an_epoch_above_the_window_is_retried_until_the_anchor_reaches_it() {
             "an epoch above the window resolves to nothing yet"
         );
 
-        // The anchor catches up and the epoch enters the window.
         anchor.set_epoch(EPOCH);
         mb.report(offender_notarize(EPOCH + 1, 1, 0x11)).await;
         let_the_retry_fire(&ctx).await;
@@ -1070,13 +1006,9 @@ fn an_epoch_above_the_window_is_retried_until_the_anchor_reaches_it() {
     });
 }
 
-/// An epoch BELOW the read window is one the contract's weight ring has
-/// overwritten: no anchor will ever bring it back, so the charge is dropped at
-/// the first answer — and NOT revived by an anchor that later admits the epoch.
-///
-/// The pair with the case above is the point: the same stub, the same sequence,
-/// the opposite side of the window, the opposite observable outcome. Either one
-/// alone would also pass under a predicate that ignored the side.
+/// An epoch below the read window is one the contract's weight ring has
+/// overwritten, so no anchor will ever bring it back: the charge is dropped at
+/// the first answer and not revived by an anchor that later admits the epoch.
 #[test]
 fn an_epoch_below_the_window_is_dropped_for_good() {
     let runtime = commonware_runtime::deterministic::Runner::default();
@@ -1086,7 +1018,7 @@ fn an_epoch_below_the_window_is_dropped_for_good() {
             snapshot: snapshot_from_bimap(&bimap),
             empty: false,
         };
-        // Window floor `epoch(anchor) − 8` sits one epoch ABOVE `EPOCH`.
+        // The window floor `epoch(anchor) − 8` sits one epoch above `EPOCH`.
         let anchor =
             StubAnchor::at_epoch(EPOCH + fluentbase_consensus::SCHEME_RETENTION_EPOCHS as u64 + 1);
 
@@ -1105,9 +1037,8 @@ fn an_epoch_below_the_window_is_dropped_for_good() {
         mb.report(Activity::ConflictingNotarize(ev)).await;
         settle().await;
 
-        // Everything the retry would have needed, handed over AFTER the answer:
-        // if the refusal had been transient this is exactly what would make the
-        // next attempt succeed.
+        // Everything a retry would need, handed over after the answer: a
+        // transient refusal would now succeed.
         anchor.set_epoch(EPOCH);
         mb.report(offender_notarize(EPOCH + 1, 1, 0x11)).await;
         let_the_retry_fire(&ctx).await;
@@ -1131,11 +1062,9 @@ fn an_epoch_below_the_window_is_dropped_for_good() {
 fn slasher_rejects_tampered_evidence_at_verify_pre_submit() {
     let runtime = commonware_runtime::deterministic::Runner::default();
     runtime.start(|ctx| async move {
-        // The snapshot committee (committee 2) does NOT match the committee that
-        // SIGNED the evidence (committee 1). Pre-submit rebuilds the vote verifier
-        // from the SNAPSHOT committee (bug 4 — always vote-only from the recovered
-        // committee), so the evidence's signatures fail to validate against it and
-        // are rejected before reaching the sink.
+        // The snapshot committee (committee 2) differs from the one that signed
+        // the evidence (committee 1), so pre-submit verification rebuilds the
+        // vote verifier from the snapshot and the signatures fail against it.
         let (_kps_b, bimap_b) = committee(2);
         let snapshot = snapshot_from_bimap(&bimap_b);
         let reader = StubReader {
@@ -1143,7 +1072,6 @@ fn slasher_rejects_tampered_evidence_at_verify_pre_submit() {
             empty: false,
         };
 
-        // Evidence signed by committee 1 (a DIFFERENT committee from the snapshot).
         let (ev, _kps_unused, _bimap_d) = build_consensus_digest_conflicting_notarize();
 
         let (mailbox, calls, _charges, handle) = spawn_actor_with_stubs(
@@ -1158,9 +1086,6 @@ fn slasher_rejects_tampered_evidence_at_verify_pre_submit() {
         let mut mb = mailbox;
         report_and_close_epoch(&mut mb, Activity::ConflictingNotarize(ev)).await;
 
-        // Give the actor a chance to run; it should NOT have enqueued
-        // anything — the verify gate refused the charge, so the epoch turn
-        // finds nothing queued to hand on.
         for _ in 0..50 {
             tokio::task::yield_now().await;
         }
@@ -1176,23 +1101,9 @@ fn slasher_rejects_tampered_evidence_at_verify_pre_submit() {
     });
 }
 
-// ---- slasher coverage: ABI selectors, dedup / outcome-lifecycle, kind coverage ----
-
-/// Literal 4-byte selectors of the three slash entry points, used to assert
-/// which slash function the producer encoded.
-///
-/// **Hardcoded on purpose.** This file used to carry a private `sol!` mirror of
-/// the production declaration and compare `SomeCall::SELECTOR` against calldata
-/// the production declaration produced — two copies of the same belief, which
-/// agree through any rename. These literals were computed with
-/// `cast sig "<signature>"` and are the independent half of the pin.
-///
-/// The contract-side counterparts are the SAME four-argument forms and derive
-/// their dispatch constants from the same `fluentbase-staking-abi` declaration
-/// (`contracts/staking/src/consts.rs::SIG_SLASH_EQUIVOCATION_*`), so these
-/// literals now pin an agreement rather than name a gap. The six-argument
-/// contract-side variant this comment used to warn about was on a branch that
-/// merged as `f16fdd90` without it.
+/// Literal 4-byte selectors of the three slash entry points, computed with
+/// `cast sig "<signature>"`, kept as the independent half of the pin: the
+/// production `sol!` and the contract both dispatch these four-argument forms.
 mod slash_abi {
     /// `cast sig "slashEquivocationNotarize(bytes,bytes,bytes,bytes)"`
     pub const SEL_NOTARIZE: [u8; 4] = [0xe2, 0x8d, 0x2f, 0x63];
@@ -1202,9 +1113,9 @@ mod slash_abi {
     pub const SEL_NULLIFY_FINALIZE: [u8; 4] = [0xa1, 0x08, 0x27, 0xe9];
 }
 
-/// The production `sol!` in `slasher::actor` — the ONE declaration the producer
-/// encodes through — against the literal selectors above. A rename on either
-/// side fails here first, and the message names both sides.
+/// The production `sol!` in `slasher::actor`, the declaration the producer
+/// encodes through, against the literal selectors above; a rename on either side
+/// fails here.
 #[test]
 fn slash_abi_selectors_are_pinned() {
     use alloy_sol_types::SolCall as _;
@@ -1286,13 +1197,10 @@ fn build_nullify_finalize() -> NullifyFinalize<BlsScheme, fluentbase_consensus::
     NullifyFinalize::new(nullify, finalize)
 }
 
-/// Drive two same-victim events with the given sink outcome; assert how many
-/// sink calls result (1 = victim deduped after the first; 2 = not deduped).
+/// Drive two same-victim events with the given sink outcome; the result is the
+/// number of sink calls (1 = victim deduped after the first, 2 = not deduped).
 /// This exercises the consumer's outcome lifecycle: `Mined`/`AlreadySlashed`
 /// insert the victim into the in-session dedup set, `Failed` does not.
-///
-/// The first event takes the boundary drain, the second the late-match route —
-/// both end at the same per-victim dedup, which is the point.
 fn dedup_call_count(outcome: SubmitOutcomeKind, partition: &'static str) -> usize {
     use std::sync::{Arc as StdArc, Mutex as StdMutex};
     let observed = StdArc::new(StdMutex::new(0usize));
@@ -1311,17 +1219,13 @@ fn dedup_call_count(outcome: SubmitOutcomeKind, partition: &'static str) -> usiz
         let mut mb = mailbox;
         use commonware_consensus::Reporter as _;
 
-        // First event → exactly one sink call; on Mined/AlreadySlashed the
-        // consumer then inserts the victim into the dedup set.
         let (ev1, _k, _b) = build_consensus_digest_conflicting_notarize();
         report_and_close_epoch(&mut mb, Activity::ConflictingNotarize(ev1)).await;
         assert!(wait_for_sink_calls(&calls, 1).await, "first submit");
-        // Let the consumer finish the post-submit insert + ack.
         for _ in 0..200 {
             tokio::task::yield_now().await;
         }
 
-        // Second event, SAME offender/victim.
         let (ev2, _k2, _b2) = build_consensus_digest_conflicting_notarize();
         mb.report(Activity::ConflictingNotarize(ev2)).await;
         for _ in 0..300 {
@@ -1338,7 +1242,6 @@ fn dedup_call_count(outcome: SubmitOutcomeKind, partition: &'static str) -> usiz
 
 #[test]
 fn slasher_dedup_skips_already_submitted_victim() {
-    // Mined inserts the victim → the second same-victim event is deduped.
     assert_eq!(
         dedup_call_count(SubmitOutcomeKind::Mined, "slasher_dedup_mined"),
         1,
@@ -1348,7 +1251,6 @@ fn slasher_dedup_skips_already_submitted_victim() {
 
 #[test]
 fn slasher_already_slashed_dedups_victim() {
-    // AlreadySlashed (pre-flight tombstoned) also inserts the victim → deduped.
     assert_eq!(
         dedup_call_count(SubmitOutcomeKind::AlreadySlashed, "slasher_dedup_already"),
         1,
@@ -1358,7 +1260,6 @@ fn slasher_already_slashed_dedups_victim() {
 
 #[test]
 fn slasher_failed_outcome_does_not_dedup_victim() {
-    // Failed does NOT insert the victim → the second event is submitted again.
     assert_eq!(
         dedup_call_count(SubmitOutcomeKind::Failed, "slasher_dedup_failed"),
         2,

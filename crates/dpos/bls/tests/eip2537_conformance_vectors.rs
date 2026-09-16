@@ -1,15 +1,7 @@
-//! Cross-language BLS conformance corpus (PoP, MinSig) — Rust side.
-//!
-//! These constants are the SINGLE SOURCE mirrored by-hand into
-//! `solidity-contracts` `test/bls/Eip2537ConformanceVectors.sol`
-//! (see `crates/bls/CONFORMANCE.md`). The test below recomputes every
-//! value from its deterministic recipe through the shipped public API and
-//! asserts equality — so a Commonware/blst wire-format change makes this
-//! test FAIL LOUDLY (it is the drift detector; no generator binary exists).
-//!
-//! Regenerate after a deliberate dependency bump:
-//!   cargo test -p fluentbase-bls --test eip2537_conformance_vectors \
-//!       -- --ignored print_corpus --nocapture
+//! Cross-language BLS conformance corpus (PoP, MinSig): the constants below are
+//! recomputed from their recipes through the public API and pinned, so a
+//! commonware/blst wire-format change fails here. They are mirrored by hand into
+//! the Solidity `Eip2537ConformanceVectors.sol`; update both together.
 
 mod common;
 
@@ -29,7 +21,6 @@ use fluentbase_bls::{
 use rand_08::rngs::StdRng;
 use rand_core::SeedableRng;
 
-// G2 (pubkey) lives in commonware's group module; reached via the Variant assoc type.
 type G2 = <MinSig as Variant>::Public;
 
 const OFF: u64 = 1_000_000;
@@ -39,8 +30,7 @@ fn key(seed: u64) -> ValidatorBlsKeypair {
     ValidatorBlsKeypair::generate(&mut StdRng::seed_from_u64(seed))
 }
 
-/// `hm` = the authoritative PoP hash-to-curve, identical to what
-/// `ops::sign/verify_proof_of_possession` compute internally.
+/// PoP hash-to-curve as `ops::sign/verify_proof_of_possession` compute it internally.
 fn hm_eip2537(seed: u64, chain_id: u64) -> [u8; 128] {
     let k = key(seed);
     let ns = fluent_namespace(chain_id);
@@ -80,10 +70,6 @@ struct Recipe {
     kind: Kind,
 }
 
-// Lean set: every entry is a distinct test dimension. 4 valid (2 keys on
-// main chain + the two chain_id byte-boundaries) + 3 negatives (one per
-// tamper kind). No repeated "another random valid key" / "negative ×
-// boundary" combos — those added no logical coverage.
 const RECIPES: &[Recipe] = &[
     Recipe {
         label: "pop_valid_seed0",
@@ -129,7 +115,6 @@ const RECIPES: &[Recipe] = &[
     },
 ];
 
-/// Recompute the (pubkey_eip2537, sig_eip2537, hm_eip2537, expected_valid) for a recipe.
 fn build(r: &Recipe) -> ([u8; 256], [u8; 128], [u8; 128], bool) {
     match r.kind {
         Kind::Valid => (
@@ -140,12 +125,12 @@ fn build(r: &Recipe) -> ([u8; 256], [u8; 128], [u8; 128], bool) {
         ),
         Kind::TamperedSig => (
             pubkey_eip2537(r.seed),
-            sig_eip2537(r.seed + OFF, r.chain_id), // valid but wrong key's sig
+            sig_eip2537(r.seed + OFF, r.chain_id), // valid signature from another key
             hm_eip2537(r.seed, r.chain_id),
             false,
         ),
         Kind::TamperedPubkey => (
-            pubkey_eip2537(r.seed + OFF), // valid but wrong key's pubkey
+            pubkey_eip2537(r.seed + OFF), // valid pubkey from another key
             sig_eip2537(r.seed, r.chain_id),
             hm_eip2537(r.seed, r.chain_id),
             false,
@@ -153,15 +138,13 @@ fn build(r: &Recipe) -> ([u8; 256], [u8; 128], [u8; 128], bool) {
         Kind::TamperedNamespace => (
             pubkey_eip2537(r.seed),
             sig_eip2537(r.seed, r.chain_id),
-            hm_eip2537(r.seed, r.chain_id + 1), // hm under a different namespace
+            hm_eip2537(r.seed, r.chain_id + 1),
             false,
         ),
     }
 }
 
-// COMMITTED CONSTANTS — single source of truth, hand-mirrored into Solidity.
-// Lowercase, no 0x prefix (so they paste directly into Solidity `hex"..."`).
-// (Filled by running the `print_corpus` ignored test once.)
+// Lowercase, unprefixed hex so it pastes into Solidity `hex"..."`.
 
 const NEG_G2_GENERATOR_EIP2537: &str = "00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000d1b3cc2c7027888be51d9ef691d77bcb679afda66c73f17f9ee3837a55024f78c71363275a75d75d86bab79f74782aa0000000000000000000000000000000013fa4d4a0ad8b1ce186ed5061789213d993923066dddaf1040bc3ff59f825c78df74f2d75467e25e0f55f8a00fa030ed";
 
@@ -203,9 +186,8 @@ fn conformance_corpus_matches_committed_constants() {
         assert_eq!(hm, dehex::<128>(e.3), "hm drift: {}", r.label);
         assert_eq!(valid, e.4, "expected_valid mismatch: {}", r.label);
 
-        // The TamperedNamespace recipe signs under ns(chain_id) but encodes
-        // `hm` under ns(chain_id + 1); to make verify_pop diverge equally,
-        // verify against the same tampered namespace.
+        // TamperedNamespace signs under ns(chain_id) but pins hm under ns(chain_id + 1),
+        // so verify uses the shifted namespace to land the mismatch on the pairing.
         let ns = match r.kind {
             Kind::TamperedNamespace => fluent_namespace(r.chain_id + 1),
             _ => fluent_namespace(r.chain_id),
@@ -221,9 +203,7 @@ fn conformance_corpus_matches_committed_constants() {
     }
 }
 
-/// Not a test — the regeneration tool. Prints the corpus as hex to paste
-/// into EXPECTED above, into `crates/bls/CONFORMANCE.md`, and into the
-/// Solidity mirror. Run with `-- --ignored print_corpus --nocapture`.
+/// Regenerator: prints the corpus as hex to paste into `EXPECTED` and the Solidity mirror.
 #[test]
 #[ignore]
 fn print_corpus() {

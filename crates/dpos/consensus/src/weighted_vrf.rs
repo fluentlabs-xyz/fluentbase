@@ -2,22 +2,20 @@
 //!
 //! One selection path: `leader = weighted_cdf(stake, randomness(round, cert))`.
 //! The only variable is the 32-byte randomness — the prior view's threshold seed
-//! σ (`CombinedCertificate::seed()`, k-lagged ⇒ unbiasable) when present, else a
-//! deterministic per-epoch fallback (view-1-of-epoch / nullify-justified views,
-//! where the cert carries no seed). The fallback's base is not derivable from
-//! constants: it is [`crate::beacon::witness_fallback_seed`] of σ at the previous
-//! epoch's TERMINAL ROUND, which the epoch manager names from the terminal block's
-//! `proposal_view` and reads out of the seed store's per-epoch pin;
-//! [`crate::beacon::constant_fallback_seed`] is the last resort where no witness can exist.
-//! Block share ∝ on-chain stake in expectation
-//! (D1); weights are the epoch's FROZEN snapshot stake (D3), never live balance —
-//! frozen ON-CHAIN since 2026-07-31 (`leaderStakes[epoch]`, stamped at
-//! `commitEpochCommittee` from the selection epoch), so the vector no longer
-//! depends on the height each node reads at.
-//! σ is domain-separated (`Sha256(LEADER_DOMAIN ‖ σ)`) from the EVM
-//! `prev_randao = keccak256(σ)` (D6) so the two consumers share no bytes.
+//! σ (`CombinedCertificate::seed()`, k-lagged, hence unbiasable) when present,
+//! else a deterministic per-epoch fallback (view-1-of-epoch / nullify-justified
+//! views, where the cert carries no seed). The fallback's base is not derivable
+//! from constants: it is [`crate::beacon::witness_fallback_seed`] of σ at the
+//! previous epoch's terminal round, which the epoch manager names from the
+//! terminal block's `proposal_view` and reads out of the seed store's per-epoch
+//! pin; [`crate::beacon::constant_fallback_seed`] is the last resort where no
+//! witness can exist. Block share ∝ on-chain stake in expectation; weights are
+//! the epoch's frozen snapshot stake, never live balance, so the vector does not
+//! depend on the height each node reads at. σ is domain-separated
+//! (`Sha256(LEADER_DOMAIN ‖ σ)`) from the EVM `prev_randao = keccak256(σ)`, so
+//! the two consumers share no bytes.
 //!
-//! This is a consensus-plane decision only: the STF / zk guest is NOT touched and
+//! This is a consensus-plane decision only: the STF / zk guest is not touched and
 //! MUST NOT mirror it — its sole σ consumer is `prev_randao`.
 
 use alloy_primitives::U256;
@@ -35,8 +33,8 @@ use fluentbase_staking_reader::reader::ValidatorSetSnapshot;
 use std::collections::BTreeMap;
 
 /// Domain tag: `Sha256(LEADER_DOMAIN ‖ σ)` is disjoint from the EVM
-/// `prev_randao = keccak256(σ)` (`beacon/seed.rs`). The exact bytes are
-/// arbitrary; only the disjointness matters (D6).
+/// `prev_randao = keccak256(σ)`. The exact bytes are arbitrary; only the
+/// disjointness matters.
 const LEADER_DOMAIN: &[u8] = b"fluent/leader";
 
 /// Separate tag for the seedless arm. The base fed to that arm is a σ that
@@ -44,7 +42,7 @@ const LEADER_DOMAIN: &[u8] = b"fluent/leader";
 /// arms must not be able to hash the same preimage — otherwise the first block
 /// of E+1 could be led by whoever led the last block of E.
 ///
-/// The two tags must stay PREFIX-FREE (neither a prefix of the other) for that
+/// The two tags must stay prefix-free (neither a prefix of the other) for that
 /// to hold, because the tag is the only self-delimiting part of the preimage:
 /// with a tag like `b"fluent/leader/fallback"` the arms are separated only by
 /// `σ.encode()` being 48 bytes against this arm's 32-byte base plus 8-byte view,
@@ -53,18 +51,16 @@ const LEADER_DOMAIN: &[u8] = b"fluent/leader";
 /// are pinned by `the_seedless_arm_is_pinned_to_its_own_domain_tag`.
 const LEADER_FALLBACK_DOMAIN: &[u8] = b"fluent/seedless-leader";
 
-/// Elector config (built into [`WeightedVrfElector`] by simplex at
-/// `voter/state.rs` from the commonware-sorted participant set). Carries the
-/// per-validator frozen stake keyed by peer key — so `build` can align it to that
-/// set — and the fallback seed. `Default` (empty) is required by the trait and
-/// never used in production (degrades to uniform via the all-zero guard in `build`).
+/// Elector config (built into [`WeightedVrfElector`] by simplex). Carries the
+/// per-validator frozen stake keyed by peer key, so `build` can align it to the
+/// participant set, and the fallback seed. `Default` (empty) is required by the
+/// trait and never used in production (it degrades to uniform via the all-zero
+/// guard in `build`).
 ///
-/// The leader lottery is stake-only ON PURPOSE: letting the on-chain production
+/// The leader lottery is stake-only on purpose: letting an on-chain production
 /// verdict feed back into the weights would make the schedule self-referential —
-/// computable only by replaying every epoch since genesis, which a state-synced node
-/// cannot do, and disagreement here is a leader-election split. `ProductionLiveness`
-/// therefore never touches the weights: it spends its verdict on selection visibility
-/// (agreed contract state), which the NEXT epoch's committee is drawn from.
+/// computable only by replaying every epoch since genesis, which a state-synced
+/// node cannot do — and disagreement here is a leader-election split.
 #[derive(Clone, Default)]
 pub struct WeightedVrf {
     weights: BTreeMap<PeerPubkey, u128>,
@@ -76,7 +72,7 @@ impl WeightedVrf {
     /// seedless-arm base. The base is the previous epoch's terminal-block
     /// witness seed when one exists, else [`crate::beacon::constant_fallback_seed`].
     ///
-    /// **Fails rather than degrading when the weights are absent.** The contract
+    /// Fails rather than degrading when the weights are absent. The contract
     /// keeps membership forever but only the last N epochs of weights, so a
     /// snapshot can legitimately arrive with `weights: None`. Falling back to a
     /// uniform lottery there would be the worst available answer: every node
@@ -150,10 +146,9 @@ impl Config<BlsScheme> for WeightedVrf {
 
     fn build(self, participants: &Set<PeerPubkey>) -> WeightedVrfElector {
         assert!(!participants.is_empty(), "no participants");
-        // Weight per participant index (set order == Participant index). Missing /
-        // all-zero ⇒ uniform: the single clean guard that keeps `total > 0` (no
-        // modulo-0) and is also where a future per-validator saturation cap would
-        // clamp (D2 — not built; no cap field/metric now).
+        // Weight per participant index (set order == Participant index). Missing
+        // or all-zero ⇒ uniform: the single clean guard that keeps `total > 0`
+        // (no modulo-0).
         let mut w: Vec<u128> = participants
             .iter()
             .map(|p| self.weights.get(p).copied().unwrap_or(0))
@@ -163,19 +158,19 @@ impl Config<BlsScheme> for WeightedVrf {
         }
         let mut cum = Vec::with_capacity(w.len());
         let mut acc = 0u128;
-        // Overflow-safe: committee ≤ MAX_PEER_SET_SIZE (51) × compacted uint112
-        // (< 2^112) ≈ 2^119 ≪ u128::MAX. That bound is now enforced where the
-        // weights enter, by `staking-reader`'s MAX_COMPACT_STAKE, not just
-        // asserted by the contract.
+        // Overflow-safe: a committee of at most `MAX_COMMITTEE_SIZE` (51) times a
+        // compacted stake below 2^112 is about 2^119, far below `u128::MAX`. That
+        // bound is enforced where the weights enter, by `staking-reader`'s
+        // `MAX_COMPACT_STAKE`.
         //
         // `saturating_add` is belt to that brace, and the belt is what makes
         // `elect_index` sound rather than merely unlikely to be unsound: release
-        // builds run with overflow-checks off, so a plain `+=` would WRAP rather
-        // than panic, and a wrapped `acc` yields a NON-MONOTONIC `cum`.
+        // builds run with overflow-checks off, so a plain `+=` would wrap rather
+        // than panic, and a wrapped `acc` yields a non-monotonic `cum`.
         // `cum.partition_point` only guarantees "result < len" for sorted input,
         // so a wrapped prefix sum can hand back an out-of-range Participant and
         // corrupt leader election. Saturating keeps `cum` non-decreasing for any
-        // input at all; the worst case is a skewed draw, never a bad index.
+        // input; the worst case is a skewed draw, never a bad index.
         for x in w {
             acc = acc.saturating_add(x);
             cum.push(acc);
@@ -199,11 +194,12 @@ pub struct WeightedVrfElector {
     fallback_seed: [u8; 32],
 }
 
-/// The 32-byte leader randomness: the prior view's threshold seed σ when present, else a
-/// deterministic per-epoch fallback bound to `(fallback_seed, view)`; the two arms carry
-/// prefix-free domain tags, so they cannot share a preimage whatever they are fed, and both
-/// are disjoint from `prev_randao` (D6). A free fn so every caller shares the EXACT bytes
-/// with the live elector — a divergent copy would split leader election.
+/// The 32-byte leader randomness: the prior view's threshold seed σ when
+/// present, else a deterministic per-epoch fallback bound to
+/// `(fallback_seed, view)`; the two arms carry prefix-free domain tags, so they
+/// cannot share a preimage, and both are disjoint from `prev_randao`. A free
+/// function so every caller shares the exact bytes with the live elector — a
+/// divergent copy would split leader election.
 pub(crate) fn randomness_bytes(
     round: Round,
     seed: Option<BlsSignature>,
@@ -260,7 +256,7 @@ impl Elector<BlsScheme> for WeightedVrfElector {
     fn elect(&self, round: Round, certificate: Option<&CombinedCertificate>) -> Participant {
         // Every certificate of a beacon-active epoch carries σ — nullifications
         // included — so both branches of "did view v produce a block" hand this
-        // the SAME seed, and the leader of v+1 does not depend on that bit. The
+        // the same seed, and the leader of v+1 does not depend on that bit. The
         // fallback arm survives for the pre-beacon epochs (0-1) and for view 1 of
         // each epoch, where simplex passes `None` because no view v-1 exists in
         // this epoch's view space. Keep it: commonware's own `Random` elector
@@ -348,13 +344,13 @@ mod tests {
             .collect()
     }
 
-    /// Absent weights must FAIL the elector, never degrade it to uniform.
+    /// Absent weights must fail the elector, never degrade it to uniform.
     ///
     /// The degraded answer is the dangerous one: a node that still holds the
     /// weights and a node that does not would elect different leaders for the
     /// same round, and neither would log anything. The error is recoverable —
-    /// `EpochEngine::new` propagates it and `epoch_manager` skips and retries the
-    /// epoch — where a leader split is not.
+    /// `epoch_manager` logs the refusal, soft-enters the unspawned epoch and
+    /// retries it on the next boundary — where a leader split is not.
     #[test]
     fn absent_or_mismatched_weights_fail_the_elector_instead_of_going_uniform() {
         let mut s = snapshot(7, &[3, 5, 2]);
@@ -395,7 +391,7 @@ mod tests {
         let mut s_rev = s.clone();
         s_rev.validators.reverse();
         // Weights are paired with members by position, so a reversal has to
-        // carry them along — reversing one leg alone would reassign the weights,
+        // carry them along; reversing one leg alone would reassign the weights,
         // which is a different test.
         if let Some(w) = s_rev.weights.as_mut() {
             w.reverse();
@@ -429,9 +425,10 @@ mod tests {
 
     #[test]
     fn unequal_stake_is_proportional() {
-        // seam-2: the full snapshot → weights → pick path under skew. Driving
-        // `elect` over many views (the fallback randomness, uniform per view) Monte-
-        // Carlo-samples the weighted CDF — distributionally identical to the σ path.
+        // The full snapshot → weights → pick path under skew. Driving `elect`
+        // over many views (the fallback randomness, uniform per view)
+        // Monte-Carlo-samples the weighted CDF, distributionally identical to
+        // the σ path.
         let s = snapshot(1, &[1, 2, 7]);
         let e = WeightedVrf::try_new(&s, constant_fallback_seed(&s))
             .unwrap()
@@ -523,7 +520,7 @@ mod tests {
     /// The seedless base for epoch E+1 is a σ that already drove a `Some(σ)` draw
     /// inside epoch E, so the arms must stay disjoint even when fed that same σ —
     /// and the prefix-free tag is the only thing that makes them so. The expected
-    /// digest is therefore recomputed here from the LITERAL tag bytes, not from
+    /// digest is therefore recomputed here from the literal tag bytes, not from
     /// [`LEADER_FALLBACK_DOMAIN`]: this fails the moment the seedless arm is
     /// pointed at another domain. Comparing the two arms' elected indices instead
     /// proves nothing — those differ with or without a tag, because `σ.encode()`
@@ -544,10 +541,10 @@ mod tests {
         assert_eq!(randomness_bytes(round, None, &base), want);
     }
 
-    /// The point of the change: with the epoch and the committee both fixed, the
-    /// epoch's leader sequence must move when the inherited terminal-block witness
-    /// moves. Under the old constant-only base it could not — the sequence was a
-    /// function of `(epoch, peers)` and therefore computable an epoch ahead.
+    /// With the epoch and the committee both fixed, the epoch's leader sequence
+    /// must move when the inherited terminal-block witness moves; under a
+    /// constant-only base the sequence would be a function of `(epoch, peers)`
+    /// and computable an epoch ahead.
     #[test]
     fn the_leader_sequence_moves_with_the_inherited_witness() {
         let s = snapshot(2, &[1; 7]);
@@ -571,18 +568,18 @@ mod tests {
 
 #[cfg(test)]
 mod xlang_conformance {
-    //! Cross-language conformance vector for the FALLBACK arm.
+    //! Cross-language conformance vector for the fallback arm.
     //!
-    //! `devnet/local-dpos-smoke/dpos_harness/cases/seed_continuity.py` reimplements this
-    //! arm in Python to predict, offline, the leader a PRE-change binary would have
-    //! elected after a nullified view — the prediction the live case asserts against.
-    //! A silently divergent reimplementation makes that case mismatch everywhere and
-    //! read as a vacuous pass, so the two must be pinned to the same vector.
+    //! `devnet/local-dpos-smoke/dpos_harness/cases/seed_continuity.py`
+    //! reimplements this arm in Python to predict, offline, the leader a
+    //! pre-change binary would have elected after a nullified view, the
+    //! prediction the live case asserts against. A silently divergent
+    //! reimplementation makes that case mismatch everywhere and read as a
+    //! vacuous pass, so the two must be pinned to the same vector.
     //!
     //! The magnitude of the weights is load-bearing, not just their ratio: the
     //! election is `rand % total`, so uniform-1 and uniform-5e9 committees elect
-    //! DIFFERENT leaders. A first live run of the case was wrong for exactly that
-    //! reason; keep the fixture's stake at the compacted devnet value.
+    //! different leaders. Keep the fixture's stake at the compacted devnet value.
     use super::*;
     use crate::beacon::constant_fallback_seed;
     use alloy_primitives::{Address, B256};
@@ -685,8 +682,8 @@ mod xlang_conformance {
 
     #[test]
     fn weight_magnitude_changes_the_winner_not_just_the_distribution() {
-        // The defect the live case hit: `rand % total` is magnitude-sensitive, so a
-        // mirror that normalises uniform weights to 1 silently elects someone else.
+        // `rand % total` is magnitude-sensitive, so a mirror that normalises
+        // uniform weights to 1 silently elects someone else.
         let mut snap_validators = Vec::new();
         for (i, hex) in PKS.iter().enumerate() {
             let raw: Vec<u8> = (0..32)

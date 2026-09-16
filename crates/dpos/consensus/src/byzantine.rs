@@ -1,30 +1,30 @@
-//! DEVNET/TEST-ONLY byzantine validator code, gated behind the
+//! Devnet/test-only byzantine validator code, gated behind the
 //! `dpos-devnet-byzantine` cargo feature (also built under `test`, so the in-crate
 //! forge/certify unit tests can reach `forge_outcome_same_committee`). Never
-//! compiled into a production build. This is the SINGLE home for byzantine logic:
+//! compiled into a production build. This is the single home for byzantine logic:
 //! the behaviour selector [`ByzantineMode`], the beacon-`PK_E` forge
 //! `forge_outcome_same_committee`, and the vote double-signer [`VoteEquivocator`].
 //!
 //! [`VoteEquivocator`] is a vote-reactive double-signer adapted from commonware's
-//! `simplex::mocks::conflicter::Conflicter`. It is vendored (rather than reused via
-//! the upstream `mocks` feature) for two reasons: (1) the upstream `mocks` feature
-//! transitively pulls `commonware-{cryptography,p2p,resolver}/mocks`; (2) the
-//! upstream `Conflicter<E, S, H>` ties the vote digest to a `Hasher`'s `H::Digest`,
-//! whereas our consensus digest [`crate::digest::Digest`] is a standalone `B256`
-//! wrapper (it impls `commonware_cryptography::Digest` + `commonware_math::algebra::
-//! Random` directly), so a vendored actor over `(BlsScheme, Digest)` needs no
-//! `Hasher` shim.
+//! `simplex::mocks::conflicter::Conflicter`. It is vendored rather than reused via
+//! the upstream `mocks` feature because that feature transitively pulls
+//! `commonware-{cryptography,p2p,resolver}/mocks`, and because the upstream
+//! `Conflicter<E, S, H>` ties the vote digest to a `Hasher`'s `H::Digest`, whereas
+//! our consensus digest [`crate::digest::Digest`] is a standalone `B256` wrapper
+//! (it impls `commonware_cryptography::Digest` and
+//! `commonware_math::algebra::Random` directly), so a vendored actor over
+//! `(BlsScheme, Digest)` needs no `Hasher` shim.
 //!
 //! Behaviour: for every `Notarize` / `Finalize` vote it receives on the vote
-//! channel, it signs and broadcasts TWO conflicting votes for the SAME round (one
+//! channel, it signs and broadcasts two conflicting votes for the same round (one
 //! over a random proposal, one over the received proposal). Honest peers observe
 //! the two same-round / differing-proposal votes from the same signer, report a
 //! `ConflictingNotarize` / `ConflictingFinalize` activity to their slasher, and the
-//! offender is jailed on-chain. The trigger is VOTE-based (fires every view the
-//! node participates in), NOT leadership-based — deterministic in docker.
+//! offender is jailed on-chain. The trigger is vote-based (fires every view the
+//! node participates in), not leadership-based, so it is deterministic in docker.
 //!
-//! The actor REPLACES the honest `simplex::Engine` for the flagged node: it runs no
-//! marshal/executor/slasher/EL. The flagged node never finalizes; the honest
+//! The actor replaces the honest `simplex::Engine` for the flagged node: it runs
+//! no marshal/executor/slasher/EL. The flagged node never finalizes; the honest
 //! quorum (n − f) does. Honest peers block the equivocator, but its first
 //! conflicting pair is enough for the slash.
 
@@ -44,33 +44,29 @@ use fluentbase_bls::Scheme as BlsScheme;
 use rand_core::CryptoRngCore;
 use tracing::{debug, warn};
 
-/// DEVNET/TEST-ONLY byzantine validator behaviour selector. `None` (and absent
+/// Devnet/test-only byzantine validator behaviour selector. `None` (and absent
 /// without the feature) on every honest node, so a deployed validator can never
 /// misbehave through this path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ByzantineMode {
-    /// Multisig double-sign: this node EQUIVOCATES on every Notarize/Finalize it
-    /// would cast (two conflicting votes — a random proposal + the real one — for
-    /// the SAME round) so honest peers report a `ConflictingNotarize` /
-    /// `ConflictingFinalize` and the slasher jails it. The trigger is VOTE-based
-    /// (fires every view the node participates in), NOT leadership-based, so it is
-    /// deterministic in docker. Consumed in [`crate::engine`] (the per-epoch engine
-    /// swaps in a [`VoteEquivocator`] in place of the honest `simplex::Engine`).
-    /// See the byzantine equivocation smoke.
+    /// Multisig double-sign: this node equivocates on every Notarize/Finalize it
+    /// would cast (two conflicting votes — a random proposal and the real one —
+    /// for the same round) so honest peers report a `ConflictingNotarize` /
+    /// `ConflictingFinalize` and the slasher jails it. The trigger is vote-based
+    /// (fires every view the node participates in), not leadership-based, so it is
+    /// deterministic in docker. Consumed in [`crate::engine`], which swaps in a
+    /// [`VoteEquivocator`] in place of the honest `simplex::Engine`.
     Equivocate,
 }
 
-/// TEST-ONLY forge of a different per-epoch DKG outcome over the SAME committee.
+/// Test-only forge of a different per-epoch DKG outcome over the same committee.
 /// Deals a fresh anonymous DKG to `real.players()` with a fixed RNG, yielding an
 /// `Output` whose `players()`/`total()` match the real committee but whose `PK_E`
-/// differs, and whose polynomial does NOT thread the honest shares.
+/// differs, and whose polynomial does not thread the honest shares.
 ///
-/// It backed a live byzantine mode while a boundary block ASSERTED its own
-/// `PK_E`; no block carries a key any more, so there is nothing to forge into
-/// consensus and the mode is gone. What survives is the shape itself, which is
-/// what `beacon::outcome`'s unit test uses to state the property the whole design
-/// rests on: a key produced by a different ceremony over the same committee does
-/// not lie on any honest member's share.
+/// This is the shape `beacon::outcome`'s unit test uses to state the property the
+/// whole design rests on: a key produced by a different ceremony over the same
+/// committee does not lie on any honest member's share.
 #[cfg(test)]
 pub(crate) fn forge_outcome_same_committee(real: &DkgOutcome) -> DkgOutcome {
     use commonware_cryptography::bls12381::{
@@ -97,8 +93,8 @@ pub(crate) fn forge_outcome_same_committee(real: &DkgOutcome) -> DkgOutcome {
     forged
 }
 
-/// Build the equivocation partner proposal: the SAME round and parent as the vote
-/// we are conflicting with, but a fresh RANDOM payload — so the two votes differ in
+/// Build the equivocation partner proposal: the same round and parent as the vote
+/// we are conflicting with, but a fresh random payload — so the two votes differ in
 /// proposal only (the definition of an equivocation an honest peer reports).
 fn forged_proposal(round: Round, parent: View, rng: &mut impl CryptoRngCore) -> Proposal<Digest> {
     Proposal::new(round, parent, Digest::random(rng))
@@ -140,16 +136,13 @@ impl<E: Clock + CryptoRngCore + Spawner> VoteEquivocator<E> {
             impl Receiver<PublicKey = commonware_cryptography::ed25519::PublicKey>,
         ),
     ) {
-        // Probe once at startup: the engine gate that routes here
-        // (`engine.rs`: `can_sign = member_signer.is_some() && can_sign_locally`)
-        // admits a member that holds the local polynomial WITHOUT a share — its
-        // `can_sign_locally` is `(Some(_), _) => true` regardless of the share — yet
-        // the combined `sign()` self-suppresses every seed-bearing vote (`None`) for
-        // such a node (combined_scheme.rs). It would then equivocate NOTHING while
-        // also running no honest engine: a silent no-op. Warn LOUDLY instead, so the
-        // smoke's jail assertion fails fast rather than hanging on a node that
-        // quietly does nothing. The genesis smoke stack seeds the byzantine node, so
-        // this is a misconfiguration guard, not the steady-state path.
+        // Probe once at startup: the engine gate that routes here requires only
+        // that the scheme is a signer scheme, while combined `sign()` returns
+        // `None` when the epoch's oracle has no usable share. Such a node would
+        // equivocate nothing while also running no honest engine, a silent no-op;
+        // warn instead so the smoke's jail assertion fails fast. The genesis smoke
+        // stack seeds the byzantine node, so this is a misconfiguration guard, not
+        // the steady-state path.
         let probe = forged_proposal(
             Round::new(Epoch::new(0), View::new(0)),
             View::new(0),
@@ -173,8 +166,8 @@ impl<E: Clock + CryptoRngCore + Spawner> VoteEquivocator<E> {
             };
             match vote {
                 Vote::Notarize(notarize) => {
-                    // Conflicting Notarize over a RANDOM proposal (same round/parent),
-                    // then the RECEIVED proposal — the conflicting partner.
+                    // Conflicting Notarize over a random proposal (same
+                    // round/parent), then the received proposal — the partner.
                     let forged = forged_proposal(
                         notarize.round(),
                         notarize.proposal.parent,
@@ -247,12 +240,12 @@ mod tests {
     };
     use rand_08::{rngs::StdRng, SeedableRng};
 
-    // The genuinely new behaviour this actor adds: given a vote it received, it
-    // produces a SECOND, conflicting vote for the SAME round with a DIFFERENT
-    // proposal — both signed by this node. This is what makes an honest peer emit a
-    // `ConflictingNotarize`/`ConflictingFinalize` activity. We test the
-    // forged-proposal + sign step directly (the p2p broadcast and `Vote::decode`
-    // round-trip are commonware library behaviour, not re-pinned here).
+    // Given a vote it received, the actor produces a second, conflicting vote for
+    // the same round with a different proposal, both signed by this node, which is
+    // what makes an honest peer emit a
+    // `ConflictingNotarize`/`ConflictingFinalize` activity. Only the
+    // forged-proposal + sign step is tested here; the p2p broadcast and
+    // `Vote::decode` round-trip are commonware behaviour, not re-pinned.
     #[test]
     fn equivocates_same_round_different_proposal() {
         let mut rng = StdRng::seed_from_u64(1);
@@ -279,10 +272,8 @@ mod tests {
 
         let round = Round::new(Epoch::new(7), View::new(42));
         let parent = View::new(41);
-        // The honest proposal this node "received".
         let honest = Proposal::new(round, parent, Digest(B256::repeat_byte(0xaa)));
 
-        // The actor signs the honest proposal AND a forged same-round partner.
         let forged = forged_proposal(round, parent, &mut rng);
         let n_honest = Notarize::<BlsScheme, _>::sign(&scheme, honest).expect("sign honest");
         let n_forged = Notarize::<BlsScheme, _>::sign(&scheme, forged).expect("sign forged");
@@ -300,14 +291,11 @@ mod tests {
         );
     }
 
-    // The robustness path the `run()` startup probe + the `broadcast_*` skips rely
-    // on: a scheme that CANNOT sign (no secret/share for this epoch — modelled here
-    // by a verifier-only scheme, the same `sign() -> None` contract a shareless
-    // beacon-active member hits via `CombinedScheme` self-suppression) yields `None`
-    // rather than panicking. Without this contract the equivocator would `.unwrap()`
-    // and crash, or (pre-fix) silently produce nothing with no warning. The seeded
-    // happy path (signer WITH a share equivocates) is covered end-to-end by the
-    // `case-byzantine` smoke.
+    // The robustness path the `run()` startup probe and the `broadcast_*` skips
+    // rely on: a scheme that cannot sign (no secret/share for this epoch, modelled
+    // here by a verifier-only scheme) yields `None` rather than panicking. Without
+    // this contract the equivocator would crash on an unwrap. The seeded happy path
+    // is covered end-to-end by the `case-byzantine` smoke.
     #[test]
     fn unsignable_scheme_yields_none_not_panic() {
         let mut rng = StdRng::seed_from_u64(2);

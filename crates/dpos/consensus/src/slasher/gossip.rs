@@ -1,16 +1,16 @@
 //! The evidence channel: the votes a node republishes so the two halves of a
 //! split-delivered equivocation can meet.
 //!
-//! An equivocator that sends each half of its double-signature to a disjoint set
-//! of peers is invisible to simplex — no single node ever holds both, so no
-//! `Conflicting*` activity is ever raised and the certificate path yields no
-//! evidence. This channel is the meeting place. When a round is decided against
-//! the votes a node is holding for it, that node broadcasts them on
-//! `EVIDENCE_CHANNEL`; every receiver verifies each signature and feeds it into
-//! its own slasher vote store, where the pair assembles into a charge.
+//! An equivocator that sends each half of its double-signature to a disjoint set of
+//! peers is invisible to simplex — no single node ever holds both, so no
+//! `Conflicting*` activity is raised and the certificate path yields no evidence.
+//! This channel is the meeting place: when a round is decided against the votes a
+//! node is holding for it, that node broadcasts them on `EVIDENCE_CHANNEL`, and
+//! every receiver verifies each signature and feeds it into its own slasher vote
+//! store, where the pair assembles into a charge.
 //!
-//! The p2p halves live in the node crate (`node/dpos.rs::build_beacon_plane`),
-//! so nothing here touches them: [`EvidenceBridge`] is the seam.
+//! The p2p halves live in the node crate, so nothing here touches them:
+//! [`EvidenceBridge`] is the seam.
 
 use crate::{
     digest::Digest,
@@ -35,7 +35,7 @@ use std::sync::{Arc, OnceLock};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
-/// The `channel` label every EVIDENCE ingress refusal is counted under.
+/// The `channel` label every evidence ingress refusal is counted under.
 pub(crate) const EVIDENCE_CHANNEL_LABEL: &str = "evidence";
 
 /// Wire payload: the votes one node republishes for a single round.
@@ -84,25 +84,20 @@ pub(crate) fn verify_vote(vote: &Vote<BlsScheme, Digest>, scheme: &VoteScheme) -
 
 /// Decode, bound, verify and report one peer's evidence batch.
 ///
-/// Verification is the whole point of doing this here: an unverified vote in the
-/// store would be republished on the next trigger and could pair into a charge
-/// against a validator that signed nothing.
+/// Verification here is what keeps an unverified vote out of the store, where it
+/// would be republished on the next trigger and could pair into a charge against a
+/// validator that signed nothing.
 ///
-/// The SENDER bound comes first (4.3, E4-13). Evidence is committee traffic: a
-/// peer that sits in none of the three tracked committee records
-/// (`C[E−1] ∪ C[E] ∪ C[E+1]`) has no round of its own to republish, and until
-/// this check existed any tracked peer could hand us a batch naming any epoch
-/// and buy a committee resolve with it. The classification is the peer set this
-/// node registered (`window`), not a read of anything: no EVM, no contract, no
-/// per-peer counter.
+/// The sender bound comes first. Evidence is committee traffic: a peer that sits in
+/// none of the three tracked committee records (`C[E−1] ∪ C[E] ∪ C[E+1]`) has no
+/// round of its own to republish, so it is refused before the decode.
 ///
-/// The epoch bound is the other half. Nothing about a forwarded vote constrains
-/// the epoch it names — its signer picks that — so the batch is checked against
-/// the window the vote store actually retains ([`EpochCursor::retains`]) AND
-/// against the sender's own membership mask BEFORE `committee_for` is called.
-/// Resolving first would mean one `getEpochCommitteeWithStakes` state read per
-/// message for any epoch a peer cares to name, ahead of any signature check, and
-/// would put a vote in the store that the very next `retain_floor` throws away.
+/// The epoch bound is the other half. Nothing about a forwarded vote constrains the
+/// epoch it names — its signer picks that — so the batch is checked against the
+/// window the vote store actually retains ([`EpochCursor::retains`]) and against the
+/// sender's own membership mask before `committee_for` is called. Resolving first
+/// would mean one `getEpochCommitteeWithStakes` state read per message for any epoch
+/// a peer cares to name, ahead of any signature check.
 pub fn ingest_batch(
     from: &PeerPubkey,
     bytes: &[u8],
@@ -111,9 +106,8 @@ pub fn ingest_batch(
     bridge: &EvidenceBridge,
     window: &TrackedWindow,
 ) {
-    // Before the decode: a sender outside the tracked set (or tombstoned) buys
-    // nothing at all here. `None` = no peer set registered yet, which is not a
-    // verdict — see `TrackedWindow::classify`.
+    // Before the decode: a sender outside the tracked set buys nothing at all here.
+    // `None` = no peer set registered yet, which is not a verdict.
     let ingress = window.classify(from);
     if matches!(ingress, Some(Ingress::Dropped) | Some(Ingress::Tracked(_))) {
         let reason = ingress.as_ref().map_or("none", Ingress::refusal);
@@ -133,8 +127,8 @@ pub fn ingest_batch(
         return;
     };
     let (epoch, view) = (first.epoch().get(), first.view().get());
-    // One batch, one round: a mixed batch would cost one committee resolve per
-    // vote, which is exactly the unbounded work the decode bound above refuses.
+    // One batch, one round: a mixed batch would cost one committee resolve per vote,
+    // which is exactly the unbounded work the decode bound refuses.
     if batch
         .iter()
         .any(|v| v.epoch().get() != epoch || v.view().get() != view)
@@ -155,7 +149,7 @@ pub fn ingest_batch(
         metrics::counter!("slasher_evidence_out_of_window_total").increment(1);
         return;
     }
-    // The sender must be in the record of THE epoch it is republishing for, not
+    // The sender must be in the record of the epoch it is republishing for, not
     // merely in one of the three. Still before `committee_for`.
     if let Some(ingress) = ingress.as_ref() {
         if !ingress.member_of(epoch) {
@@ -187,19 +181,18 @@ pub fn ingest_batch(
     }
 }
 
-/// The two directions of the evidence channel, as the slasher sees them, plus
-/// the one piece of slasher state the inbound direction has to read.
+/// The two directions of the evidence channel, as the slasher sees them, plus the
+/// one piece of slasher state the inbound direction has to read.
 ///
 /// Outbound, the slasher pushes encoded batches into `publisher` and the node's
-/// evidence task — which owns both p2p halves — broadcasts them. Inbound, `sink`
-/// is the return path: [`crate::slasher::Actor::init`] fills it with the gossip
-/// half of its own mailbox, because that mailbox does not exist until the
-/// consensus layer launches, long after the evidence task is spawned.
+/// evidence task — which owns both p2p halves — broadcasts them. Inbound, `sink` is
+/// the return path: [`crate::slasher::Actor::init`] fills it with the gossip half of
+/// its own mailbox, because that mailbox does not exist until the consensus layer
+/// launches.
 ///
-/// `cursor` travels the same seam in the opposite direction: the actor writes it
-/// from engine activity and [`ingest_batch`] reads it to bound what a peer may
-/// claim. It is created here rather than in the actor for the same reason as
-/// `sink` — the consumer exists first.
+/// `cursor` travels the same seam in the opposite direction: the actor writes it from
+/// engine activity and [`ingest_batch`] reads it to bound what a peer may claim. It
+/// is created here rather than in the actor for the same reason as `sink`.
 #[derive(Clone)]
 pub struct EvidenceBridge {
     publisher: mpsc::UnboundedSender<Bytes>,
@@ -299,7 +292,7 @@ mod tests {
         (signer, committee)
     }
 
-    /// A signer BOUND to `TEST_EPOCH`. A scheme refuses a subject from any other
+    /// A signer bound to `TEST_EPOCH`. A scheme refuses a subject from any other
     /// epoch, so a batch aimed at a different one needs its own signer.
     fn signer_and_committee(seed: u64, n: usize) -> (BlsScheme, EpochCommittee) {
         signer_and_committee_at(seed, n, TEST_EPOCH)
@@ -350,17 +343,12 @@ mod tests {
         assert!(decode_batch(&encode_batch(&over)).is_err());
     }
 
-    /// The EVIDENCE sender bound (4.3, E4-13): a peer that is in NO tracked
-    /// committee record buys nothing, and a peer that is in one record does not
-    /// thereby get to speak for another.
+    /// The evidence sender bound: a peer in no tracked committee record buys
+    /// nothing, and a peer in one record does not get to speak for another.
     ///
-    /// Before 4.3 `ingest_batch` did not take a sender at all — the epoch window
-    /// was the only bound, so any tracked peer (the whole ACTIVE REGISTRY, since
-    /// the registry was primary) could name any retained epoch and buy one
-    /// `getEpochCommitteeWithStakes` read per message ahead of any signature check.
-    ///
-    /// Falsifier: either refused case resolving a committee, or the admitted case
-    /// stopping.
+    /// Without it the epoch window is the only bound, so any tracked peer could name
+    /// any retained epoch and buy one `getEpochCommitteeWithStakes` read per message
+    /// ahead of any signature check.
     #[test]
     fn an_evidence_batch_from_outside_the_epochs_committee_resolves_nothing() {
         let (signer, committee) = signer_and_committee(4, 4);
@@ -372,7 +360,7 @@ mod tests {
         let resolves = Arc::new(AtomicUsize::new(0));
         // The window this node registered: the members are primary for TEST_EPOCH,
         // one more peer is primary for TEST_EPOCH − 1 only, and an outsider is in
-        // the registry (tier 2) and in no committee.
+        // the registry and in no committee.
         let members: Vec<PeerPubkey> = committee.bimap.iter().cloned().collect();
         let committee_for: EvidenceCommitteeFor = {
             let resolves = resolves.clone();
@@ -403,7 +391,7 @@ mod tests {
 
         let batch = encode_batch(&vec![notarize_at(&signer, TEST_EPOCH, 0xaa)]);
 
-        // (1) A tier-2 sender: refused before the decode.
+        // A registry-tier sender: refused before the decode.
         ingest_batch(
             &outsider,
             &batch,
@@ -422,8 +410,8 @@ mod tests {
             "and must not reach the store"
         );
 
-        // (2) A member of the OUTGOING committee speaking for the current one:
-        // in the window, but not in THIS epoch's record.
+        // A member of the outgoing committee speaking for the current one: in the
+        // window, but not in this epoch's record.
         ingest_batch(
             &previous_only,
             &batch,
@@ -442,7 +430,7 @@ mod tests {
             "and must not reach the store"
         );
 
-        // (3) A member of the epoch it republishes for: admitted, exactly as before.
+        // A member of the epoch it republishes for: admitted, exactly as before.
         ingest_batch(
             &members[0],
             &batch,

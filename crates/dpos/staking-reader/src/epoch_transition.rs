@@ -1,29 +1,17 @@
-//! Finality-gated epoch-boundary orchestrator (epoch_transition).
+//! Finality-gated epoch-boundary orchestrator.
 //!
-//! Injection-style library: every collaborator is a constructor param, so
-//! this compiles and unit-tests today without the consensus / p2p / node
-//! layers (only their *instances* — the live finalized stream, the real
-//! `Oracle`, the node wiring — are deferred).
+//! Every collaborator is a constructor parameter, so the module compiles and
+//! unit-tests without the consensus, p2p and node layers.
 //!
-//! Design invariants:
-//! - finality-gated apply;
-//! - write-once `track` (no re-track of a covered epoch; no reorg handling
-//!   — finalized ⇒ irreversible);
-//! - committee-size pre-check (typed error, not a deep commonware panic);
-//! - cold-start reads the *current* finalized committee once (no point
-//!   taking an outdated state).
-//!
-//! The durable validator-set cache this module used to write is gone: it existed
-//! to answer a committee the contract had pruned, and the contract no longer
-//! prunes.
-//!
-//! Retry / outcome invariants:
-//! - `last_tracked_epoch` advances only after `boundary_tx.try_send`
-//!   succeeds — a `Full` channel leaves the epoch un-tracked so the next
-//!   finalized block retries.
-//! - `on_finalized` returns a [`TransitionOutcome`] so the caller's
-//!   error counter resets only on `EpochAdvanced(_)`, not on intra-epoch
-//!   no-ops.
+//! Invariants:
+//! - only finalized blocks are applied — a reorg is impossible, so none is handled;
+//! - `track` is write-once per epoch: a re-delivery of a covered epoch is a no-op;
+//! - the committee size is checked here, so an oversized set is a typed error
+//!   rather than a panic from commonware;
+//! - cold start reads the current finalized committee once;
+//! - `last_tracked_epoch` advances only after `boundary_tx.try_send` succeeds, so
+//!   a full channel leaves the epoch un-tracked for the next block to retry;
+//! - [`TransitionOutcome`] distinguishes a real advance from an intra-epoch no-op.
 
 use alloy_primitives::B256;
 use commonware_utils::ordered::Set;
@@ -35,12 +23,8 @@ use crate::{
     reader::{check_peer_set_size, epoch_at_block, is_epoch_boundary, StakingStateRead},
 };
 
-/// Freeze a governance-mutable geometry field on its first observation, then
-/// treat it as fixed: returns the frozen value on every later call and warns
-/// (log-only) if the on-chain value drifts. `what` names the field + the
-/// consensus authority it backs (e.g. FixedEpocher / OriginEpocher) for the
-/// diagnostic. Shared by the `epochBlockInterval` and `dposActivationBlock`
-/// freezes in `apply_at`, which are otherwise identical bar the type.
+/// Freeze the first observed value; later calls return it and warn on drift.
+/// `what` names the field and the consensus authority it backs.
 fn freeze_or_warn<T: Copy + PartialEq + std::fmt::Debug>(
     slot: &mut Option<T>,
     observed: T,
@@ -64,27 +48,20 @@ fn freeze_or_warn<T: Copy + PartialEq + std::fmt::Debug>(
     }
 }
 
-/// Outcome of [`EpochTransition::on_finalized`] — distinguishes an
-/// intra-epoch no-op from an actual epoch advance. The dpos.rs
-/// boundary-hook closure uses this to decide whether to reset its
-/// consecutive-error counter.
+/// Outcome of [`EpochTransition::on_finalized`], distinguishing an intra-epoch
+/// no-op from an actual epoch advance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransitionOutcome {
-    /// This block was an intra-epoch re-delivery of an already-tracked
-    /// epoch, a still-empty missed-commit epoch, or a retry stalled
-    /// on a full bridge channel. No epoch state was advanced.
+    /// No epoch state advanced: a re-delivery of a tracked epoch, a still-empty
+    /// missed-commit epoch, or a retry whose boundary trigger was not delivered.
     Intra,
-    /// This block advanced `last_tracked_epoch` to the given value;
-    /// the boundary trigger has been delivered to the consensus bridge.
+    /// `last_tracked_epoch` advanced to this value and the boundary trigger
+    /// reached the consensus bridge.
     EpochAdvanced(u64),
 }
 
-/// Merge the replayed-boundary outcome with the new-delivery outcome (bug 11):
-/// a new-delivery advance wins; otherwise a replay advance is surfaced (instead
-/// of being debug-logged and dropped) so the engine hook's consecutive-error
-/// counter resets on genuine epoch progress made via the replay path. The
-/// single-slot invariant makes a double-advance in one call effectively
-/// impossible, and `apply_at` is idempotent per epoch, so this adds no side effect.
+/// Surface a replay advance even when the new delivery was a no-op; a
+/// new-delivery advance takes precedence.
 fn merge_replay_outcome(
     replay_advance: Option<TransitionOutcome>,
     new: TransitionOutcome,
@@ -95,18 +72,13 @@ fn merge_replay_outcome(
     }
 }
 
-/// Internal result of `track_and_trigger`, distinguishing the two `Intra`
-/// reasons the caller must treat differently for the pending-boundary slot:
-/// `Full` is RETRYABLE (keep the boundary parked so the re-poke loop retries),
-/// `Closed` is NOT (the forwarder has shut down — releasing the park avoids
-/// spinning the re-poke loop against a dead channel during teardown).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TriggerResult {
-    /// Boundary trigger delivered (or no bridge configured) — epoch advanced.
+    /// Boundary trigger delivered, or no bridge configured: the epoch advanced.
     Advanced,
-    /// Bridge channel full — retry the send on the next poke.
+    /// Bridge channel full: retry the send on the next poke.
     Full,
-    /// Bridge channel closed (forwarder gone) — unrecoverable, do not retry.
+    /// Bridge channel closed: unrecoverable, do not retry.
     Closed,
 }
 
@@ -119,44 +91,37 @@ impl TriggerResult {
     }
 }
 
-/// The two tiers of one epoch's peer set, kept apart all the way to the
-/// `Oracle` because commonware treats them differently and because the epoch a
-/// peer owes its place to is what every channel's membership check asks for.
+/// The two tiers of one epoch's peer set, kept apart to the `Oracle`: commonware
+/// treats them differently, and every channel's membership check asks which epoch
+/// a peer owes its place to.
 ///
-/// `primary` is not stored as a union: it is the per-epoch committee RECORDS
-/// (`E−1`, `E`, `E+1`) the union is taken over, so the consumer of a frame can
-/// ask "which of the three does this sender sit in" without a second read of
-/// anything. [`Self::primary`] takes the union for commonware, which wants one
-/// flat set; [`Self::epochs_of`] answers the membership question.
+/// `primary` holds the per-epoch committee records (`E−1`, `E`, `E+1`) rather than
+/// their union, so a frame's consumer can ask which record a sender sits in;
+/// [`Self::primary`] takes the union commonware wants, [`Self::epochs_of`] answers
+/// the membership question.
 ///
-/// `secondary` is the Active validator REGISTRY: commonware never dials it, never
-/// gossips bit-vecs about it and never caches its bodies, but does accept its
-/// inbound connections and does serve it (`CW:.../tracker/record.rs:171`,
-/// `:264`, `:341-348`; `CW:broadcast/src/buffered/engine.rs:319-322`) — which is
-/// exactly the tier an ejected/upcoming validator belongs in.
+/// `secondary` is the Active validator registry: commonware never dials it, gossips
+/// bit-vecs about it or caches its bodies, but does accept and serve its inbound
+/// connections — the tier an ejected or upcoming validator belongs in.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TrackedPeers {
     /// `(epoch, committee[epoch])` for each readable record among `E−1`, `E`,
-    /// `E+1`, ascending. A record that is not readable (below the contract's
-    /// window at cold start, or not committed yet) is ABSENT rather than empty —
-    /// "no record" and "empty committee" are different answers and only the
-    /// second one would be a fault.
+    /// `E+1`, ascending. An unreadable record (below the contract's window at
+    /// cold start, or not committed yet) is absent rather than empty: "no
+    /// record" and "empty committee" are different answers, and only the second
+    /// is a fault.
     ///
-    /// INVARIANT, held by every producer and relied on by every consumer: AT MOST
-    /// THREE entries, with DISTINCT epochs. [`Self::assemble_tracked_peers`] gets
-    /// it by construction (`E−1`, `E`, `E+1`, each pushed at most once); the
-    /// ingress mask on the consuming side is a fixed three-slot array sized off it
-    /// (`fluentbase_p2p::EpochMask`, which `debug_assert`s the bound rather than
-    /// truncating in silence). The field is `pub` because two test call sites build
-    /// a window by hand — a fourth record, or a repeated epoch, is a bug in the
-    /// builder, not something a consumer is expected to cope with.
+    /// At most three entries, with distinct epochs; consumers size fixed
+    /// three-slot masks off that bound, and a fourth record or a repeated epoch
+    /// is a producer bug rather than something they cope with.
+    ///
+    /// Public so the p2p mask can read it and tests can build a window by hand.
     pub committees: Vec<(u64, Set<PeerPubkey>)>,
     /// Tier 2: every Active registry entry at the anchor.
     pub secondary: Set<PeerPubkey>,
 }
 
 impl TrackedPeers {
-    /// The flat primary set commonware tracks: the union of the carried records.
     pub fn primary(&self) -> Set<PeerPubkey> {
         Set::from_iter_dedup(
             self.committees
@@ -166,7 +131,7 @@ impl TrackedPeers {
     }
 
     /// The epochs whose carried record contains `peer` — the membership mask a
-    /// channel's ingress check reads. Empty ⇒ the peer is not primary here.
+    /// channel's ingress check reads; empty means the peer is not primary here.
     pub fn epochs_of<'a>(&'a self, peer: &'a PeerPubkey) -> impl Iterator<Item = u64> + 'a {
         self.committees
             .iter()
@@ -175,78 +140,56 @@ impl TrackedPeers {
     }
 }
 
-/// Where the assembled peer set is delivered. p2p-agnostic on purpose:
-/// `staking-reader` does not depend on `commonware-p2p`. The real adapter
-/// `impl PeerSetSink for commonware_p2p::Manager<PublicKey = PeerPubkey>`
-/// (a one-liner `Manager::track(self, epoch, TrackedPeers::new(..)).await`) is
-/// written at the `Oracle`-handle owner (the node wiring), where the
-/// `oracle.track` call site lives. Style mirrors commonware's own traits
-/// (`-> impl Future + Send`, not `async fn`, to stay clean under `-D warnings`).
+/// Where the assembled peer set is delivered; p2p-agnostic on purpose, so
+/// `staking-reader` does not depend on `commonware-p2p`.
 pub trait PeerSetSink {
     fn track(&mut self, epoch: u64, peers: TrackedPeers) -> impl Future<Output = ()> + Send;
 }
 
-/// Drives finality-gated epoch boundaries: detect → frozen-committee
-/// snapshot → size-check → persist (final) → `track` once → prune to the node's
-/// own retention window.
-///
-/// Re-poke cadence for a parked boundary (see
-/// [`EpochTransition::has_pending_boundary`]): callers retry `on_finalized`
-/// with this backoff until the park clears.
+/// Re-poke cadence for a parked boundary: callers retry `on_finalized` with this
+/// backoff until [`EpochTransition::has_pending_boundary`] clears.
 pub const PENDING_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_millis(200);
 
 pub struct EpochTransition<R, S> {
     reader: R,
     sink: S,
-    /// commonware `max_peer_set_size` (injected by the node; committee-size guard input).
+    /// commonware `max_peer_set_size`, injected by the node; the committee-size
+    /// guard input.
     max_peer_set_size: usize,
     /// Write-once guard: the epoch already fed to `track`.
     last_tracked_epoch: Option<u64>,
-    /// Optional boundary trigger for 04's `OuterEngine::boundary_sender`. When
-    /// `Some`, every successful (non-skipped) epoch boundary fires
-    /// `(epoch, snapshot)` exactly once. `try_send` is used (lossy) — if 04's
-    /// receiver is closed, the trigger is silently dropped (04 has already
-    /// shut down).
+    /// Boundary trigger for the engine's `OuterEngine::boundary_sender`: every
+    /// advance fires `(epoch, snapshot)` once. `try_send` is lossy on purpose, and
+    /// a closed receiver means the consumer has already shut down.
     boundary_tx: Option<tokio::sync::mpsc::Sender<(u64, crate::reader::ValidatorSetSnapshot)>>,
-    /// `epochBlockInterval` frozen on the first finalized block. The consensus
-    /// `FixedEpocher` is frozen at startup, so this MUST be treated as fixed
-    /// after genesis — honoring a live governance change here would diverge the
-    /// two epoch authorities. A later on-chain change is logged and ignored.
-    /// (Correct boundary-synced live re-interval is a separate, deferred task.)
+    /// `epochBlockInterval` frozen on the first finalized block: consensus's
+    /// `FixedEpocher` is frozen at startup, so following a live governance change
+    /// here would diverge the two epoch authorities. Drift is logged and ignored.
     frozen_interval: Option<u64>,
-    /// `dposActivationBlock` frozen on the first finalized block — origin for
-    /// the relative epoch numbering (consensus `OriginEpocher` is frozen at
-    /// startup, so this is treated as fixed identically to the interval).
+    /// `dposActivationBlock` frozen on the first finalized block: the origin for
+    /// relative epoch numbering, fixed because consensus's `OriginEpocher` is
+    /// frozen at startup.
     frozen_activation: Option<u64>,
-    /// Materialized-state-gated EVM hash by height — the deferred-execution
-    /// re-key: committee reads resolve at `number − result_lag` (a result-final
-    /// height) instead of the ordering-finalized block's own hash, which has no
-    /// executed state yet. THREE-valued: `Ok(Some(hash))` = executed state
-    /// materialized past the height; `Ok(None)` = height above reth's
-    /// materialized head (`best_block_number()`) — a header may exist but the
-    /// state is NOT yet materialized (pipeline backfill), so the caller PARKS;
-    /// `Err` = a real read fault at a materialized height (header-index
-    /// inconsistency / corruption) that MUST surface to the boundary hook's
-    /// consecutive-error counter, never be folded into the park. Backed by
-    /// `fluentbase_consensus::executed_state_hash` (by NUMBER, gated on
-    /// `best_block_number()`, never the header tip `last_block_number`).
+    /// Materialized-state-gated EVM hash by height: committee reads resolve at
+    /// `number − result_lag`, a height that can have a header without executed
+    /// state. `Ok(Some)` = materialized; `Ok(None)` = above reth's
+    /// `best_block_number()` (pipeline backfill), which parks the caller; `Err` =
+    /// a real read fault at a materialized height, which must not be folded into
+    /// the park.
     executed_hash: std::sync::Arc<dyn Fn(u64) -> Result<Option<B256>, ReadError> + Send + Sync>,
-    /// Result lag K (passed in — this crate must not depend on consensus).
+    /// Result lag K, injected because this crate must not depend on consensus.
     result_lag: u64,
-    /// Cold-start anchor height; floor for the read-height clamp (heights at
-    /// or below the anchor are executed by construction).
+    /// Read-height floor: the cold-start anchor, which is executed by
+    /// construction, so heights at or below it need no gate.
     anchor_height: Option<u64>,
-    /// Boundary remembered while the executed tip lagged its read height.
-    /// ONLY boundary heights are stored: a non-boundary apply is Intra by
-    /// construction (nothing to replay), and an unconditional overwrite
-    /// would clobber a remembered boundary with a non-boundary during a
-    /// sustained execution lag — losing the epoch enter forever.
+    /// Boundary remembered while the executed tip lagged its read height. Only
+    /// boundary heights are stored: an unconditional overwrite would let a
+    /// non-boundary clobber a remembered boundary during a sustained lag and lose
+    /// the epoch enter forever.
     pending_boundary: Option<u64>,
-    /// The boundary height whose empty-committee park has already been WARNED,
-    /// so the re-poke loop drops to `debug!` on every subsequent empty re-read
-    /// (the first occurrence stays loud; a permanent-empty case does not spam
-    /// one warn per finalized block). Overwritten with the new height when a
-    /// DIFFERENT boundary parks empty, so each distinct boundary warns once.
+    /// The boundary height whose empty-committee park has already been warned: the
+    /// re-poke loop drops to `debug!` on later re-reads. Overwritten when a
+    /// different boundary parks empty, so each distinct boundary warns once.
     warned_empty_boundary: Option<u64>,
 }
 
@@ -280,16 +223,12 @@ where
         }
     }
 
-    /// The relative epoch `number` falls in, over the FROZEN geometry — the same
-    /// value [`Self::apply_at`] derives, so a consumer riding the boundary walk
-    /// asks the epoch authority instead of re-deriving the formula from a
-    /// `frozen_geometry()` pair. `None` until the geometry freezes.
+    /// The relative epoch `number` falls in, over the frozen geometry; `None`
+    /// until the geometry freezes.
     pub fn epoch_at(&self, number: u64) -> Option<u64> {
         epoch_at_block(number, self.frozen_activation?, self.frozen_interval?)
     }
 
-    /// Activation-relative boundary predicate over the FROZEN geometry —
-    /// usable without any state read once `cold_start` froze it.
     fn is_epoch_boundary_frozen(&self, number: u64) -> Option<bool> {
         Some(is_epoch_boundary(
             number,
@@ -298,133 +237,71 @@ where
         ))
     }
 
-    /// Whether a boundary is parked awaiting execution catch-up. The replay
-    /// fires on the next `on_finalized` call — callers MUST re-poke (retry
-    /// with backoff) when this is set after their delivery was processed:
-    /// during epoch catch-up the parked boundary IS the last deliverable
-    /// block, so no further delivery will ever arrive to trigger the replay.
+    /// Whether a boundary is parked awaiting execution catch-up. Callers must
+    /// re-poke (retry with [`PENDING_RETRY_BACKOFF`]) after a delivery that
+    /// leaves this set: during catch-up the parked boundary is the last
+    /// deliverable block, so no later delivery will trigger the replay.
     pub fn has_pending_boundary(&self) -> bool {
         self.pending_boundary.is_some()
     }
 
-    /// The parked boundary height, or `None` when nothing is parked. Drives the
-    /// signer hook's `parked_boundary_height` gauge (external wedge detection:
-    /// `!= 0 for > Xm` Prometheus alert) — the twin of the cert-budget executor
-    /// park's `deferred_height`.
+    /// The parked boundary height; `None` when nothing is parked. Feeds the
+    /// signer hook's gauge, which alerts on a boundary parked for too long.
     pub fn pending_boundary(&self) -> Option<u64> {
         self.pending_boundary
     }
 
     /// The frozen `(dposActivationBlock, epochBlockInterval)` once a readable,
-    /// DPoS-scheduled anchor has been resolved; `None` until then. This is the
-    /// SINGLE in-plane source of the immutable epoch geometry: the beacon-plane
-    /// poller drives [`Self::freeze_geometry`] here until it answers `Some`, and the
-    /// `DkgActor` reads its activation/interval from the SAME resolution rather than
-    /// re-reading the chain itself. `Some(_)` is also the poller's stop condition —
-    /// and its PUBLISH condition, whichever caller did the freezing: the layer's
-    /// cold start (which freezes through the same path) may get there first.
+    /// DPoS-scheduled anchor has been resolved; `None` until then. The single
+    /// in-plane source of the epoch geometry.
     pub fn frozen_geometry(&self) -> Option<(u64, u64)> {
         Some((self.frozen_activation?, self.frozen_interval?))
     }
 
-    /// The executed height committee reads resolve at for an
-    /// ordering-finalized `number`: `number − result_lag`, clamped to the
-    /// cold-start anchor (≤ anchor is executed by construction).
+    /// The executed height committee reads resolve at for an ordering-finalized
+    /// `number`: `number − result_lag`, clamped to the cold-start anchor (at or
+    /// below the anchor is executed by construction).
     ///
-    /// Hash-invariance now covers the WHOLE snapshot, so the lagged read point
-    /// loses nothing: the committee array is frozen storage, consensus keys are
-    /// one-shot, and — since 2026-07-31 — the per-member leader WEIGHT is frozen
-    /// too, stamped into `leaderStakes[epoch]` at `commitEpochCommittee` from the
-    /// selection epoch's stake. Until that landed the stakes leg was a LIVE
-    /// at-or-before walk and this comment was false for it: a node reading at a
-    /// different height (a cold start reads at its own anchor, not at
-    /// `number − K`) could get a different weight vector, hence a different
-    /// `total`, hence — since the draw is `rand % total` — a different leader
-    /// entirely rather than a shifted band edge.
+    /// The lagged read point loses nothing: the committee array, the per-member
+    /// leader weights and the consensus keys it carries are all frozen at commit.
     fn read_height_for(&self, number: u64) -> u64 {
         let floor = self.anchor_height.unwrap_or(0);
         number.saturating_sub(self.result_lag).max(floor)
     }
 
-    /// Raise the read-height floor — MONOTONE FORWARD, never lowers.
+    /// Raise the read-height floor — monotone forward, never lowers.
     ///
     /// Published by the executor when a steady-state re-jump lands: the jumped-over
-    /// history is gone from this node (the marshal floor teleported past it, and a
-    /// pruned reth keeps only a bounded state window), so "where this node's history
-    /// begins" has moved and [`Self::read_height_for`] must clamp to the new point.
-    /// Without it the boundary the landing enters — up to a full epoch below the tip,
-    /// since the terminal at or below the landing is usually the PREVIOUS epoch's —
-    /// still reads at `number − result_lag`, a height whose state is pruned: all five
-    /// staticcalls in [`Self::apply_at`] fail, and the caller's retry arm re-reads the
-    /// same dead height forever instead of entering the epoch.
+    /// history is gone, so the boundary the landing enters (often the previous
+    /// epoch's terminal, up to a full epoch below the tip) would read at
+    /// `number − result_lag` — a pruned height — and the caller's retry arm would
+    /// re-read it forever instead of entering the epoch.
     ///
-    /// Monotone because the value states a fact that only moves forward; accepting a
-    /// lower one would re-open the pruned window the raise just closed.
-    ///
-    /// The monotonicity is a property of the TYPE, not of the wiring. Both writers of
-    /// `anchor_height` reach ONE instance: [`Self::cold_start`] (the layer, once, at
-    /// the anchor its cold-start discriminator resolved) and this setter (the
-    /// executor, on every later landing). Today's call order happens to be fixed —
-    /// the layer cold-starts before the executor exists — but that is a fact about
-    /// one wiring, and stating the guarantee as "the wiring has a single cold-start
-    /// caller" is exactly how the previous version of this doc was left describing a
-    /// wiring that had changed under it. So `cold_start` takes the same `max`: it is
-    /// not a "the history starts here" assignment but the same forward-only fact
-    /// stated from a different source, and an unconditional assignment in either
-    /// writer would let it drop the floor back into the pruned window and defeat the
-    /// guarantee this setter exists to give.
+    /// Both writers of the floor — [`Self::cold_start`] and this setter — take
+    /// the max, so the guarantee does not depend on their call order.
     pub fn raise_anchor_height(&mut self, height: u64) {
         self.anchor_height = Some(self.anchor_height.map_or(height, |a| a.max(height)));
     }
 
-    /// Apply one **finalized** block `B` (delivered sequentially via
-    /// commonware `Reporter Update::Block` + ack).
+    /// Apply one finalized block `B`, delivered sequentially by commonware
+    /// `Reporter` and acked.
     ///
-    /// Idempotent per epoch (write-once `track`): a re-delivery of the
-    /// same epoch is a no-op, never a re-`track` (commonware would silently
-    /// drop it anyway). Persist, track and prune are all individually
-    /// idempotent (`prunable::Archive::put` skips duplicate indices;
-    /// `sink.track` no-ops on a re-track), so a retry path stalled on
-    /// a full bridge channel re-executes the upstream side effects safely.
-    ///
-    /// Returns [`TransitionOutcome`]:
-    /// - `Intra` — intra-epoch re-delivery, missed-commit epoch, or a
-    ///   retry path where `boundary_tx.try_send` failed; epoch state is
-    ///   NOT advanced.
-    /// - `EpochAdvanced(epoch)` — the bridge trigger was delivered and
-    ///   `last_tracked_epoch` advanced to `epoch`.
+    /// Idempotent per epoch: a re-delivery is a no-op and never a re-`track`, and
+    /// the side effects a stalled retry re-runs are individually idempotent.
     pub async fn on_finalized(&mut self, number: u64) -> Result<TransitionOutcome, ReadError> {
         if self.frozen_interval.is_none() {
             return Err(ReadError::Backend(
                 "on_finalized before cold_start (epoch geometry not frozen)".into(),
             ));
         }
-        // Replay FIRST: a boundary remembered while the executed tip lagged is
-        // applied before the new delivery, keeping boundary handling in height
-        // order. Why a single slot suffices is argued at the `debug_assert!` on
-        // the park below (it is a property of which caller can park, NOT of the
-        // epoch interval).
-        // Bug 11: capture the replay outcome so a genuine epoch advance made via
-        // the replay path is SURFACED to the caller, not just debug-logged. The
-        // engine boundary hook resets its consecutive-error counter only on
-        // `EpochAdvanced`, so a dropped replay advance could false-shutdown the
-        // consensus thread at MAX_CONSECUTIVE_ON_FINALIZED_ERRORS despite progress.
+        // Boundaries are replayed before the new delivery so they are applied in
+        // height order.
         let mut replay_advance: Option<TransitionOutcome> = None;
         if let Some(b) = self.pending_boundary {
-            // Three-valued probe: `Ok(None)` (b's read height still above the
-            // materialized head) leaves the slot parked for the next re-poke;
-            // an `Err` (a real read fault) propagates via `?` to the boundary
-            // hook's counter arm — the slot untouched (still parked).
             if let Some(at) = (self.executed_hash)(self.read_height_for(b))? {
-                // `apply_at` OWNS `pending_boundary`: it releases the slot on a
-                // real advance (or an empty missed-commit epoch) and KEEPS it
-                // parked when the bridge channel is Full (returns `Intra`
-                // without advancing), so the re-poke loop retries the send. A
-                // transient `ReadError` propagates via `?` with the slot
-                // untouched (still parked) — `b` is the last deliverable block
-                // during catch-up, so dropping it would wedge epoch E+1
-                // forever. `apply_at` is idempotent per epoch, so re-applying
-                // on the next retry is safe.
+                // `apply_at` owns the slot: an error propagates with it untouched.
+                // `b` is the last deliverable block during catch-up, so dropping it
+                // would wedge the next epoch forever.
                 let replay = self.apply_at(b, at).await?;
                 tracing::debug!(boundary = b, ?replay, "replayed pending boundary");
                 if matches!(replay, TransitionOutcome::EpochAdvanced(_)) {
@@ -432,53 +309,16 @@ where
                 }
             }
         }
-        // Three-valued probe: `Err` (a real read fault at a materialized height)
-        // propagates via `?` to the boundary hook's counter arm (fail-fast);
-        // `Ok(None)` (height above the materialized head) PARKS; `Ok(Some)`
-        // applies. This is the fix's core: a pipeline-backfill state-lag now
-        // reports `Ok(None)` (park) instead of the header-based closure's stale
-        // `Some(hash)` at an un-executed height (→ apply_at → `no state found`
-        // → the 3-error self-shutdown).
+        // An un-executed height must park, never be read: a state read there
+        // fails and the caller would retry the same dead height forever.
         let Some(at) = (self.executed_hash)(self.read_height_for(number))? else {
-            // Executed tip hasn't reached number − result_lag yet (transient:
-            // bounded by the executor ack window OR, during a deep re-jump, the
-            // reth PIPELINE backfill materializing state behind the header
-            // frontier). Remember ONLY boundaries.
+            // Transient while the executed tip has not reached `number −
+            // result_lag`; only boundaries are worth replaying.
             if self.is_epoch_boundary_frozen(number) == Some(true) {
-                // Single-slot invariant: a second boundary can be parked only by
-                // clobbering the first, silently dropping its epoch handoff.
-                //
-                // What keeps that unreachable is WHICH CALLER can park, not the
-                // epoch interval. `on_finalized` now has two producers — the
-                // delivered-block adapter and the executor's re-jump landing —
-                // and only the first can reach either park site. The landing
-                // raises the read floor to `landing − result_lag` before it calls,
-                // so its read resolves at exactly that floor — and the floor is
-                // materialized by construction: both heights `sync_to` can return
-                // are EXECUTED heights, `local_landing` reading `best_block_number`
-                // (NOT the header-only `last_block_number`) and the loop exiting
-                // only on `Valid{latest_valid_hash == tip}`, reth's own
-                // canonical-and-executed verdict (`cold_start_jump.rs:414-419`,
-                // `:505-509`). So `landing ≤ best`, hence `landing − result_lag ≤
-                // best`: this `Ok(None)` arm ("read height above the materialized
-                // head") cannot fire for it, a pruned read would be `Err` (which
-                // parks nothing), and the empty-committee park below cannot
-                // persist for an epoch whose commit landed long ago. That
-                // leaves the delivery path as the only parker, and it delivers in
-                // height order — one boundary at a time.
-                //
-                // `cold_start` is not a third producer either, and that is structural
-                // rather than lucky: it is called once, by the layer, while
-                // `last_tracked_epoch` is still `None` (the plane freezes the geometry
-                // through `freeze_geometry`, which writes none of the bootstrap
-                // state), so it takes the bootstrap branch — which CLEARS the slot and
-                // has no park site — and never the boundary branch below, which does.
-                //
-                // The earlier justification here — `interval > MAX_PENDING_ACKS +
-                // result_lag` — was an argument about tip-delivery timing that
-                // never bound a boundary chosen an epoch below the tip. If this
-                // ever fires, a THIRD producer has appeared; fail loud in
-                // debug/tests rather than lose an epoch silently in release.
+                // Single slot: a second park would clobber the first and drop that
+                // epoch's handoff. Only this delivery path can park — the executor's
+                // landing reads at a floor it has already executed, and cold start
+                // clears the slot — so a second park means a third producer appeared.
                 debug_assert!(
                     self.pending_boundary.is_none_or(|p| p == number),
                     "two boundaries pending at once (parked {:?}, new {number}): the park slot \
@@ -496,25 +336,16 @@ where
         Ok(merge_replay_outcome(replay_advance, outcome))
     }
 
-    /// Resolve the epoch geometry at `at` and FREEZE it — the whole geometry half of
-    /// [`Self::apply_at`], and nothing else.
-    ///
-    /// `Ok(None)` = DPoS is not a scheduled, deployed chain at `at` yet: until then the
-    /// ChainConfig staticcalls revert (codeless account) or read the `0` unscheduled
-    /// sentinel. On a cold restart into `--dpos` the anchor can momentarily be the
-    /// genesis fallback (reth has not yet surfaced its persisted finalized marker), so
-    /// freezing there would FATALLY mis-read the geometry;
-    /// `scheduled_dpos_activation` folds both the codeless and the `0` cases to `None`
-    /// and the caller stays unfrozen and retries at a later height.
+    /// `Ok(None)` = DPoS is not a scheduled, deployed chain at `at` yet: the
+    /// ChainConfig staticcalls revert (codeless account) or read the `0`
+    /// unscheduled sentinel. A cold restart can momentarily anchor on the genesis
+    /// fallback before reth surfaces its persisted finalized marker, and freezing
+    /// there would mis-read the geometry, so the caller stays unfrozen and retries
+    /// at a later height.
     fn resolve_and_freeze(&mut self, at: B256) -> Result<Option<(u64, u64)>, ReadError> {
         let Some(scheduled_activation) = self.reader.scheduled_dpos_activation(at)? else {
             return Ok(None);
         };
-        // `epochBlockInterval` is treated as FIXED after genesis: the consensus
-        // `FixedEpocher` is frozen at startup, so acting on a live governance
-        // change here would diverge the two epoch authorities (a boundary-synced
-        // live re-interval is a separate, deferred task). Freeze on the first
-        // readable block; log + ignore any later on-chain change.
         let observed = self.reader.epoch_block_interval(at)?;
         if observed == 0 {
             return Err(ReadError::ZeroEpochInterval);
@@ -524,11 +355,6 @@ where
             observed,
             "epochBlockInterval (consensus FixedEpocher is frozen)",
         );
-        // Freeze the relative-epoch origin alongside the interval (consensus
-        // OriginEpocher is frozen at startup too). Reuse the value already resolved
-        // by `scheduled_dpos_activation` — the `0`-fold never reaches here (it
-        // returned `None` above), so this is the raw activation height (unscheduled
-        // `0` is impossible past the gate).
         let activation = freeze_or_warn(
             &mut self.frozen_activation,
             scheduled_activation,
@@ -537,22 +363,14 @@ where
         Ok(Some((activation, interval)))
     }
 
-    /// Freeze the epoch geometry and DO NOTHING ELSE — the beacon plane's only
-    /// business with this instance.
+    /// `Ok(true)` = this call froze the geometry; `Ok(false)` = it was already
+    /// frozen, or DPoS is not scheduled at `at` yet, so the caller retries at a
+    /// later height. Idempotent.
     ///
-    /// `Ok(true)` = this call froze it; `Ok(false)` = it was already frozen (by this
-    /// caller on an earlier tick, or by the layer's cold start) or DPoS is not
-    /// scheduled at `at` yet, so the caller retries at a later height. Idempotent.
-    ///
-    /// It deliberately does NOT bootstrap the epoch, `track`, fire the bridge, raise
-    /// the read floor or park a boundary: those are the BOOTSTRAP, and the bootstrap
-    /// branch of [`Self::apply_at`] is write-once (`last_tracked_epoch.is_none()`), so
-    /// a second caller reaching it would decide the starting epoch by winning a race.
-    /// The plane's cursor is the EL-finalized height, `result_lag` BELOW the ordering
-    /// chain and far below a re-jump landing, so the epoch it would pick is the wrong
-    /// one (`an_el_scale_bootstrap_in_the_k_window_after_a_boundary_loses_the_epoch`).
-    /// The one bootstrapper is [`Self::cold_start`], called by the layer once its
-    /// ordering-scale anchor exists.
+    /// Deliberately skips the bootstrap — no `track`, bridge trigger, read floor or
+    /// park — because that branch is write-once and must be driven from an
+    /// ordering-scale anchor: off the plane's lagging EL cursor it would pick the
+    /// wrong epoch.
     pub fn freeze_geometry(&mut self, at: B256) -> Result<bool, ReadError> {
         if self.frozen_geometry().is_some() {
             return Ok(false);
@@ -560,13 +378,7 @@ where
         Ok(self.resolve_and_freeze(at)?.is_some())
     }
 
-    /// The pre-deferred `on_finalized` body: epoch geometry freeze +
-    /// cold-start bootstrap (incl. boundary-resume E+1) + boundary branch,
-    /// reading committee state at the RESOLVED executed hash `at`.
     async fn apply_at(&mut self, number: u64, at: B256) -> Result<TransitionOutcome, ReadError> {
-        // Deferred bootstrap: on an anchor where DPoS is not a scheduled, deployed
-        // chain yet, return a benign no-op and leave the geometry UNFROZEN — see
-        // [`Self::resolve_and_freeze`] for why that state exists and how it clears.
         let Some((activation, interval)) = self.resolve_and_freeze(at)? else {
             return Ok(TransitionOutcome::Intra);
         };
@@ -575,41 +387,19 @@ where
         let epoch_e =
             epoch_at_block(number, activation, interval).ok_or(ReadError::ZeroEpochInterval)?;
 
-        // Boundary detection MUST be activation-relative, matching `epoch_at_block`
-        // (reader.rs) and the consensus `OriginEpocher`: the last block of relative
-        // epoch E is where `(number - activation) % interval == interval - 1`, i.e.
-        // `(number + 1 - activation) % interval == 0`. The absolute form
-        // `(number + 1) % interval == 0` only agrees when `activation % interval == 0`
-        // (a devnet bootstrap convention, NOT enforced — prod cold-start anchors on
-        // an arbitrary recent finalized height), so an absolute check would fire the
-        // peer-set handoff at a different block than `OriginEpocher` treats as the
-        // boundary — the exact "two epoch authorities diverge" failure the freeze
-        // logic above guards against.
+        // Activation-relative, matching `epoch_at_block` and consensus's
+        // `OriginEpocher`: the absolute form agrees only when
+        // `activation % interval == 0`, which production anchors do not guarantee.
         let is_boundary = is_epoch_boundary(number, activation, interval);
 
-        // Cold-start bootstrap: on the very first finalized block, stand up the
-        // CURRENT epoch's engine. Its committee is already committed on-chain (the
-        // ahead-commit pipeline committed it during the prior epoch), so read the
-        // frozen array. `return` so a cold-start call never ALSO falls through to
-        // the boundary branch below — otherwise an anchor on the last block of an
-        // epoch whose `track_and_trigger` hit a Full channel (last_tracked stays
-        // None → `None < Some(next)`) would double-spawn epoch E+1 while E was
-        // never tracked.
-        //
-        // If the resume block IS an epoch boundary (last block of E), a finalized
-        // boundary means the network has already advanced to E+1 — bootstrap E+1, not
-        // E, so a catch-up node hints `last(E+1)` ABOVE the marshal floor (which sits
-        // at this boundary). Entering E would hint `last(E) == floor` → a marshal
-        // no-op → permanent boundary-resume deadlock. Mirrors tempo entering the next
-        // epoch on a boundary-aligned resume; still a single `track_and_trigger` +
-        // `return`, preserving the double-spawn guard.
+        // Cold-start bootstrap: stand up the current epoch's engine and return, so
+        // this never also takes the boundary branch below and double-spawns. On a
+        // boundary the network has already advanced, so bootstrap E+1 — entering E
+        // would hint a marshal floor the node already holds and deadlock the resume.
         if self.last_tracked_epoch.is_none() {
-            // Cold start owns its own retry: while `last_tracked_epoch` stays
-            // None every delivery re-enters this branch and re-bootstraps, so it
-            // never uses the pending-boundary slot. Release any park a prior
-            // delivery left set (e.g. a boundary parked while the anchor epoch
-            // was an empty missed-commit, replayed here) — otherwise it would
-            // wedge the re-poke loop after the bootstrap finally advances.
+            // This branch re-runs on every delivery until it advances, so a park left
+            // by an earlier delivery must be released here or the re-poke loop would
+            // spin on a slot nothing clears.
             self.pending_boundary = None;
             let cold_epoch = if is_boundary { epoch_e + 1 } else { epoch_e };
             let snap = self.reader.epoch_committee_snapshot(cold_epoch, at)?;
@@ -622,42 +412,21 @@ where
                 .into_outcome(cold_epoch));
         }
 
-        // Boundary: when the LAST block of epoch E finalizes, spawn epoch E+1. Its
-        // committee is committed by now with room to spare: the node's
-        // pre-execution stage drains `commitEpochCommittee()` on EVERY block
-        // while `nextEpochToCommit() <= current_epoch + MAX_COMMITTEE_LOOKAHEAD_EPOCHS`
-        // (`node/src/evm.rs:895-918`, called at `:1227-1231`), and the contract
-        // reverts a target above that horizon
-        // (`contracts/staking/src/consensus.rs:572-578`) — so the state at any
-        // block of epoch `E − 1` already holds `committee[E + 1]`, and the read
-        // below happens at `E`'s last block minus `result_lag`. The genesis block
-        // for engine E+1 (= this finalized last-block of E) is stored. The
-        // engine-E engine keeps producing until E+1 takes over.
+        // When the last block of epoch E finalizes, spawn epoch E+1; its committee
+        // was committed well before this read, because the node's pre-execution
+        // stage commits every epoch up to `current + MAX_COMMITTEE_LOOKAHEAD_EPOCHS`.
         let next = epoch_e + 1;
         if is_boundary && self.last_tracked_epoch < Some(next) {
-            // Missed-commit epoch: `Staking.sol` allows an epoch with no
-            // `commitEpochCommittee` (unslashable by design; idempotent / monotonic
-            // — a skip is safe); `getEpochCommittee` returns empty. Do NOT
-            // persist/track an empty peer set — skip so a later finalized block can
-            // still apply it if the commit lands, and commonware keeps the prior set.
+            // An epoch with no `commitEpochCommittee` is legal (unslashable by
+            // design) and reads back empty. Never track an empty set: skipping lets a
+            // later finalized block apply it while commonware keeps the prior set.
             let snap = self.reader.epoch_committee_snapshot(next, at)?;
             if snap.validators.is_empty() {
-                // committee[next] not yet readable at the deterministic spawn height
-                // (`executed_hash(B−K)`). Under the 2-epoch committee warm-up this is a
-                // TRANSIENT state-visibility lag, never a genuine missed commit: the
-                // ahead-commit loop runs on EVERY block and commits immediately, with no
-                // deferral and no qualify-before-commit branch (`node/src/evm.rs:940-946`
-                // says so in as many words), so `committee[next]` was frozen a whole
-                // epoch before this read and an empty answer here can only be reth's
-                // eager-canonicalization state lag. KEEP the
-                // boundary PARKED so the re-poke loop RE-READS on subsequent finalized
-                // observations until the snapshot materializes; dropping to `None` here
-                // would lose the epoch-E+1 engine spawn PERMANENTLY (the wedge amplifier
-                // the K-invariant audit found).
-                //
-                // Warn ONCE per parked boundary (loud on first park), then `debug!` on
-                // every re-poke while it stays empty — a genuinely permanent empty
-                // (should be unreachable) must not emit one warn per finalized block.
+                // An empty read at the spawn height is a state-visibility lag, not a
+                // missed commit: the ahead-commit loop froze this committee a whole
+                // epoch ago. Keep the boundary parked so the re-poke loop re-reads
+                // until the snapshot materializes; dropping it would lose the
+                // epoch-E+1 engine spawn permanently.
                 if self.warned_empty_boundary == Some(number) {
                     tracing::debug!(
                         epoch = next,
@@ -678,12 +447,9 @@ where
                 return Ok(TransitionOutcome::Intra);
             }
             let result = self.track_and_trigger(next, snap, at).await?;
-            // KEEP the boundary parked ONLY when the send is RETRYABLE (`Full`):
-            // this block is the last deliverable one during catch-up, so nothing
-            // else re-detects the boundary — the re-poke loop must retry (the
-            // same wedge the slot guards against for lagging execution). On a
-            // real advance, or a `Closed` channel (forwarder gone — retrying a
-            // dead channel only spins the loop during teardown), release it.
+            // Keep the boundary parked only on `Full`: no later delivery re-detects
+            // it during catch-up. A real advance or a closed channel (forwarder gone;
+            // retrying only spins during teardown) releases it.
             self.pending_boundary = match result {
                 TriggerResult::Full => Some(number),
                 TriggerResult::Advanced | TriggerResult::Closed => None,
@@ -693,84 +459,29 @@ where
         Ok(TransitionOutcome::Intra)
     }
 
-    /// THE peer set for `epoch`, assembled once and in one place:
-    /// primary = `committee[epoch − 1] ∪ committee[epoch] ∪ committee[epoch + 1]`,
-    /// secondary = the Active validator REGISTRY at the anchor.
+    /// The peer set for `epoch`: primary is `committee[epoch − 1] ∪
+    /// committee[epoch] ∪ committee[epoch + 1]` as separate records, secondary is
+    /// the Active registry at the anchor.
     ///
-    /// The registry USED to be part of primary, which is what made a body buffer,
-    /// a bit-vec and a resolver candidate list scale with the number of ACTIVATED
-    /// validators instead of with the committee (R-013, R-037, E4-14). It buys
-    /// nothing there: an ejected / upcoming / sequencer peer needs to reach the
-    /// plane and be served, and commonware's secondary tier is exactly that — it
-    /// connects inbound and is answered, but is never dialed, never bit-vec
-    /// gossiped and never cached (`CW:.../tracker/record.rs:171`,
-    /// `CW:broadcast/src/buffered/engine.rs:319-322`).
+    /// These records come from the staking reader rather than consensus's
+    /// `committee` module, because this crate sits below consensus in the
+    /// dependency graph and the two cannot share the read.
     ///
-    /// The three committees are the three whose traffic is legitimate while
-    /// `epoch` is the tracked one: `epoch + 1` because its epoch-key agreement
-    /// instance runs DURING `epoch` and its `buffered` body engine retains a
-    /// proposal body only from a sender in `latest.primary`; `epoch − 1` because
-    /// the outgoing committee is still finalizing, still answering resolver
-    /// fetches for its own rounds and still re-publishing evidence for them, and
-    /// the committee can turn over completely at a boundary (zero overlap is
-    /// legitimate) — dropping it from primary at the instant of the boundary is
-    /// the same silent partition, one epoch earlier.
+    /// Those three committees are the ones whose traffic is legitimate while `epoch`
+    /// is tracked: `epoch + 1` agrees its epoch key during `epoch`, and `epoch − 1`
+    /// is still finalizing and answering resolver fetches for its own rounds, so
+    /// dropping the outgoing one would partition the plane at a full turnover.
     ///
-    /// A FUNCTION rather than two copies of the formula because it has two callers
-    /// on two different clocks — [`Self::track_and_trigger`] at a boundary and
-    /// [`Self::track_peers`] before the layer exists — and a peer set that differed
-    /// between them would partition the plane in exactly the window where nothing
-    /// is watching. The size guard rides along for the same reason: it is part of
-    /// what "the tracked set" means, not of either caller. It checks PRIMARY only —
-    /// commonware panics on an oversized primary set and does not check secondary
-    /// at all, because the cap exists to bound the gossip bit-vec, which only
-    /// covers primary (`CW:.../tracker/actor.rs:157-164`).
+    /// The size guard checks primary only — commonware panics on an oversized primary
+    /// set and does not check secondary at all.
     ///
-    /// The records come from the reader, not from the `committee/` module: this
-    /// crate is BELOW consensus in the dependency graph (`crates/dpos/consensus`
-    /// depends on `fluentbase-staking-reader`, not the reverse), so the module's
-    /// type is not nameable here. Both read the same write-once committed slot, so
-    /// the sets agree; making the module the single source is a Cargo-level move,
-    /// not a code-level one.
-    ///
-    /// The two neighbour outcomes are NOT the same failure and are not treated
-    /// alike.
-    ///
-    /// * `Ok` with no validators = "that epoch is not committed at this anchor"
-    ///   (`reader.rs:639-641`), which is a legal chain state, not a fault: the
-    ///   ahead-commit loop drains up to `current_epoch + MAX_COMMITTEE_LOOKAHEAD_EPOCHS`
-    ///   (= 2, `crates/types/src/staking_protocol.rs:73`, `crates/node/src/evm.rs:902`)
-    ///   on every block, so in steady state `C[E+1]` is committed a whole epoch
-    ///   before this reads it and only the genesis-era epochs (`E ≤ 2`, before a
-    ///   block of `E−1` has executed) can legitimately answer empty. The record is
-    ///   then ABSENT from `committees` and the tier is skipped. Nothing downstream
-    ///   loses by it: a member of the skipped record that sits in no other record
-    ///   is refused at the channel's pre-decode gate (`GatedReceiver`, the one
-    ///   sender classification on the beacon channel) until this node's next
-    ///   `track` carries the record, and the dealer leg re-sends every pre-seal
-    ///   tick. The seat the sender holds in the ceremony is the consumer's check
-    ///   (`beacon::actor`, `no_seat`) over the committed record itself, through
-    ///   `committee_for` — a reading that CAN disagree with this window for the
-    ///   skipped epoch (the record may be readable by the time the consumer asks),
-    ///   in the one direction that is safe: the gate is the stricter, and what it
-    ///   refuses is re-sent.
-    /// * `Err` = the read itself failed (backend, decode, an on-chain invariant
-    ///   violation). That is NOT a legal state, and it is `?`. Both callers of this
-    ///   function turn the error into a retry that re-reads the SAME boundary:
-    ///   [`Self::track_and_trigger`] never reaches its `sink.track`, so
-    ///   `last_tracked_epoch` does not advance and the re-poke loop calls
-    ///   `on_finalized` again every `PENDING_RETRY_BACKOFF` forever
-    ///   (`consensus/src/dpos.rs:2241`, `:2259-2277`); [`Self::track_peers`] leaves
-    ///   the node's `peers_tracked` latch unset and retries on the next finalized
-    ///   change (`node/src/dpos.rs:1630`, `:1645-1651`). Both re-entries are
-    ///   idempotent, so the retry costs nothing.
-    ///
-    /// Degrading instead — which is what this did before — was NOT free once the
-    /// registry left `primary`: `last_tracked_epoch` advanced on the degraded set,
-    /// commonware ignores a second `track` for an index it already holds
-    /// (`.claude/COMMONWARE_INTERNALS.md:363`), and no second source covers the
-    /// missing record any more. One failed read would have cost the whole epoch its
-    /// `C[E±1]` reachability with nothing above `warn` to say so.
+    /// An uncommitted neighbour reads back `Ok` with no validators and is skipped as
+    /// a record; a failed read is `Err` and replays the whole boundary. Skipping is
+    /// safe — a member of the skipped record is refused at the channel's ingress gate
+    /// until the next `track` carries it, and the dealer leg re-sends — but degrading
+    /// to a short set on `Err` is not: the epoch advances on it and commonware ignores
+    /// a re-`track` of an index it already holds, so one failed read would cost the
+    /// epoch its neighbour reachability.
     fn assemble_tracked_peers(
         &self,
         epoch: u64,
@@ -791,17 +502,10 @@ where
             committees,
             secondary,
         };
-        // typed, not panic
         check_peer_set_size(epoch, tracked.primary().len(), self.max_peer_set_size)?;
         Ok(tracked)
     }
 
-    /// Read one neighbour committee into the primary records.
-    ///
-    /// An uncommitted epoch reads back empty and is SKIPPED (no record, rather
-    /// than an empty one); a failed read is returned and replays the whole
-    /// boundary. See [`Self::assemble_tracked_peers`] for why the two are not the
-    /// same failure.
     fn push_neighbour_committee(
         &self,
         committees: &mut Vec<(u64, Set<PeerPubkey>)>,
@@ -825,42 +529,24 @@ where
         Ok(())
     }
 
-    /// Register the peer set for the epoch `number` falls in, and DO NOTHING ELSE —
-    /// the beacon plane's second and last piece of business with this instance.
+    /// Register the peer set for the epoch `number` falls in, and nothing else.
     ///
     /// `Ok(Some(epoch))` = that epoch's set went to the sink; `Ok(None)` = the
     /// geometry is not frozen yet, or `committee[epoch]` reads empty at `at`, so the
-    /// caller retries at a later height. The epoch is chosen by the SAME rule the
-    /// bootstrap branch of [`Self::apply_at`] uses (on a boundary height the network
-    /// is already in `E + 1`), so an early registration never names the committee the
-    /// chain has just left.
+    /// caller retries at a later height. The epoch is chosen by the same rule the
+    /// bootstrap branch of [`Self::apply_at`] uses (a boundary height already belongs
+    /// to `E + 1`), so an early registration never names the committee the chain has
+    /// just left.
     ///
-    /// WHY it exists, and why it is not the bootstrap: an empty-archive validator
-    /// parks in `DposLayer::launch`'s cold-start jump loop
-    /// (`consensus/src/dpos.rs:1845-1893`) until a PLANE peer serves it a frontier,
-    /// and the frontier resolver only talks to peers the Oracle is tracking
-    /// (`node/src/dpos.rs:1723-1730`). [`Self::cold_start`] — the one bootstrapper,
-    /// and the only other path to a `track` — runs AFTER that loop
-    /// (`consensus/src/dpos.rs:2108-2113`), so without this door the node would have
-    /// no peers at the moment it needs them and would never leave the loop. It
-    /// therefore touches NONE of the bootstrap state (`last_tracked_epoch`,
-    /// `anchor_height`, `pending_boundary`, the bridge): the bootstrap branch is
-    /// write-once and picking the starting epoch off the plane's EL-scale cursor is
-    /// the defect `an_el_scale_bootstrap_in_the_k_window_after_a_boundary_loses_the_epoch`
-    /// pins. The later bootstrap re-registering the same index is harmless — commonware
-    /// ignores a `track` for an index already registered, and requires the index to
-    /// grow (`.claude/COMMONWARE_INTERNALS.md:363`).
-    ///
-    /// TEMPORARY BRIDGE. The SET is now the 4.3 one —
-    /// `TrackedPeers { primary: C[E−1] ∪ C[E] ∪ C[E+1], secondary: registry }`,
-    /// assembled by [`Self::assemble_tracked_peers`] — but the two call sites are
-    /// still two: this one and the `track` inside [`Self::track_and_trigger`].
-    /// Design step 4.3 (`E4-CORE-DESIGN.md:534-548`) moves peer-set registration out
-    /// of the epoch machine entirely; when that lands, both are replaced by that one
-    /// call site and [`Self::assemble_tracked_peers`] goes with them.
+    /// It exists because an empty-archive validator parks in the layer's cold-start
+    /// jump loop until a tracked plane peer serves it a frontier, and the one
+    /// bootstrapper — the only other path to a `track` — runs after that loop. It
+    /// therefore touches none of the bootstrap state (`last_tracked_epoch`, the read
+    /// floor, the park, the bridge); a later re-registration of the same index is
+    /// harmless.
     pub async fn track_peers(&mut self, at: B256, number: u64) -> Result<Option<u64>, ReadError> {
-        // `None` until the geometry freezes — the plane's cursor must not be what
-        // fixes it either, so there is no freeze attempt here.
+        // No freeze attempt here: the plane's cursor must not be what fixes the
+        // geometry.
         let Some(epoch_e) = self.epoch_at(number) else {
             return Ok(None);
         };
@@ -871,8 +557,8 @@ where
         };
         let snap = self.reader.epoch_committee_snapshot(epoch, at)?;
         if snap.validators.is_empty() {
-            // A missed commit or a state-visibility lag: tracking an empty set would
-            // REPLACE the peer set commonware holds, so skip and retry.
+            // Tracking an empty set would replace the peer set commonware holds,
+            // so skip and retry.
             return Ok(None);
         }
         let tracked = self.assemble_tracked_peers(epoch, &snap, at)?;
@@ -880,13 +566,6 @@ where
         Ok(Some(epoch))
     }
 
-    /// Persist + size-check + prune the frozen committee, feed the peer set to the
-    /// sink, and fire the boundary trigger — advancing `last_tracked_epoch` only on
-    /// a successful `try_send`. Extracted so both the cold-start bootstrap and the
-    /// boundary branch share identical (idempotent) side effects.
-    ///
-    /// The set itself is [`Self::assemble_tracked_peers`]'s, shared verbatim with the
-    /// plane's pre-engine [`Self::track_peers`].
     async fn track_and_trigger(
         &mut self,
         epoch: u64,
@@ -894,18 +573,8 @@ where
         at: B256,
     ) -> Result<TriggerResult, ReadError> {
         let tracked = self.assemble_tracked_peers(epoch, &snap, at)?;
-        self.sink.track(epoch, tracked).await; // one-shot
+        self.sink.track(epoch, tracked).await;
 
-        // Gate `last_tracked_epoch` advance on `try_send` success. A
-        // `Full` channel means the consensus bridge is backed up; leave the
-        // epoch un-tracked and signal RETRY so the next finalized block re-enters
-        // here (persist/track/prune are idempotent — see contract above), retries
-        // the send, and only advances `last_tracked_epoch` once consensus
-        // actually saw the boundary trigger. A `Closed` channel means the
-        // forwarder shut down (it fires the shutdown_token path itself, see
-        // crates/node/src/dpos.rs bridge forwarder) — signal CLOSED so the caller
-        // releases the park instead of spinning the re-poke loop against a dead
-        // channel during teardown.
         if let Some(tx) = self.boundary_tx.as_ref() {
             match tx.try_send((epoch, snap)) {
                 Ok(()) => {}
@@ -923,21 +592,14 @@ where
         Ok(TriggerResult::Advanced)
     }
 
-    /// Cold start: freeze the epoch geometry and read the **current
-    /// finalized** committee at the EXPLICIT anchor hash `head` (the anchor
-    /// is executed by construction — the one height where no `executed_hash`
-    /// resolution is needed), apply once. Also raises the read-height floor for
-    /// every later `on_finalized`. MUST run before `on_finalized`.
+    /// Cold start: freeze the epoch geometry, read the current finalized committee
+    /// at the explicit anchor hash `head` (executed by construction, so no
+    /// `executed_hash` resolution is needed), apply once, and raise the read-height
+    /// floor for every later `on_finalized`. Must run before `on_finalized`.
     ///
-    /// THE bootstrapper: this is the only caller that may pick the starting epoch, and
-    /// the layer is the only caller of it — on an ORDERING-scale, post-jump anchor.
-    /// The beacon plane freezes the geometry through [`Self::freeze_geometry`] instead,
-    /// which touches none of the bootstrap state, so `last_tracked_epoch` is still
-    /// `None` when this runs and the bootstrap branch of [`Self::apply_at`] is the one
-    /// it takes.
-    ///
-    /// The floor is RAISED, not assigned — see [`Self::raise_anchor_height`] for why
-    /// monotonicity has to be a property of the type rather than of that call order.
+    /// The only entry point that picks the starting epoch: the beacon plane's
+    /// [`Self::freeze_geometry`] leaves `last_tracked_epoch` at `None`, so this call
+    /// takes the bootstrap branch of [`Self::apply_at`].
     pub async fn cold_start(
         &mut self,
         head: B256,
@@ -982,7 +644,6 @@ mod tests {
         }
     }
 
-    /// Canned reader: fixed committee size + interval.
     struct MockReader {
         committee: usize,
         interval: u64,
@@ -1007,18 +668,16 @@ mod tests {
             Ok(self.interval)
         }
         fn dpos_activation_block(&self, _at: B256) -> Result<u64, ReadError> {
-            Ok(0) // mock tests use absolute numbering
+            Ok(0) // absolute numbering
         }
         fn active_registry_peers(&self, _at: B256) -> Result<Vec<PeerPubkey>, ReadError> {
-            // Mock registry == nothing beyond the committee: the union fed to
-            // the sink then equals the committee, keeping the existing
-            // boundary-tracking assertions meaningful unchanged.
+            // Empty registry, so the tracked set equals the committee.
             Ok(vec![])
         }
     }
 
-    /// Test ctor: a resolver that always resolves to `h` (mock chain where
-    /// every height is executed), result_lag = 3.
+    /// Test constructor: a resolver that always resolves to `h`, so every height
+    /// looks executed.
     fn et(
         reader: MockReader,
         sink: RecordingSink,
@@ -1036,9 +695,7 @@ mod tests {
         )
     }
 
-    /// MockReader + a non-empty tier-2 registry: `active_registry_peers`
-    /// returns peers DISJOINT from the committee, so the tracked union must
-    /// be strictly larger than the committee.
+    /// `MockReader` plus a non-empty tier-2 registry, disjoint from the committee.
     struct RegistryReader {
         inner: MockReader,
         registry: Vec<PeerPubkey>,
@@ -1062,13 +719,7 @@ mod tests {
         }
     }
 
-    /// `MockReader` with a FUTURE `dposActivationBlock`. The `StakingStateRead`
-    /// trait's `scheduled_dpos_activation` default folds over `dpos_activation_block`
-    /// (`Ok(Some(dpos_activation_block(at)?))`), so overriding that one method is the
-    /// whole parameterization — the mock's activation defaults to 0 (absolute
-    /// numbering) via `MockReader` unchanged, and this single-method wrapper (mirror
-    /// of `PrefixReader`/`RegistryReader`) expresses a scheduled future activation
-    /// without touching any existing MockReader-literal test.
+    /// `MockReader` with a future `dposActivationBlock`.
     struct FutureActivationReader {
         inner: MockReader,
         activation: u64,
@@ -1092,11 +743,9 @@ mod tests {
         }
     }
 
-    /// A committee read above `ok_through` is UNAVAILABLE — either empty (the
-    /// epoch is not committed yet) or a hard read failure. Those are the two ways
-    /// `committee[epoch + 1]` can be missing when the peer-set union asks for it,
-    /// and neither may cost the boundary trigger. Every requested epoch is
-    /// recorded so a test can prove the union read was actually attempted.
+    /// A committee read above `ok_through` is unavailable — empty (not committed)
+    /// or a hard failure, the two ways `committee[epoch + 1]` can be missing; the
+    /// requested epochs are recorded so a test can prove the union asked for it.
     struct IncomingUnavailableReader {
         inner: MockReader,
         ok_through: u64,
@@ -1137,10 +786,8 @@ mod tests {
         }
     }
 
-    /// Records the full tracked SET, not just its size — the peer-set union's
-    /// whole point is WHICH keys reach the agreement plane, and a size match can
-    /// be satisfied by any three keys. Both tiers, because which tier a key lands
-    /// in is the whole of 4.3.
+    /// Records the full tracked set, not just its size: the union's point is which
+    /// keys reach the plane, and both tiers matter.
     type TrackedSets = Arc<Mutex<Vec<(u64, TrackedPeers)>>>;
     #[derive(Clone, Default)]
     struct KeySink(TrackedSets);
@@ -1166,25 +813,16 @@ mod tests {
         }
     }
 
-    /// Primary is the THREE COMMITTEES and nothing else; the registry is tier 2.
-    ///
-    /// This is the whole of 4.3 A.1 in one assertion. Before it, an Active
-    /// registry entry that sits in no committee was a primary peer — which is
-    /// what made the `buffered` body cache, the discovery bit-vec and the
-    /// resolver candidate list scale with the registry instead of with the
-    /// committee (R-013, R-037, E4-14). It must now be secondary-only, and the
-    /// outgoing committee `C[E−1]` must have JOINED primary.
-    ///
-    /// Falsifier: the registry-only key reappearing in `primary()`, or `C[E−1]`
-    /// missing from it.
+    /// Primary is the three committees and nothing else; the registry is tier 2.
+    /// A registry-only key must not appear in `primary()`, and the outgoing
+    /// committee `C[E−1]` must have joined it.
     #[test]
     fn the_registry_is_tier_two_and_the_outgoing_committee_is_tier_one() {
         deterministic::Runner::default().start(|_ctx| async move {
             let sink = KeySink::default();
             let h = B256::repeat_byte(0x33);
-            // 2 registry-only peers (seeds far from every committee's) + the three
-            // committees of 3 — MockReader seeds per epoch, so C[1], C[2] and C[3]
-            // are pairwise disjoint.
+            // Seeds far from every committee's, so the three committees are
+            // pairwise disjoint.
             let registry_only: Vec<PeerPubkey> = vec![
                 validator(900_001).keys.peer_pubkey,
                 validator(900_002).keys.peer_pubkey,
@@ -1258,10 +896,9 @@ mod tests {
 
     #[test]
     fn incoming_committee_is_in_the_tracked_peer_set() {
-        // The epoch-key agreement instance for E+1 runs DURING E, and `buffered`
-        // retains a body only from a sender inside the tracked set — so every
-        // committee[E+1] member must already be there when E starts, or the plane
-        // silently never converges.
+        // The E+1 agreement instance runs during E and `buffered` retains a body
+        // only from a tracked sender, so committee[E+1] must already be tracked
+        // when E starts.
         deterministic::Runner::default().start(|_ctx| async move {
             let sink = KeySink::default();
             let (boundary_tx, mut boundary_rx) = tokio::sync::mpsc::channel(8);
@@ -1310,8 +947,8 @@ mod tests {
                 "the three records are carried separately, not flattened"
             );
 
-            // The union is additive only — the boundary trigger still carries the
-            // CURRENT committee, unchanged.
+            // The union is additive: the boundary trigger still carries the
+            // current committee.
             let fired = boundary_rx.try_recv().expect("boundary trigger delivered");
             assert_eq!(fired.0, 5);
             assert_eq!(fired.1.validators.len(), 3);
@@ -1320,9 +957,8 @@ mod tests {
 
     #[test]
     fn uncommitted_incoming_committee_skips_the_union_and_still_triggers() {
-        // `committee[E+1]` not yet committed reads back EMPTY, which means "not
-        // committed yet", never "the committee is empty" — skip the union, keep the
-        // boundary.
+        // An empty read means "not committed yet", never "empty committee": skip
+        // the union tier, keep the boundary.
         deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             let (boundary_tx, mut boundary_rx) = tokio::sync::mpsc::channel(8);
@@ -1368,21 +1004,9 @@ mod tests {
         });
     }
 
-    /// A FAILED neighbour read replays the boundary; it does not register a short
-    /// peer set and move on.
-    ///
-    /// This is the difference between "not committed yet" (legal: skip the tier,
-    /// `uncommitted_incoming_committee_skips_the_union_and_still_triggers` above)
-    /// and "the read broke". Degrading on the second one used to be free, because
-    /// the Active registry was ALSO primary and covered an incoming member
-    /// incidentally. Since 4.3 the registry is tier 2 and `C[E±1]` has exactly one
-    /// source, while `last_tracked_epoch` advances on the degraded set and
-    /// commonware ignores a re-`track` of an index it already holds — so a single
-    /// failed read would have cost the whole epoch its neighbour reachability, with
-    /// nothing above a `warn` to say so.
-    ///
-    /// Falsifier: `track` being called at all, `last_tracked_epoch` advancing, or
-    /// the boundary trigger firing — each of them is the old degrade-and-continue.
+    /// A failed neighbour read replays the boundary instead of registering a short
+    /// peer set and moving on: the epoch stays un-tracked, so the next finalized
+    /// block re-reads it.
     #[test]
     fn a_failed_neighbour_committee_read_replays_the_boundary_instead_of_tracking() {
         deterministic::Runner::default().start(|_ctx| async move {
@@ -1432,9 +1056,6 @@ mod tests {
                 "the boundary trigger must not fire off a set that was never tracked"
             );
 
-            // ...and the retry is what makes that safe: the same call against a
-            // reader whose read now works registers the full three records and
-            // fires the boundary, with no state left over from the failure.
             let mut healed = EpochTransition::new(
                 IncomingUnavailableReader {
                     inner: MockReader {
@@ -1478,13 +1099,9 @@ mod tests {
                 None,
                 h,
             );
-            // block 500, interval 100 ⇒ epoch 5: cold_start bootstraps
-            // the current epoch ⇒ EpochAdvanced(5)
             let outcome_first = et.cold_start(h, 500).await.unwrap();
             assert_eq!(outcome_first, TransitionOutcome::EpochAdvanced(5));
-            // re-delivery on a MID-epoch block (550 is not the last block of epoch
-            // 5, so it is not a boundary) ⇒ Intra. (599 would be the last block of
-            // epoch 5 and now legitimately spawns epoch 6 — see the boundary test.)
+            // 550 is mid-epoch, so a re-delivery is not a boundary.
             let outcome_second = et.on_finalized(550).await.unwrap();
             assert_eq!(outcome_second, TransitionOutcome::Intra);
             {
@@ -1500,15 +1117,12 @@ mod tests {
 
     #[test]
     fn replayed_boundary_advance_is_surfaced_not_dropped() {
-        // Bug 11: a boundary parked while execution lagged, then replayed on the
-        // next (intra-epoch) delivery, must SURFACE its `EpochAdvanced` rather
-        // than be dropped in favour of the new delivery's `Intra` — else the
-        // engine's consecutive-error counter never resets and false-shuts-down.
+        // A boundary parked while execution lagged, then replayed on the next
+        // intra-epoch delivery, must surface its `EpochAdvanced` rather than the new
+        // delivery's `Intra`.
         deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             let h = B256::repeat_byte(0x21);
-            // Gate hash resolution so a boundary can be parked (unresolvable) then
-            // replayed (resolvable) — the exact lag→catch-up sequence bug 11 needs.
             let resolve = Arc::new(std::sync::atomic::AtomicBool::new(true));
             let resolve_c = resolve.clone();
             let mut et = EpochTransition::new(
@@ -1526,22 +1140,17 @@ mod tests {
                 }),
                 3,
             );
-            // Bootstrap epoch 5 (block 500, interval 100).
             assert_eq!(
                 et.cold_start(h, 500).await.unwrap(),
                 TransitionOutcome::EpochAdvanced(5)
             );
-            // The last block of epoch 5 (599) finalizes while execution lags (no
-            // resolvable hash) → it is PARKED, returns Intra.
+            // The last block of epoch 5 finalizes while no hash resolves.
             resolve.store(false, std::sync::atomic::Ordering::Release);
             assert_eq!(
                 et.on_finalized(599).await.unwrap(),
                 TransitionOutcome::Intra
             );
             assert!(et.has_pending_boundary(), "boundary parked");
-            // Execution catches up; the next (intra-epoch) block 600 delivers.
-            // Replaying the parked boundary advances to epoch 6 — THAT advance
-            // must be the returned outcome even though block 600 itself is Intra.
             resolve.store(true, std::sync::atomic::Ordering::Release);
             assert_eq!(
                 et.on_finalized(600).await.unwrap(),
@@ -1566,17 +1175,16 @@ mod tests {
                 None,
                 h,
             );
-            // cold-start mid-epoch-5 ⇒ bootstrap epoch 5
             assert_eq!(
                 et.cold_start(h, 550).await.unwrap(),
                 TransitionOutcome::EpochAdvanced(5)
             );
-            // last block of epoch 5 ((599+1)%100==0) ⇒ spawn epoch 6 one ahead
+            // 599 is the last block of epoch 5, so it spawns epoch 6.
             assert_eq!(
                 et.on_finalized(599).await.unwrap(),
                 TransitionOutcome::EpochAdvanced(6)
             );
-            // mid-epoch-6 re-delivery ⇒ Intra (already tracked 6)
+            // 650 is mid-epoch 6 and already tracked, so it is a no-op.
             assert_eq!(
                 et.on_finalized(650).await.unwrap(),
                 TransitionOutcome::Intra
@@ -1605,10 +1213,8 @@ mod tests {
                 None,
                 h,
             );
-            // Cold-start EXACTLY on the epoch-5 boundary (599 = last block of epoch 5,
-            // (599+1)%100==0). A finalized boundary means the network is in epoch 6 →
-            // bootstrap epoch 6, NOT epoch 5: entering 5 would deadlock a catch-up node
-            // (its hint last(5) == the marshal floor → a no-op).
+            // A finalized boundary means the network is already in epoch 6;
+            // entering 5 would make a catch-up node's hint a marshal no-op.
             assert_eq!(
                 et.cold_start(h, 599).await.unwrap(),
                 TransitionOutcome::EpochAdvanced(6),
@@ -1631,8 +1237,7 @@ mod tests {
                     interval: 100,
                 },
                 RecordingSink::default(),
-                // Below the tracked primary: committee[1] ∪ committee[2] ∪
-                // committee[3], each of 10 and pairwise disjoint.
+                // Below the tracked primary of three disjoint committees of 10.
                 4,
                 None,
                 h,
@@ -1684,7 +1289,7 @@ mod tests {
                 None,
                 h,
             );
-            // epoch 7, empty ⇒ Intra (empty-committee is a no-op, not an advance)
+            // An epoch with no committee committed is a no-op, not an advance.
             let outcome = et.cold_start(h, 700).await.unwrap();
             assert_eq!(outcome, TransitionOutcome::Intra);
             assert!(
@@ -1697,16 +1302,11 @@ mod tests {
 
     #[test]
     fn try_send_full_returns_intra_and_does_not_advance() {
-        // When the bridge channel is full, on_finalized must leave
-        // last_tracked_epoch un-advanced so the next finalized block retries.
-        // Outcome must be `Intra` so the dpos.rs hook does NOT reset its
-        // consecutive-error counter.
+        // A full bridge channel leaves `last_tracked_epoch` un-advanced so the next
+        // finalized block retries.
         deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
-            // Capacity-1 channel; pre-fill it so try_send returns Full on
-            // the next attempt without needing a real consumer.
             let (boundary_tx, _boundary_rx) = tokio::sync::mpsc::channel(1);
-            // Pre-fill: take a fake (epoch, snap) slot.
             let dummy = ValidatorSetSnapshot {
                 block_hash: B256::ZERO,
                 block_number: 0,
@@ -1715,7 +1315,6 @@ mod tests {
                 weights: None,
             };
             boundary_tx.try_send((999, dummy)).expect("first slot");
-            // Now channel is full.
             let h = B256::repeat_byte(0xC6);
             let mut et = et(
                 MockReader {
@@ -1727,7 +1326,7 @@ mod tests {
                 Some(boundary_tx),
                 h,
             );
-            let outcome = et.cold_start(h, 500).await.unwrap(); // epoch 5
+            let outcome = et.cold_start(h, 500).await.unwrap();
             assert_eq!(
                 outcome,
                 TransitionOutcome::Intra,
@@ -1742,14 +1341,12 @@ mod tests {
 
     #[test]
     fn boundary_full_channel_parks_and_recovers() {
-        // A steady-state boundary whose `track_and_trigger` hits a Full bridge
-        // channel must KEEP the boundary parked (so the re-poke loop retries the
-        // send) and advance only once the channel drains — the wedge the
-        // Err-only clear missed (a Full returns Ok(Intra), not Err).
+        // A boundary whose send hits a full bridge channel stays parked until the
+        // channel drains; clearing the park on any non-error would wedge the re-poke
+        // loop.
         deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
-            // Capacity-1 channel: cold_start fills it with epoch 5, so the
-            // epoch-6 boundary send then hits Full.
+            // Capacity 1, so the epoch-6 boundary send hits a full channel.
             let (boundary_tx, mut boundary_rx) = tokio::sync::mpsc::channel(1);
             let h = B256::repeat_byte(0xC7);
             let mut et = et(
@@ -1762,12 +1359,10 @@ mod tests {
                 Some(boundary_tx),
                 h,
             );
-            // cold_start at 500 (mid-epoch 5) tracks epoch 5 → fills the 1 slot.
             assert_eq!(
                 et.cold_start(h, 500).await.unwrap(),
                 TransitionOutcome::EpochAdvanced(5)
             );
-            // Boundary 599 (last block of epoch 5) → track epoch 6 → channel Full.
             assert_eq!(
                 et.on_finalized(599).await.unwrap(),
                 TransitionOutcome::Intra,
@@ -1782,7 +1377,6 @@ mod tests {
                 et.has_pending_boundary(),
                 "boundary 599 must stay PARKED so the re-poke loop retries"
             );
-            // Drain the channel (consume the epoch-5 trigger), then re-poke.
             assert_eq!(boundary_rx.try_recv().expect("epoch 5 queued").0, 5);
             et.on_finalized(599).await.unwrap();
             assert_eq!(
@@ -1800,10 +1394,8 @@ mod tests {
 
     #[test]
     fn cold_start_branch_releases_a_stale_park() {
-        // A boundary parked while `last_tracked_epoch` was still None (anchor on
-        // a missed-commit epoch) is replayed through the cold-start branch — which
-        // must RELEASE the park once the bootstrap advances, else the re-poke loop
-        // spins on a slot nothing will ever clear.
+        // A park left while the bootstrap had not yet run must be released by the
+        // cold-start branch, or the re-poke loop spins on a slot nothing clears.
         deterministic::Runner::default().start(|_ctx| async move {
             let h = B256::repeat_byte(0x77);
             let mut et = et(
@@ -1816,10 +1408,8 @@ mod tests {
                 None,
                 h,
             );
-            // Pre-seed a park with last_tracked still None (the wedge precondition).
             et.pending_boundary = Some(599);
             assert_eq!(et.last_tracked_epoch, None);
-            // cold_start at 500 (mid-epoch 5) bootstraps epoch 5 via the cold-start branch.
             assert_eq!(
                 et.cold_start(h, 500).await.unwrap(),
                 TransitionOutcome::EpochAdvanced(5)
@@ -1833,9 +1423,8 @@ mod tests {
 
     #[test]
     fn boundary_closed_channel_releases_park() {
-        // A `Closed` bridge (forwarder gone) is unrecoverable — unlike `Full`, the
-        // boundary must NOT stay parked, or the re-poke loop spins against a dead
-        // channel during teardown.
+        // A closed bridge (forwarder gone) is unrecoverable: unlike `Full`, the
+        // boundary must not stay parked, or the re-poke loop spins during teardown.
         deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             let (boundary_tx, mut boundary_rx) = tokio::sync::mpsc::channel(8);
@@ -1854,10 +1443,8 @@ mod tests {
                 et.cold_start(h, 500).await.unwrap(),
                 TransitionOutcome::EpochAdvanced(5)
             );
-            // Drain epoch 5, then CLOSE the channel (drop the receiver).
             let _ = boundary_rx.try_recv();
             drop(boundary_rx);
-            // Boundary 599 → epoch-6 send hits Closed → released, NOT parked.
             assert_eq!(
                 et.on_finalized(599).await.unwrap(),
                 TransitionOutcome::Intra
@@ -1921,10 +1508,9 @@ mod tests {
 
     #[test]
     fn lagging_execution_defers_boundary_and_replays_it() {
-        // Boundary at 599 arrives while the executed tip lags its read height →
-        // remembered; a subsequent NON-boundary unresolved height must NOT
-        // clobber it; once execution catches up, the next delivery replays the
-        // boundary and epoch 6 enters.
+        // A boundary arriving while execution lags is remembered; a later
+        // non-boundary unresolved height must not clobber it, and the next
+        // delivery replays it once execution catches up.
         deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             let h = B256::repeat_byte(0x66);
@@ -1975,11 +1561,9 @@ mod tests {
 
     #[test]
     fn cold_start_pre_activation_bootstraps_epoch_0_never_1() {
-        // Bug 3: cold-start on a block BEFORE a scheduled future activation must
-        // bootstrap epoch 0 (a pre-activation block belongs to no relative epoch, so
-        // it is not a boundary). The pre-fix `saturating_sub` underflow classified
-        // every pre-activation block as a boundary → `cold_epoch = epoch_e + 1 = 1`,
-        // tracking a phantom committee[1] on the sequencer→DPoS migration path.
+        // Cold start on a block before a scheduled activation bootstraps epoch 0: a
+        // pre-activation block belongs to no relative epoch, so it is not a
+        // boundary, and treating it as one would track a phantom committee[1].
         deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             let (boundary_tx, mut boundary_rx) = tokio::sync::mpsc::channel(8);
@@ -1998,7 +1582,6 @@ mod tests {
                 std::sync::Arc::new(move |_n| Ok(Some(h))),
                 3,
             );
-            // block 500 < activation 1000 (pre-activation).
             assert_eq!(
                 et.cold_start(h, 500).await.unwrap(),
                 TransitionOutcome::EpochAdvanced(0),
@@ -2025,10 +1608,8 @@ mod tests {
 
     #[test]
     fn cold_start_at_activation_minus_one_bootstraps_epoch_0() {
-        // Bug 3 edge: block `activation - 1` (i.e. `number + 1 == activation`) has a
-        // relative offset of 0 — the exact value the pre-fix underflow mapped to a
-        // boundary. It must classify as pre-activation (not a boundary) and bootstrap
-        // epoch 0.
+        // Block `activation - 1` has relative offset 0; it must classify as
+        // pre-activation, not as a boundary, and bootstrap epoch 0.
         deterministic::Runner::default().start(|_ctx| async move {
             let sink = RecordingSink::default();
             let h = B256::repeat_byte(0x3B);
@@ -2056,22 +1637,12 @@ mod tests {
         });
     }
 
-    // ---- header-present / state-absent (pipeline-backfill) state-lag ----
-    //
-    // These pin the `dpos-onfinalized-state-lag-recover-stall` fix: during a
-    // deep re-jump reth PIPELINE-backfills — HEADERS land far ahead of executed
-    // STATE — so the OLD header-based `executed_hash` (`block_hash().ok().
-    // flatten()`) resolved `Some(hash)` at an UN-EXECUTED height, bypassing the
-    // Intra park and driving a committee state read at that hash → reth
-    // `StateForHashNotFound` → `ReadError::Backend("no state found …")` → the
-    // signer hook's 3-consecutive-error self-shutdown. The fix state-gates the
-    // closure (`fluentbase_consensus::executed_state_hash`, `best_block_number()`
-    // gate) so a not-yet-materialized height reports `Ok(None)` and the EXISTING
-    // park fires instead.
+    // A header can exist without executed state while reth's pipeline backfills,
+    // so `executed_hash` must answer `None` there and let the park fire instead of
+    // driving a state read at an unexecuted hash.
 
-    /// Encode a height into a B256 so the state-lag mock can recover the height
-    /// behind an opaque `at` hash (reth keys state by hash; the mock keys its
-    /// materialized-head gate by the height that hash stands for).
+    /// Encode a height into a B256 so the mocks below can recover the height
+    /// behind an opaque `at` hash, the way reth keys state by hash.
     fn hash_at(n: u64) -> B256 {
         let mut b = [0u8; 32];
         b[24..].copy_from_slice(&n.to_be_bytes());
@@ -2081,14 +1652,10 @@ mod tests {
         u64::from_be_bytes(at.0[24..].try_into().unwrap())
     }
 
-    /// Models reth's MATERIALIZED head: a state read at a hash whose height is
-    /// ABOVE `materialized` errors with reth's `no state found` (the exact
-    /// `reader.rs:415` `.to_string()`-erased `StateForHashNotFound`), else
-    /// delegates to `inner`. The default `StakingStateRead` mocks fold nothing,
-    /// so the existing mocks CANNOT reproduce the state-absent error — this mock
-    /// is what makes the fatal read reproducible at the unit level. Every state
-    /// read is recorded, so a test can prove the park DEFERRED the read (never
-    /// attempted it) at an un-executed hash — the fork-safety property.
+    /// Models reth's materialized head: a state read above `materialized` errors
+    /// the way the erased `StateForHashNotFound` does, otherwise it delegates to
+    /// `inner`. Reads are recorded so a test can prove a parked boundary never
+    /// attempted one at an unexecuted hash.
     struct StateLagReader {
         inner: MockReader,
         materialized: Arc<Mutex<u64>>,
@@ -2134,9 +1701,8 @@ mod tests {
         }
     }
 
-    /// State-gated closure — the `fluentbase_consensus::executed_state_hash`
-    /// contract modelled directly: `Ok(None)` above `best`, `Ok(Some(hash_at))`
-    /// at/below it.
+    /// The state-gated closure contract: `Ok(None)` above `best`, `Ok(Some)` at or
+    /// below it.
     fn state_gated_hash(
         best: Arc<Mutex<u64>>,
     ) -> std::sync::Arc<dyn Fn(u64) -> Result<Option<B256>, ReadError> + Send + Sync> {
@@ -2145,8 +1711,8 @@ mod tests {
         })
     }
 
-    /// The OLD header-based closure: resolves `Some` on header presence
-    /// regardless of executed state — the bug's over-eager probe.
+    /// A resolver that answers `Some` on header presence regardless of executed
+    /// state — the behaviour the state gate exists to prevent.
     fn header_based_hash(
     ) -> std::sync::Arc<dyn Fn(u64) -> Result<Option<B256>, ReadError> + Send + Sync> {
         std::sync::Arc::new(|read_h| Ok(Some(hash_at(read_h))))
@@ -2154,14 +1720,8 @@ mod tests {
 
     #[test]
     fn header_lead_state_lag_errors_and_would_shut_down() {
-        // RED characterization of the fatal path (the reason we state-gate): with
-        // the OLD header-based closure, a band whose read height sits above the
-        // materialized head drives apply_at at an un-executed hash and each
-        // delivery returns `Err(ReadError::Backend)` — the exact error the signer
-        // hook counts (`dpos.rs`: 3 consecutive ⇒ `MAX_CONSECUTIVE_ON_FINALIZED_
-        // ERRORS` ⇒ `shutdown.cancel()`). The hook lives inside a reth-heavy fn
-        // (not unit-isolable), so this pins the counted `Err`; the shutdown
-        // mapping is cited, not re-simulated.
+        // With the header-based resolver, a read height above the materialized head
+        // drives `apply_at` at an unexecuted hash and errors instead of parking.
         deterministic::Runner::default().start(|_ctx| async move {
             let materialized = Arc::new(Mutex::new(500u64));
             let reads = Arc::new(Mutex::new(vec![]));
@@ -2182,16 +1742,15 @@ mod tests {
                 TransitionOutcome::EpochAdvanced(5),
                 "anchor is executed by construction (materialized covers it)"
             );
-            // Band 596..=599: read heights 593..=596 all > materialized 500.
+            // Read heights 593..=596 all sit above the materialized head.
             for n in 596..=599 {
                 assert!(
                     matches!(et.on_finalized(n).await, Err(ReadError::Backend(_))),
                     "header-lead state-lag at {n} errors — the counted fatal read"
                 );
             }
-            // Gate proof: raise the materialized head past the band and the SAME
-            // call reads cleanly — the error was the un-materialized state, not a
-            // geometry/mock slip.
+            // Raising the head past the band makes the same call succeed: the error
+            // was the un-materialized state, not a geometry slip.
             *materialized.lock().unwrap() = 600;
             assert!(matches!(
                 et.on_finalized(596).await,
@@ -2202,12 +1761,9 @@ mod tests {
 
     #[test]
     fn header_lead_state_lag_parks_not_shuts_down() {
-        // GREEN inversion: the state-gated closure reports `Ok(None)` for the
-        // un-materialized band, so the EXISTING Intra park fires — every delivery
-        // is `Ok(Intra)` (the counter never ticks), the boundary is parked, and
-        // the committee read is DEFERRED (the reader is never even called for the
-        // band). Once the materialized head catches up, the next delivery replays
-        // the boundary → `EpochAdvanced` (heals).
+        // The state-gated closure reports `Ok(None)` for the un-materialized band,
+        // so deliveries park: no error, no committee read attempted, and the
+        // boundary replays once the head catches up.
         deterministic::Runner::default().start(|_ctx| async move {
             let best = Arc::new(Mutex::new(500u64));
             let reads = Arc::new(Mutex::new(vec![]));
@@ -2252,11 +1808,8 @@ mod tests {
 
     #[test]
     fn materialized_but_missing_state_is_still_a_real_error() {
-        // The fail-safe (2e): "not yet materialized (height > best → PARK)" and
-        // "should be materialized but the read fails (height <= best, genuine
-        // corruption/pruned) → REAL error → counter" are cleanly distinguished.
-        // Here the CLOSURE reports materialized (best high ⇒ Ok(Some)) but the
-        // reader errors the state read anyway — the error MUST surface, not park.
+        // A read that fails at a height the closure reports as materialized is a
+        // real error, not a park: the two cases stay distinguishable.
         deterministic::Runner::default().start(|_ctx| async move {
             let closure_best = Arc::new(Mutex::new(700u64));
             let reader_materialized = Arc::new(Mutex::new(500u64));
@@ -2273,8 +1826,6 @@ mod tests {
                 3,
             );
             et.cold_start(hash_at(500), 500).await.unwrap();
-            // read_height 596 <= closure best 700 (Ok(Some)) but > reader
-            // materialized 500 (state read fails) → the fault surfaces.
             assert!(
                 matches!(et.on_finalized(599).await, Err(ReadError::Backend(_))),
                 "a genuine fault at a claimed-materialized height stays a real error"
@@ -2288,14 +1839,8 @@ mod tests {
 
     #[test]
     fn parked_boundary_survives_flat_then_jump_backfill() {
-        // F1: the park has NO internal give-up. Model reth's PIPELINE backfill —
-        // `best_block_number()` FLAT below the read height for far more than the
-        // deleted `PENDING_RETRY_LIMIT` (300), then a SINGLE jump past it (reth's
-        // one `on_backfill_sync_finished` advance). The re-poked boundary is
-        // NEVER abandoned across the flat window and heals on the jump. (The hook
-        // re-poke loop is not unit-isolable — cf. the header-lead test — so this
-        // pins the ET park the loop re-pokes; give-up removal is verified in the
-        // diff + end-to-end.)
+        // The park has no internal give-up: it survives a long flat backfill and
+        // heals on the single jump that catches the head up.
         deterministic::Runner::default().start(|_ctx| async move {
             let best = Arc::new(Mutex::new(500u64));
             let mut et = EpochTransition::new(
@@ -2311,7 +1856,7 @@ mod tests {
                 3,
             );
             et.cold_start(hash_at(500), 500).await.unwrap();
-            // Re-poke the delivered boundary far past the old fixed limit.
+            // Re-poke far past any fixed retry limit.
             for _ in 0..350 {
                 assert_eq!(
                     et.on_finalized(599).await.unwrap(),
@@ -2335,11 +1880,8 @@ mod tests {
 
     #[test]
     fn no_committee_read_or_track_at_unexecuted_hash() {
-        // Fork-safety: while parked, NO committee/state read is attempted, NO
-        // epoch is tracked, and NO `EpochAdvanced` is returned at an un-executed
-        // hash — the park derives/tracks NOTHING; it only DEFERS. Then, once state
-        // materializes, the SAME committee is tracked exactly once (deferred, not
-        // skipped).
+        // While parked, nothing is read, tracked or advanced — the park only
+        // defers; once state materializes the same committee is tracked once.
         deterministic::Runner::default().start(|_ctx| async move {
             let best = Arc::new(Mutex::new(500u64));
             let reads = Arc::new(Mutex::new(vec![]));
@@ -2394,10 +1936,8 @@ mod tests {
 
     #[test]
     fn honest_nodes_with_equal_materialized_head_park_identically() {
-        // Determinism: the gate is a pure provider read with NO wall-clock, so two
-        // honest nodes fed the SAME `best_block_number` sequence and the same
-        // deliveries make IDENTICAL park/advance decisions — no non-deterministic
-        // input feeds the consensus-relevant outcome.
+        // The gate is a pure provider read with no wall-clock input, so two honest
+        // nodes fed the same head sequence make identical park/advance decisions.
         async fn run(best_script: &[u64]) -> Vec<TransitionOutcome> {
             let best = Arc::new(Mutex::new(500u64));
             let mut et = EpochTransition::new(
@@ -2421,8 +1961,8 @@ mod tests {
             outcomes
         }
         deterministic::Runner::default().start(|_ctx| async move {
-            // Flat below the read height, then a jump — the two nodes must agree
-            // step-for-step (park, park, park, advance).
+            // Flat below the read height for three deliveries, then a jump; both
+            // nodes agree step for step.
             let script = [500u64, 500, 500, 600];
             let a = run(&script).await;
             let b = run(&script).await;
@@ -2439,29 +1979,23 @@ mod tests {
         });
     }
 
-    // ---- the read-height clamp at a re-jump landing ----
-    //
-    // A landing enters the terminal at or below itself, which — unless the landing
-    // IS a terminal — is the PREVIOUS epoch's, up to `interval − 1` blocks down.
-    // At the production interval (86_400) that is far outside a pruned node's
-    // retention window (`--full` keeps 10_064 blocks), so every read `apply_at`
-    // makes at `boundary − K` hits pruned state. That surfaces as an untyped
-    // `ReadError::Backend`, and the boundary hook's error arm retries the same dead
-    // height forever — the landing epoch is never entered. Smoke runs at interval
-    // 64, where the read is at most 66 blocks back and always retained, so these
-    // tests are the only guard for the class.
+    // Re-jump landing clamp: the landing enters the terminal at or below itself,
+    // usually the previous epoch's, up to `interval − 1` blocks down — far outside a
+    // pruned node's retention window at the production interval. Without the clamp
+    // every read at `boundary − K` hits pruned state and is retried forever, so the
+    // landing epoch is never entered. The smoke suite runs at interval 64, whose
+    // worst read is 66 blocks back — inside retention — so these tests are the only
+    // guard for the class.
 
-    /// Number of blocks a `--full` reth retains state for. Not imported (this crate
-    /// must not depend on reth); the value only has to be realistic for the geometry.
+    /// Blocks a `--full` reth retains state for; not imported because this crate
+    /// must not depend on reth.
     const RETENTION_WINDOW: u64 = 10_064;
-    /// The production `epochBlockInterval` (`l2.json` mainnet/testnet).
+    /// The production `epochBlockInterval`.
     const PROD_INTERVAL: u64 = 86_400;
 
-    /// Models a PRUNED node: a state read at a hash whose height is BELOW the
-    /// retention floor errors the way reth's `StateAtBlockPruned` reaches this crate
-    /// — an untyped `ReadError::Backend`, which is NOT in the transient taxonomy and
-    /// so is retried, never parked. Twin of [`StateLagReader`], which gates the other
-    /// end of the window (heights ABOVE the materialized head).
+    /// Models a pruned node: a read below the retention floor errors the way
+    /// `StateAtBlockPruned` reaches this crate — untyped, so it is retried, never
+    /// parked. Reads are recorded for the same reason as [`StateLagReader`].
     struct PrunedStateReader {
         inner: MockReader,
         retained_from: Arc<Mutex<u64>>,
@@ -2500,11 +2034,9 @@ mod tests {
         }
     }
 
-    /// A pruned node at production geometry, staged the way the executor stages a
-    /// landing: `best` and the retention floor jump to the landing, the executor
-    /// publishes `landing − K` as the read floor, then it drives the entry. Without
-    /// the clamp the entry reads at `boundary − K`, ~50k blocks below the retention
-    /// floor, and every read fails.
+    /// A pruned node at production geometry, staged as the executor stages a
+    /// landing; without the clamp the entry reads ~50k blocks below the retention
+    /// floor and every read fails.
     #[test]
     fn landing_entry_at_production_geometry_reads_inside_the_retention_window() {
         deterministic::Runner::default().start(|_ctx| async move {
@@ -2526,24 +2058,21 @@ mod tests {
                 state_gated_hash(best.clone()),
                 3,
             );
-            // Cold start in epoch 1 while nothing is pruned yet.
             assert_eq!(
                 et.cold_start(hash_at(100_000), 100_000).await.unwrap(),
                 TransitionOutcome::EpochAdvanced(1)
             );
 
-            // The node stalls for ~10 epochs; a re-jump lands it at 1_000_000, which
-            // sits in epoch 11 (11 × 86_400 = 950_400). The EL now holds state only
-            // for the last RETENTION_WINDOW blocks.
+            // A re-jump lands in epoch 11 while the EL retains only the last
+            // RETENTION_WINDOW blocks.
             let landing = 1_000_000u64;
             let floor = landing - 3; // landing − K, the result-final point
             *best.lock().unwrap() = landing;
             *retained_from.lock().unwrap() = landing - RETENTION_WINDOW;
             et.raise_anchor_height(floor);
 
-            // The entry the executor drives: `terminal_at_or_below(landing)` is the
-            // last block of epoch 10, ~49_600 blocks below the landing and far below
-            // the retention floor.
+            // The terminal the executor enters: epoch 10's last block, far below the
+            // retention floor.
             let boundary = 950_399u64;
             assert!(
                 boundary - 3 < *retained_from.lock().unwrap(),
@@ -2591,9 +2120,8 @@ mod tests {
         });
     }
 
-    /// The clamp changes NOTHING for the delivery path: for a boundary at the tip,
-    /// `number − K` is above the floor and still wins the `max`, so the committee
-    /// read stays at the result-final height it has always used.
+    /// For a boundary at the tip, `number − K` is above the floor and still wins
+    /// the `max`, so the read stays at the result-final height.
     #[test]
     fn delivered_boundary_still_reads_at_number_minus_k() {
         deterministic::Runner::default().start(|_ctx| async move {
@@ -2620,8 +2148,8 @@ mod tests {
             *retained_from.lock().unwrap() = landing - RETENTION_WINDOW;
             et.raise_anchor_height(landing - 3);
 
-            // The chain runs on to the next epoch terminal (last block of epoch 11)
-            // and the marshal delivers it in order — the ordinary boundary path.
+            // The next epoch terminal, delivered in order: the ordinary boundary
+            // path.
             let boundary = 1_036_799u64;
             *best.lock().unwrap() = boundary;
             reads.lock().unwrap().clear();
@@ -2638,13 +2166,8 @@ mod tests {
         });
     }
 
-    /// The floor is monotone against BOTH of its writers, not just
-    /// [`EpochTransition::raise_anchor_height`]. The ONE transition a validator runs is
-    /// cold-started by the beacon-plane poller (off the EL-finalized cursor, which can
-    /// sit far below a re-jump landing) and raised by the executor's landing, so a cold
-    /// start arriving after a raise must not drop the floor back into the window the
-    /// landing closed — the property the old doc could only claim by pointing at a
-    /// wiring that had exactly one cold-start caller.
+    /// The floor is monotone against both of its writers: a cold start arriving
+    /// after a landing's raise must not drop it back into the pruned window.
     #[test]
     fn cold_start_after_a_raise_does_not_lower_the_floor() {
         deterministic::Runner::default().start(|_ctx| async move {
@@ -2677,18 +2200,15 @@ mod tests {
         });
     }
 
-    /// Boundary detection is POINTWISE — `is_epoch_boundary(number)` is true only for
-    /// the terminal height of an epoch — so a driver that COALESCES (takes the newest
-    /// height and drops the ones in between) loses the epoch enter outright: no track,
-    /// no bridge trigger, and not even a parked boundary to replay, because the park
-    /// remembers an already-detected boundary and never finds a skipped one. A driver
-    /// that steps every finalized height enters it. This is what decides which driver
-    /// may own the single transition: the per-block delivery hook, never a watch poller.
+    /// Boundary detection is pointwise, so a coalescing driver — newest height only —
+    /// loses the epoch enter outright: no track, no trigger, and no park to replay,
+    /// because the park remembers a boundary that was detected. This is why the
+    /// per-block delivery hook owns the transition and a watch poller cannot.
     #[test]
     fn a_coalesced_driver_skips_the_boundary_a_stepping_one_enters() {
         deterministic::Runner::default().start(|_ctx| async move {
             let h = B256::repeat_byte(0x33);
-            // interval 100, activation 0 ⇒ epoch 1 terminates at 199.
+            // Epoch 1 terminates at 199.
             let coalesced_sink = RecordingSink::default();
             let (coalesced_tx, mut coalesced_rx) = tokio::sync::mpsc::channel(64);
             let mut coalesced = et(
@@ -2702,7 +2222,7 @@ mod tests {
                 h,
             );
             coalesced.cold_start(h, 150).await.unwrap();
-            // One coalesced delivery from mid-epoch-1 to mid-epoch-2, over 199.
+            // One coalesced delivery jumps over the terminal at 199.
             assert_eq!(
                 coalesced.on_finalized(203).await.unwrap(),
                 TransitionOutcome::Intra
@@ -2772,11 +2292,8 @@ mod tests {
         });
     }
 
-    /// The plane poller needs the GEOMETRY and nothing else, so the entry point it
-    /// calls must freeze exactly that: no epoch bootstrap, no `track`, no bridge
-    /// trigger, no read floor, no park. Those belong to the ONE bootstrapper (the
-    /// layer's cold start, on an ordering-scale anchor); a poller that reached them
-    /// would be the second one, and the bootstrap branch is write-once.
+    /// The plane poller needs the geometry and nothing else, so this must leave the
+    /// bootstrap state untouched.
     #[test]
     fn freeze_geometry_freezes_the_geometry_and_nothing_else() {
         deterministic::Runner::default().start(|_ctx| async move {
@@ -2824,25 +2341,18 @@ mod tests {
         });
     }
 
-    /// WHICH HEIGHT the one transition is bootstrapped from decides which epoch the
-    /// engine ever enters, so there may be exactly ONE bootstrapper and it has to be
-    /// the layer's — the only caller holding an ORDERING-scale anchor.
-    ///
-    /// The bootstrap branch is write-once (`last_tracked_epoch.is_none()`) and the
-    /// bridge is the only edge by which the epoch manager learns a new epoch. The
-    /// beacon plane's cursor is the EL-finalized height, `result_lag` BELOW the
-    /// ordering chain, so a bootstrap taken there inside the K-wide window after a
-    /// boundary picks `E − 1` while the layer's anchor picks `E`. The delivery hook
-    /// then starts at `anchor + 1`, ABOVE the terminal that would have entered `E` —
-    /// so the EL-scale bootstrap does not merely delay `E`, it loses it until the
-    /// NEXT boundary.
+    /// Which height the one transition is bootstrapped from decides which epoch
+    /// the engine ever enters, so there may be exactly one bootstrapper and it has
+    /// to hold an ordering-scale anchor: off the plane's EL-finalized cursor, a
+    /// bootstrap inside the K-wide window after a boundary picks `E − 1` while the
+    /// ordering anchor picks `E`. The delivery hook then starts above the terminal
+    /// that would have entered `E`, so that epoch is lost until the next boundary.
     #[test]
     fn an_el_scale_bootstrap_in_the_k_window_after_a_boundary_loses_the_epoch() {
         deterministic::Runner::default().start(|_ctx| async move {
             let h = B256::repeat_byte(0x2B);
-            // interval 100, activation 0 ⇒ epoch 1 terminates at 199; the ordering
-            // anchor 201 sits in epoch 2, and the EL cursor is 201 − K(3) = 198,
-            // still in epoch 1.
+            // Epoch 1 terminates at 199; the ordering anchor 201 sits in epoch 2,
+            // while the EL cursor 201 − K is still in epoch 1.
             let el_sink = RecordingSink::default();
             let (el_tx, mut el_rx) = tokio::sync::mpsc::channel(64);
             let mut el_scale = et(
@@ -2871,8 +2381,8 @@ mod tests {
             );
             ordering.cold_start(h, 201).await.unwrap();
 
-            // The delivery hook fires from the block ABOVE the ordering anchor, so
-            // the terminal 199 is never delivered to either instance.
+            // The hook fires above the ordering anchor, so neither instance sees
+            // terminal 199.
             for number in 202..=298 {
                 el_scale.on_finalized(number).await.unwrap();
                 ordering.on_finalized(number).await.unwrap();
@@ -2913,8 +2423,8 @@ mod tests {
             assert_eq!(drain(&mut ordering_rx), vec![2]);
             assert_eq!(ordering.last_tracked_epoch, Some(2));
 
-            // The next boundary proves the loss is PERMANENT, not a delay: the
-            // write-once gate `last_tracked_epoch < Some(next)` happily takes 3.
+            // The next boundary shows the loss is permanent, not a delay: the
+            // write-once gate takes 3.
             assert_eq!(
                 el_scale.on_finalized(299).await.unwrap(),
                 TransitionOutcome::EpochAdvanced(3)
@@ -2936,16 +2446,8 @@ mod tests {
         });
     }
 
-    /// The peer set has to be registered BEFORE the layer's cold-start jump, not
-    /// after it: an empty-archive validator parks in
-    /// `DposLayer::launch`'s jump loop (`consensus/src/dpos.rs:1845-1893`) until a
-    /// PLANE peer serves it a frontier, and the frontier resolver only talks to
-    /// peers the Oracle is tracking (`node/src/dpos.rs:1723-1730`). The layer's
-    /// `cold_start` — the one bootstrapper — runs AFTER that loop
-    /// (`consensus/src/dpos.rs:2108-2113`), so the only `track` reachable from it
-    /// comes too late. `track_peers` is the beacon plane's door to the peer set,
-    /// and it must open it WITHOUT bootstrapping: the bootstrap branch is
-    /// write-once and belongs to the layer.
+    /// The peer set must be registered before the layer's cold-start jump, and
+    /// `track_peers` must not bootstrap — that branch belongs to the layer.
     #[test]
     fn track_peers_registers_the_peer_set_without_bootstrapping() {
         deterministic::Runner::default().start(|_ctx| async move {
@@ -2971,9 +2473,8 @@ mod tests {
                 3,
             );
 
-            // Before the freeze there is no epoch to name, so the call is a no-op
-            // the caller can retry — NOT a freeze of its own (the plane's cursor
-            // must never be what fixes the geometry's read height either).
+            // Before the freeze there is no epoch to name, and the call must not
+            // freeze one.
             assert_eq!(
                 et.track_peers(h, 250).await.unwrap(),
                 None,
@@ -2990,9 +2491,8 @@ mod tests {
                 "height 250 over (activation 0, interval 100) is epoch 2"
             );
 
-            // The whole point of a separate door: none of the bootstrap state moves,
-            // so the layer's cold start still takes the write-once branch and still
-            // picks the starting epoch off its own ordering anchor.
+            // None of the bootstrap state moved, so the layer's cold start still
+            // owns the starting epoch.
             assert_eq!(
                 et.last_tracked_epoch, None,
                 "the write-once bootstrap gate is untouched — the layer still owns it"
@@ -3016,11 +2516,7 @@ mod tests {
             );
             assert_eq!(et.last_tracked_epoch, Some(2));
 
-            // ONE formula, not two: the set the plane registered early and the set
-            // the bootstrap registers are the same object, so a later change to the
-            // union cannot drift the two apart. (The repeat is harmless at the
-            // Oracle: a `track` of an index already registered is ignored,
-            // `.claude/COMMONWARE_INTERNALS.md:363`.)
+            // One formula for both registrations, so the union cannot drift.
             let log = sink.0.lock().unwrap();
             assert_eq!(log.len(), 2, "one early track, one bootstrap track");
             assert_eq!(log[0].0, 2);
@@ -3041,9 +2537,9 @@ mod tests {
             );
             drop(log);
 
-            // On a boundary height the epoch is E+1 — the same choice the bootstrap
-            // branch makes, so the early track never registers the committee the
-            // network has already left.
+            // On a boundary height the epoch is E+1, the same choice the bootstrap
+            // branch makes, so the early track never registers a committee the
+            // network has left.
             let boundary_sink = KeySink::default();
             let mut boundary_et = EpochTransition::new(
                 reader(),

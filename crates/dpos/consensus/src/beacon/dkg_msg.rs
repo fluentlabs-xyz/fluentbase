@@ -1,33 +1,27 @@
 //! Internal framing for live DKG ceremony traffic carried inside
 //! [`crate::beacon::wire::BeaconMessage::Dkg`]'s opaque payload.
 //!
-//! The wire envelope is one opaque `Bytes` tag because the commonware DKG
-//! message decoders need the round's committee size as a `Read` config; this
-//! module is that typed inner framing. Each message carries its `ceremony_epoch`
-//! so the single-ceremony actor can drop a stale / cross-epoch message with an
-//! epoch-tag filter (no per-epoch channel demux is needed — ceremonies for E and
-//! E+1 are temporally disjoint, the collection window spans ~all of E-1).
+//! The wire envelope is one opaque `Bytes` tag because the commonware DKG message
+//! decoders need the round's committee size as a `Read` config; this module is that
+//! typed inner framing. Each message carries its `ceremony_epoch` so the
+//! single-ceremony actor can drop a stale or cross-epoch message; ceremonies for E
+//! and E+1 are temporally disjoint.
 //!
-//! Body variants map 1:1 to the commonware Joint-Feldman protocol steps:
-//! - `Commitment` — a dealer's public polynomial commitment (broadcast).
-//! - `Share` — a dealer's private share for one player (sent point-to-point).
-//! - `Ack` — a player's acknowledgement of a dealer's commitment+share.
-//! - `Reveal` — a dealer's signed log (public reveal for un-acked players).
+//! Body variants map to the commonware Joint-Feldman steps: `Commitment` (a dealer's
+//! public polynomial commitment, broadcast), `Share` (a dealer's private share for
+//! one player, point-to-point), `Ack` (a player's acknowledgement), and `Reveal` (a
+//! dealer's signed log).
 //!
-//! One variant is NOT a Joint-Feldman step: `Confirm` carries a
+//! One variant is not a Joint-Feldman step: `Confirm` carries a
 //! [`crate::beacon::dkg_agree::ShareConfirm`], a member's signed statement of which
-//! dealer logs it holds with the body checked. It rides this envelope because it is
-//! addressed to the same committee over the same channel, but it is consumed by the
-//! epoch-key agreement plane and never by a ceremony — the actor intercepts it
-//! before any ceremony dispatch. Its `ceremony_epoch` framing is UNSIGNED, which is
-//! why the confirmation signs its own `target_epoch`: it is lifted out of this
-//! envelope into an agreement proposal, where the framing does not travel with it.
+//! dealer logs it holds. It rides this envelope because it is addressed to the same
+//! committee, but it is consumed by the epoch-key agreement plane and intercepted
+//! before any ceremony dispatch. Its `ceremony_epoch` framing is unsigned, which is
+//! why the confirmation signs its own `target_epoch`.
 //!
-//! DKG-log RECOVERY (a mid-window-restarted member re-fetching never-received dealer
-//! logs) is NOT a body here — it rides the `commonware_resolver::p2p` engine on
+//! DKG-log recovery rides the `commonware_resolver::p2p` engine on
 //! `BEACON_RESOLVER_CHANNEL`, keyed by `{epoch, dealer, hash}` (see
-//! [`crate::beacon::log_resolver`]). The former best-effort `LogRequest`/`LogResponse`
-//! gossip pull was replaced by it (§8.11.1).
+//! [`crate::beacon::log_resolver`]).
 
 use bytes::{Buf, BufMut};
 use commonware_codec::{EncodeSize, Error, Read, Write};
@@ -80,9 +74,7 @@ pub(crate) struct DkgMsg {
     pub body: DkgBody,
 }
 
-// Wire: ceremony_epoch(u64) ‖ body_tag(u8) ‖ body. `body_tag` ∈ {Commitment 0,
-// Share 1, Ack 2, Reveal 3}; unknown → Err. Commitment/Reveal carry the
-// commitment polynomial / signed log, decode-bounded by the committee-size `Cfg`.
+// Wire: ceremony_epoch(u64) ‖ body_tag(u8) ‖ body. Unknown tags are refused.
 impl Write for DkgMsg {
     fn write(&self, buf: &mut impl BufMut) {
         self.ceremony_epoch.write(buf);
@@ -126,11 +118,10 @@ impl EncodeSize for DkgMsg {
 }
 
 impl Read for DkgMsg {
-    /// An UPPER BOUND on the committee size (≥ the commitment-polynomial length =
-    /// quorum) used to bound the `Commitment`/`Reveal` decoders. It need NOT be the
-    /// exact per-ceremony `n` — the actor can pass `MAX_COMMITTEE_SIZE` (committees
-    /// for E vs E+1 may differ in size, and the decoder runs before the message's
-    /// own `ceremony_epoch` is known), and the inner polynomial length self-bounds.
+    /// An upper bound on the committee size (at least the commitment-polynomial
+    /// length), used to bound the `Commitment`/`Reveal` decoders. It need not be the
+    /// exact per-ceremony `n`, because the decoder runs before the message's own
+    /// `ceremony_epoch` is known.
     type Cfg = NonZeroU32;
 
     fn read_cfg(buf: &mut impl Buf, committee_size: &NonZeroU32) -> Result<Self, Error> {
@@ -251,10 +242,8 @@ mod tests {
         );
     }
 
-    /// The fifth variant is not a ceremony step, and its framing is exactly why
-    /// the confirmation signs its own epoch: `ceremony_epoch` here is plain bytes
-    /// that a relay could rewrite and that does not travel with the confirmation
-    /// once it is lifted into an agreement proposal.
+    /// The fifth variant is not a ceremony step, and its framing is why the confirmation
+    /// signs its own epoch: `ceremony_epoch` here is plain bytes a relay could rewrite.
     #[test]
     fn confirm_variant_round_trips() {
         let mut rng = StdRng::seed_from_u64(19);
