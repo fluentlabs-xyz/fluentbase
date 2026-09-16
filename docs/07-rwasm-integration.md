@@ -35,10 +35,24 @@ Fluentbase compilation config defines:
 System runtimes and user contracts intentionally compile with different constraints.
 
 Syscall fuel procedures (`crates/types/src/block_fuel.rs`) address the metered length parameter by
-its position among the import's parameters. rWasm 0.4.x read that position as a raw 32-bit stack
-depth; the fuel-alignment change that follows 0.5.0 counts it from the last parameter (`1` is the
-last one) and rejects out-of-range positions at compile time. Every metered Fluentbase syscall takes
-only `i32` parameters, so both rules resolve to the same slot and the table is valid under either.
+its position among the import's parameters. rWasm 0.4.x and the published 0.5.0 crate read that
+position as a raw 32-bit stack depth; rWasm 0.6.0 counts it from the last parameter (`1` is the
+last one), rejects out-of-range positions at compile time (`InvalidSyscallFuelParam`) and meters
+only `i32` parameters. Every metered Fluentbase syscall takes only `i32` parameters, so both rules
+resolve to the same slot and the table is valid under either.
+
+rWasm 0.6.0 also rejects at compile time what the VM could never run or previously diverged on:
+a function whose frame needs more than `N_MAX_STACK_SIZE` (8192) value-stack slots
+(`StackHeightExceeded`), a table declared above `N_MAX_TABLE_SIZE` (1024) entries
+(`TableSizeExceedsLimit`, previously an empty table on rWasm and a full one on Wasmtime) and a
+module whose compiled code exceeds `max_code_len` (`N_DEFAULT_MAX_CODE_LEN`, 2 Mi instructions;
+`CodeSizeExceeded`). These are admission changes for Wasm deployments and runtime upgrades, so a
+bump that introduces them is verified by replaying every historical runtime-upgrade payload through
+`validate_system_runtime` and by re-executing network history. Contract modules are routed by state
+(`deploy`/`main`), so Fluentbase wraps a precompiled `RwasmModule` in
+`StrategyDefinition::Rwasm { entrypoint_name: None, .. }`, which accepts whichever entrypoint name
+`ContractRuntime` resolves; a module compiled with `CompilationConfig::entrypoint_name` would reject
+any other name with `UnknownExternalFunction` on both backends.
 
 ---
 

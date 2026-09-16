@@ -185,6 +185,7 @@ mod tests {
         StrategyDefinition::Rwasm {
             engine: ExecutionEngine::acquire_shared(),
             module,
+            entrypoint_name: None,
         }
     }
 
