@@ -2,6 +2,43 @@ use crate::{calculate_syscall_fuel, SysFuncIdx};
 use alloc::sync::Arc;
 use rwasm::{ImportLinker, ImportName, ValType};
 
+/// Builds the `fluentbase_v1preview` import linker: the syscall ABI that every system-runtime
+/// hint and every rWasm contract links against.
+///
+/// # Compatibility rules
+///
+/// This table is consensus data, not an internal API. Once a module importing an entry has
+/// executed on a live network, that entry belongs to the network's history: a node that
+/// re-executes those blocks or serves RPC at those heights loads the hint from state and links
+/// it against the linker compiled into the node. `SystemRuntime::new` runs the rWasm front end
+/// over every hint before instantiation, so an import that no longer resolves fails the whole
+/// frame with `MalformedBuiltinParams` and the full fuel limit consumed, for every system
+/// runtime in the affected range.
+///
+/// - Append only. Never remove an entry or change its name, parameter or result types, index,
+///   or observable behaviour (fuel included) once it has shipped. Commenting out the
+///   `SysFuncIdx` value reserves the number but does not keep the name resolvable.
+/// - Breaking changes go into a new namespace (a new module name next to
+///   `fluentbase_v1preview`); old hints keep linking against this one.
+/// - A semantic change to an existing syscall changes the result of every historical hint that
+///   calls it and needs a fork height or a code-hash gate, like the other chain rules.
+/// - Removing a handler declares the history that used it unreproducible. Do it only together
+///   with a documented height below which that network is served from snapshots.
+/// - Admission (`validate_system_runtime`) checks new hints against this table. Nothing checks
+///   this table against hints already in state, so verify a change by loading every hint
+///   generation ever present at a system address on testnet and mainnet. Discover them from
+///   state (`eth_getCode` change points), not only from runtime-upgrade events: the early
+///   testnet generations predate the upgrade contract.
+///
+/// # Precedent
+///
+/// `_charge_fuel_manually`, `_secp256k1_recover`, `_bn254_decompress` and the `_bls12_381_*`
+/// family were removed in v0.5.x (#188, #201, #217). Fluent Testnet (chain 20994) hints
+/// installed before block 20,721,329 (2026-03-05; ecrecover until 20,721,448) still import
+/// `_charge_fuel_manually`, `_secp256k1_recover` and `_bls12_381_*`, so on v1.5.0 nodes every
+/// `eth_call` or trace at those heights halts with `MalformedBuiltinParams` and archive nodes
+/// log `revm: failed to decode structured runtime execution outcome`. Mainnet's genesis hints
+/// were built after the removals and are unaffected.
 #[rustfmt::skip]
 pub fn import_linker_v1_preview() -> Arc<ImportLinker> {
     let mut import_linker = ImportLinker::default();
