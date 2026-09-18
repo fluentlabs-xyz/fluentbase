@@ -432,14 +432,12 @@ impl CodecStruct {
 
         let generics = self.prepare_generics(&self.generics);
         let where_clause = self.add_encoder_bounds(&generics, sol_mode, is_static);
-        let (impl_generics, ty_generics, _) = generics.split_for_impl();
+        let (impl_generics, _, _) = generics.split_for_impl();
 
-        let has_custom_generics = !self.generics.params.is_empty();
-        let struct_name_with_ty = if has_custom_generics {
-            quote! { #struct_name #ty_generics }
-        } else {
-            quote! { #struct_name }
-        };
+        // `B` and `ALIGN` belong to the impl only: the struct is named with its own generics,
+        // otherwise a generic struct becomes `Struct<T, B, ALIGN>` and fails to compile.
+        let (_, ty_generics, _) = self.generics.split_for_impl();
+        let struct_name_with_ty = quote! { #struct_name #ty_generics };
 
         let header_size = self.generate_header_size_expr(sol_mode, is_static);
         let is_dynamic = self.generate_is_dynamic_expr(sol_mode, is_static);

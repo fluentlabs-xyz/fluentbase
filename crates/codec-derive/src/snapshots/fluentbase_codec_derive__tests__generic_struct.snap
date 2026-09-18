@@ -6,8 +6,7 @@ impl<
     T,
     B: ::fluentbase_sdk::codec::byteorder::ByteOrder,
     const ALIGN: usize,
-> ::fluentbase_sdk::codec::Encoder<B, ALIGN, { true }, { true }>
-for GenericStruct<T, B, ALIGN>
+> ::fluentbase_sdk::codec::Encoder<B, ALIGN, { true }, { true }> for GenericStruct<T>
 where
     T: Clone + Default,
     T: ::fluentbase_sdk::codec::Encoder<B, ALIGN, { true }, { true }>,
@@ -378,8 +377,7 @@ impl<
     T,
     B: ::fluentbase_sdk::codec::byteorder::ByteOrder,
     const ALIGN: usize,
-> ::fluentbase_sdk::codec::Encoder<B, ALIGN, { true }, { false }>
-for GenericStruct<T, B, ALIGN>
+> ::fluentbase_sdk::codec::Encoder<B, ALIGN, { true }, { false }> for GenericStruct<T>
 where
     T: Clone + Default,
     T: ::fluentbase_sdk::codec::Encoder<B, ALIGN, { true }, { false }>,
@@ -755,8 +753,7 @@ impl<
     T,
     B: ::fluentbase_sdk::codec::byteorder::ByteOrder,
     const ALIGN: usize,
-> ::fluentbase_sdk::codec::Encoder<B, ALIGN, { false }, { true }>
-for GenericStruct<T, B, ALIGN>
+> ::fluentbase_sdk::codec::Encoder<B, ALIGN, { false }, { true }> for GenericStruct<T>
 where
     T: Clone + Default,
     T: ::fluentbase_sdk::codec::Encoder<B, ALIGN, { false }, { true }>,
@@ -920,8 +917,7 @@ impl<
     T,
     B: ::fluentbase_sdk::codec::byteorder::ByteOrder,
     const ALIGN: usize,
-> ::fluentbase_sdk::codec::Encoder<B, ALIGN, { false }, { false }>
-for GenericStruct<T, B, ALIGN>
+> ::fluentbase_sdk::codec::Encoder<B, ALIGN, { false }, { false }> for GenericStruct<T>
 where
     T: Clone + Default,
     T: ::fluentbase_sdk::codec::Encoder<B, ALIGN, { false }, { false }>,

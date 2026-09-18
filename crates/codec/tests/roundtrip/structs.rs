@@ -456,3 +456,29 @@ mod solidity {
         assert_eq!(decoded, original);
     }
 }
+
+/// Deriving `Codec` on a generic struct names the impl target with the struct's own generics,
+/// not with the `B` and `ALIGN` parameters that belong to the trait impl.
+#[test]
+fn test_generic_struct_roundtrip() {
+    #[derive(Codec, Default, Debug, PartialEq)]
+    struct Wrapper<T> {
+        inner: T,
+        tag: u32,
+    }
+
+    let value = Wrapper {
+        inner: 7u64,
+        tag: 9,
+    };
+
+    let mut buf = BytesMut::new();
+    CompactABI::encode(&value, &mut buf, 0).unwrap();
+    let decoded = CompactABI::<Wrapper<u64>>::decode(&buf.freeze(), 0).unwrap();
+    assert_eq!(decoded, value, "CompactABI round-trip failed");
+
+    let mut buf = BytesMut::new();
+    SolidityABI::encode(&value, &mut buf, 0).unwrap();
+    let decoded = SolidityABI::<Wrapper<u64>>::decode(&buf.freeze(), 0).unwrap();
+    assert_eq!(decoded, value, "SolidityABI round-trip failed");
+}
