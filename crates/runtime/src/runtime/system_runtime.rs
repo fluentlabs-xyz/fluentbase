@@ -36,8 +36,9 @@ use fluentbase_types::{
     Address, CompilationBackend, CompilationConfigFingerprint, CompiledModuleCacheKey, ExitCode,
     HashMap, SysFuncIdx, B256, STATE_DEPLOY, STATE_MAIN,
 };
+#[cfg(feature = "wasmtime")]
+use rwasm::wasmtime::{compile_wasmtime_module_cached, WasmtimeExecutor, WasmtimeModule};
 use rwasm::{
-    wasmtime::{compile_wasmtime_module_cached, WasmtimeExecutor, WasmtimeModule},
     CompilationConfig, ImportLinker, Opcode, RwasmModule, StateRouterConfig, StoreTr,
     StrategyDefinition, StrategyExecutor, TrapCode, Value, N_MAX_ALLOWED_MEMORY_PAGES,
 };
@@ -124,7 +125,7 @@ impl SystemRuntime {
     /// `import_linker`.
     /// Compilation and instantiation failures return an error without caching an instance.
     /// Loading uses only the backend selected by the `wasmtime` feature; admission
-    /// ([`validate_system_runtime`]) is where both backends must accept the hint.
+    /// ([`validate_system_runtime`]) is where the hint must pass every backend the crate links.
     ///
     /// ## Fuel metering
     ///
@@ -357,12 +358,14 @@ impl SystemRuntime {
     }
 }
 
-/// Checks system-runtime admission using the same rules on both node flavours.
+/// Checks system-runtime admission with the rules shared by both node flavours.
 ///
-/// Admission compiles and instantiates the hint with both rWasm and Wasmtime and enforces the
-/// executor's entrypoint ABI straight from the Wasm export section, so a hint accepted here loads
-/// on either flavour. It only initializes modules; it never invokes a runtime entrypoint, and the
-/// rWasm compiler rejects start sections before either backend can instantiate the module.
+/// Admission compiles and instantiates the hint with rWasm, the canonical validator on either
+/// flavour, and enforces the executor's entrypoint ABI straight from the Wasm export section, so
+/// that rule does not depend on which backend the crate links. With the `wasmtime` feature it
+/// also compiles and instantiates the hint with Wasmtime, the backend that flavour executes it
+/// with. It only initializes modules; it never invokes a runtime entrypoint, and the rWasm
+/// compiler rejects start sections before either backend can instantiate the module.
 ///
 /// The default executor is built with the same `import_linker_v1_preview`; keep them in sync.
 pub fn validate_system_runtime(wasm: &[u8], address: Address) -> Result<(), TrapCode> {
@@ -382,28 +385,39 @@ pub fn validate_system_runtime(wasm: &[u8], address: Address) -> Result<(), Trap
     // result would be read as the i32 status.
     require_entrypoint_abi(wasm, "main", 2, true, false)?;
     require_entrypoint_abi(wasm, "deploy", 0, false, true)?;
-    let module = compile_wasmtime(config, wasm)?;
-    instantiate_wasmtime(&module, import_linker).map(|_| ())
+    #[cfg(feature = "wasmtime")]
+    {
+        let module = compile_wasmtime(config, wasm)?;
+        instantiate_wasmtime(&module, import_linker)?;
+    }
+    Ok(())
 }
 
-/// Loads an admitted hint with the backend selected by the `wasmtime` feature.
+/// Loads an admitted hint with Wasmtime, the backend this build executes system runtimes with.
 ///
 /// The rWasm compiler always runs first as the canonical validator, so no start function can
-/// execute while loading on either flavour. Only admission exercises both backends; the rWasm
-/// flavour never compiles with Wasmtime here.
+/// execute while loading on either flavour.
+#[cfg(feature = "wasmtime")]
 fn load_system_runtime(
     wasm: &[u8],
     config: CompilationConfig,
     import_linker: Arc<ImportLinker>,
 ) -> Result<CompiledRuntime, TrapCode> {
-    let definition = compile_rwasm(config.clone(), wasm)?;
-    if cfg!(feature = "wasmtime") {
-        let module = compile_wasmtime(config, wasm)?;
-        let executor = instantiate_wasmtime(&module, import_linker)?;
-        Ok(StrategyExecutor::Wasmtime { executor })
-    } else {
-        instantiate_rwasm(&definition, import_linker)
-    }
+    compile_rwasm(config.clone(), wasm)?;
+    let module = compile_wasmtime(config, wasm)?;
+    let executor = instantiate_wasmtime(&module, import_linker)?;
+    Ok(StrategyExecutor::Wasmtime { executor })
+}
+
+/// Loads an admitted hint with rWasm, the only backend this build links.
+#[cfg(not(feature = "wasmtime"))]
+fn load_system_runtime(
+    wasm: &[u8],
+    config: CompilationConfig,
+    import_linker: Arc<ImportLinker>,
+) -> Result<CompiledRuntime, TrapCode> {
+    let definition = compile_rwasm(config, wasm)?;
+    instantiate_rwasm(&definition, import_linker)
 }
 
 /// Compiles the hint with the rWasm validator. In particular this rejects start functions,
@@ -429,6 +443,7 @@ fn instantiate_rwasm(
 
 /// Compiles the hint with Wasmtime through rWasm's process-wide module cache. The cache key
 /// covers the compilation config and the Wasm bytes, so admission pre-warms execution.
+#[cfg(feature = "wasmtime")]
 fn compile_wasmtime(config: CompilationConfig, wasm: &[u8]) -> Result<WasmtimeModule, TrapCode> {
     let mut cache_identity = CompilationConfigFingerprint::from_config(
         &config,
@@ -446,6 +461,7 @@ fn compile_wasmtime(config: CompilationConfig, wasm: &[u8]) -> Result<WasmtimeMo
 /// A module that links or instantiates badly is reported as an error, never a panic: admission
 /// runs this on untrusted upgrade payloads, and the store limits derive from
 /// `N_MAX_ALLOWED_MEMORY_PAGES` rather than from the module contents.
+#[cfg(feature = "wasmtime")]
 fn instantiate_wasmtime(
     module: &WasmtimeModule,
     import_linker: Arc<ImportLinker>,
@@ -817,13 +833,16 @@ mod tests {
                 fluentbase_types::is_engine_metered_precompile(&address),
             )
             .unwrap();
-            assert_eq!(
-                matches!(
-                    *runtime.compiled_runtime.borrow(),
-                    StrategyExecutor::Wasmtime { .. }
-                ),
-                cfg!(feature = "wasmtime")
-            );
+            #[cfg(feature = "wasmtime")]
+            assert!(matches!(
+                *runtime.compiled_runtime.borrow(),
+                StrategyExecutor::Wasmtime { .. }
+            ));
+            #[cfg(not(feature = "wasmtime"))]
+            assert!(matches!(
+                *runtime.compiled_runtime.borrow(),
+                StrategyExecutor::Rwasm { .. }
+            ));
             runtime.execute().unwrap();
             assert_eq!(
                 runtime.context().execution_result.exit_code,
