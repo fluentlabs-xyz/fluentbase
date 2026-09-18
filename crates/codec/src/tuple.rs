@@ -189,18 +189,21 @@ macro_rules! impl_encoder_for_tuple {
                     buf.unsplit(tail);
                 } else {
                     // WASM mode
-                    let mut current_offset = offset;
+                    let current_offset = offset;
                     let header_el_size = align_up::<ALIGN>(4);
 
                     if Self::IS_DYNAMIC {
-                        let buf_len = buf.len();
-                        let dynamic_offset = if buf_len == 0 {
-                            header_el_size
-                        } else {
-                            buf_len
-                        };
-                        write_u32_aligned::<B, ALIGN>(buf, current_offset, dynamic_offset as u32);
-                        current_offset += header_el_size;
+                        // The head word is a pointer to the body, and the body has to be
+                        // written where that pointer says. Place it at the end of the buffer,
+                        // never inside this tuple's own head word, exactly as the Solidity
+                        // branch above and the arity-one impl do: a tuple nested in a vector
+                        // or in another tuple otherwise records the buffer end while its
+                        // members land right behind its head, on top of its siblings.
+                        let head_end = current_offset
+                            .checked_add(header_el_size)
+                            .ok_or(CodecError::Overflow)?;
+                        let body_at = buf.len().max(head_end);
+                        write_u32_aligned::<B, ALIGN>(buf, current_offset, body_at as u32);
 
                         let aligned_header_size = {
                             let mut size = 0;
@@ -210,10 +213,10 @@ macro_rules! impl_encoder_for_tuple {
                             size
                         };
 
-                        if buf_len < current_offset + aligned_header_size {
-                            buf.resize(current_offset + aligned_header_size, 0);
+                        if buf.len() < body_at + aligned_header_size {
+                            buf.resize(body_at + aligned_header_size, 0);
                         }
-                        let mut tmp = buf.split_off(current_offset);
+                        let mut tmp = buf.split_off(body_at);
 
                         let mut current_tmp_offset = 0;
                         $(

@@ -381,3 +381,54 @@ fn tuple_with_optional_member_does_not_overlap_its_neighbours() {
         assert_eq!(decoded, value, "compact round trip with flag {flag:?}");
     }
 }
+
+/// A compact dynamic tuple records where its body starts. Nested in another tuple, the body is
+/// appended after the outer head area rather than written four bytes past the inner head.
+#[test]
+fn test_nested_dynamic_tuple_compact() {
+    let value: ((String, u32), u32) = (("abc".to_string(), 7), 9);
+
+    let mut buf = BytesMut::new();
+    CompactABI::encode(&value, &mut buf, 0).unwrap();
+    let encoded = buf.freeze();
+
+    let decoded = CompactABI::<((String, u32), u32)>::decode(&encoded, 0).unwrap();
+    assert_eq!(decoded, value, "Round-trip encoding/decoding failed");
+}
+
+/// Vector elements are encoded into a preallocated element area, so each dynamic tuple has to
+/// append its body behind that area and point at it.
+#[test]
+fn test_vec_of_dynamic_tuples_compact() {
+    let value: Vec<(String, u32)> = vec![("a".to_string(), 1), ("bb".to_string(), 2)];
+
+    let mut buf = BytesMut::new();
+    CompactABI::encode(&value, &mut buf, 0).unwrap();
+    let encoded = buf.freeze();
+
+    let decoded = CompactABI::<Vec<(String, u32)>>::decode(&encoded, 0).unwrap();
+    assert_eq!(decoded, value, "Round-trip encoding/decoding failed");
+}
+
+/// At the top level the layout is unchanged: the body follows the single pointer word.
+#[test]
+fn test_top_level_dynamic_tuple_compact_layout() {
+    let value: (String, u32) = ("abc".to_string(), 7);
+
+    let mut buf = BytesMut::new();
+    CompactABI::encode(&value, &mut buf, 0).unwrap();
+    let encoded = buf.freeze();
+
+    let expected_encoded = hex::decode(concat!(
+        "04000000", // pointer to the tuple body
+        "0c000000", // string data offset (relative to the body)
+        "03000000", // string length
+        "07000000", // u32 member
+        "61626300", // "abc" padded to the alignment
+    ))
+    .unwrap();
+    assert_eq!(encoded.to_vec(), expected_encoded);
+
+    let decoded = CompactABI::<(String, u32)>::decode(&encoded, 0).unwrap();
+    assert_eq!(decoded, value, "Round-trip encoding/decoding failed");
+}
