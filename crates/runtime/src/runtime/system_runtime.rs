@@ -41,6 +41,7 @@ use rwasm::{
     CompilationConfig, ImportLinker, Opcode, RwasmModule, StateRouterConfig, StoreTr,
     StrategyDefinition, StrategyExecutor, TrapCode, Value, N_MAX_ALLOWED_MEMORY_PAGES,
 };
+use wasmparser::{ExternalKind, FuncType, Parser, Payload, Type, TypeRef, ValType};
 
 /// A system runtime instance.
 ///
@@ -359,9 +360,9 @@ impl SystemRuntime {
 /// Checks system-runtime admission using the same rules on both node flavours.
 ///
 /// Admission compiles and instantiates the hint with both rWasm and Wasmtime and enforces the
-/// executor's entrypoint ABI, so a hint accepted here loads on either flavour. It only
-/// initializes modules; it never invokes a runtime entrypoint, and the rWasm compiler rejects
-/// start sections before either backend can instantiate the module.
+/// executor's entrypoint ABI straight from the Wasm export section, so a hint accepted here loads
+/// on either flavour. It only initializes modules; it never invokes a runtime entrypoint, and the
+/// rWasm compiler rejects start sections before either backend can instantiate the module.
 ///
 /// The default executor is built with the same `import_linker_v1_preview`; keep them in sync.
 pub fn validate_system_runtime(wasm: &[u8], address: Address) -> Result<(), TrapCode> {
@@ -372,7 +373,6 @@ pub fn validate_system_runtime(wasm: &[u8], address: Address) -> Result<(), Trap
     );
     let definition = compile_rwasm(config.clone(), wasm)?;
     instantiate_rwasm(&definition, import_linker.clone())?;
-    let module = compile_wasmtime(config, wasm)?;
     // The rWasm state router permits arbitrary entrypoint types for trusted runtimes.
     // SystemRuntime::execute calls `main(argc, argv) -> i32` and `deploy() -> i32` and reads an
     // i32 status, so enforce that ABI before a backend can return a differently typed value.
@@ -380,8 +380,9 @@ pub fn validate_system_runtime(wasm: &[u8], address: Address) -> Result<(), Trap
     // also be the legacy SDK shape `deploy() -> ()`, which older upgrades already installed; the
     // executor fails such a call cleanly and identically on both backends, whereas a non-i32
     // result would be read as the i32 status.
-    require_entrypoint_abi(&module, "main", 2, true, false)?;
-    require_entrypoint_abi(&module, "deploy", 0, false, true)?;
+    require_entrypoint_abi(wasm, "main", 2, true, false)?;
+    require_entrypoint_abi(wasm, "deploy", 0, false, true)?;
+    let module = compile_wasmtime(config, wasm)?;
     instantiate_wasmtime(&module, import_linker).map(|_| ())
 }
 
@@ -464,29 +465,90 @@ fn instantiate_wasmtime(
 /// one i32, or nothing when `allow_unit_result`. A missing export is an error only when
 /// `required`.
 fn require_entrypoint_abi(
-    module: &WasmtimeModule,
+    wasm: &[u8],
     name: &str,
     params: usize,
     required: bool,
     allow_unit_result: bool,
 ) -> Result<(), TrapCode> {
-    let Some(export) = module.get_export(name) else {
-        return if required {
-            Err(TrapCode::IllegalOpcode)
-        } else {
-            Ok(())
-        };
+    let func_type = match exported_entrypoint(wasm, name)? {
+        ExportedEntrypoint::Missing if !required => return Ok(()),
+        ExportedEntrypoint::Missing | ExportedEntrypoint::NotAFunction => {
+            return Err(TrapCode::IllegalOpcode)
+        }
+        ExportedEntrypoint::Function(func_type) => func_type,
     };
-    let func = export.func().ok_or(TrapCode::IllegalOpcode)?;
-    let params_match = func.params().len() == params && func.params().all(|ty| ty.is_i32());
-    let result_matches = match func.results().len() {
-        0 => allow_unit_result,
-        1 => func.results().all(|ty| ty.is_i32()),
+    let params_match = func_type.params().len() == params
+        && func_type.params().iter().all(|ty| *ty == ValType::I32);
+    let result_matches = match func_type.results() {
+        [] => allow_unit_result,
+        [ValType::I32] => true,
         _ => false,
     };
     (params_match && result_matches)
         .then_some(())
         .ok_or(TrapCode::IllegalOpcode)
+}
+
+/// What a module exports under an entrypoint name.
+enum ExportedEntrypoint {
+    Missing,
+    NotAFunction,
+    Function(FuncType),
+}
+
+/// Resolves the export `name` of a Wasm binary the rWasm compiler has already validated.
+///
+/// Reading the export section directly keeps the entrypoint rule independent of the backend a
+/// build links. The function index space starts with the imported functions, so an export index
+/// below the import count names an import's type and the rest index the function section.
+fn exported_entrypoint(wasm: &[u8], name: &str) -> Result<ExportedEntrypoint, TrapCode> {
+    fn malformed(_: wasmparser::BinaryReaderError) -> TrapCode {
+        TrapCode::IllegalOpcode
+    }
+    let mut func_types = Vec::new();
+    let mut func_type_indices = Vec::new();
+    let mut export = None;
+    for payload in Parser::new(0).parse_all(wasm) {
+        match payload.map_err(malformed)? {
+            Payload::TypeSection(section) => {
+                for ty in section {
+                    let Type::Func(func_type) = ty.map_err(malformed)?;
+                    func_types.push(func_type);
+                }
+            }
+            Payload::ImportSection(section) => {
+                for import in section {
+                    if let TypeRef::Func(type_index) = import.map_err(malformed)?.ty {
+                        func_type_indices.push(type_index);
+                    }
+                }
+            }
+            Payload::FunctionSection(section) => {
+                for type_index in section {
+                    func_type_indices.push(type_index.map_err(malformed)?);
+                }
+            }
+            Payload::ExportSection(section) => {
+                for entry in section {
+                    let entry = entry.map_err(malformed)?;
+                    if entry.name == name {
+                        export = Some((entry.kind, entry.index));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(match export {
+        None => ExportedEntrypoint::Missing,
+        Some((ExternalKind::Func, index)) => func_type_indices
+            .get(index as usize)
+            .and_then(|type_index| func_types.get(*type_index as usize))
+            .map(|func_type| ExportedEntrypoint::Function(func_type.clone()))
+            .ok_or(TrapCode::IllegalOpcode)?,
+        Some(_) => ExportedEntrypoint::NotAFunction,
+    })
 }
 
 /// Compilation policy flags shared by every system runtime.
@@ -679,6 +741,55 @@ mod tests {
             ExitCode::Ok.into_i32()
         );
         SystemRuntime::reset_cached_runtimes();
+    }
+
+    #[test]
+    fn system_runtime_entrypoint_abi_resolves_types_through_imports() {
+        // Imported functions come first in the function index space, and every real system
+        // runtime imports syscalls. The type indices are also shuffled so that a resolver
+        // confusing function indices with type indices would misread `main` as `() -> ()`.
+        let accepted = wat::parse_str(
+            r#"(module
+            (type $unit (func))
+            (type $exit (func (param i32)))
+            (type $main (func (param i32 i32) (result i32)))
+            (import "fluentbase_v1preview" "_exit" (func $_exit (type $exit)))
+            (import "fluentbase_v1preview" "_write" (func $_write (param i32 i32)))
+            (memory (export "memory") 1)
+            (func (export "deploy") (type $unit))
+            (func (export "main") (type $main) i32.const 0))"#,
+        )
+        .unwrap();
+        assert_eq!(validate_system_runtime(&accepted, Address::ZERO), Ok(()));
+        assert!(matches!(
+            exported_entrypoint(&accepted, "main"),
+            Ok(ExportedEntrypoint::Function(func_type))
+                if func_type.params() == [ValType::I32, ValType::I32]
+                    && func_type.results() == [ValType::I32]
+        ));
+        assert!(matches!(
+            exported_entrypoint(&accepted, "memory"),
+            Ok(ExportedEntrypoint::NotAFunction)
+        ));
+        assert!(matches!(
+            exported_entrypoint(&accepted, "_exit"),
+            Ok(ExportedEntrypoint::Missing)
+        ));
+        // Re-exporting an import resolves to the import's type, not to the type of the first
+        // function defined by the module.
+        let rejected = wat::parse_str(
+            r#"(module
+            (import "fluentbase_v1preview" "_exit" (func $_exit (param i32)))
+            (memory (export "memory") 1)
+            (func $deploy_shape (result i32) i32.const 0)
+            (export "deploy" (func $_exit))
+            (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+        )
+        .unwrap();
+        assert_eq!(
+            validate_system_runtime(&rejected, Address::ZERO),
+            Err(TrapCode::IllegalOpcode)
+        );
     }
 
     #[test]
