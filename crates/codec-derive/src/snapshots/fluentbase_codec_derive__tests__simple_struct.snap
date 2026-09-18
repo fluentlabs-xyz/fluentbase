@@ -1027,7 +1027,7 @@ where
         buf: &mut ::fluentbase_sdk::codec::bytes::BytesMut,
         offset: usize,
     ) -> Result<(), ::fluentbase_sdk::codec::CodecError> {
-        let mut current_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let mut current_offset = offset;
         let header_size = <Self as ::fluentbase_sdk::codec::Encoder<
             B,
             ALIGN,
@@ -1098,7 +1098,7 @@ where
         buf: &impl ::fluentbase_sdk::codec::bytes::Buf,
         offset: usize,
     ) -> Result<Self, ::fluentbase_sdk::codec::CodecError> {
-        let mut current_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let mut current_offset = offset;
         let bool_val = <bool as ::fluentbase_sdk::codec::Encoder<
             B,
             ALIGN,
@@ -1164,9 +1164,8 @@ where
         buffer: &impl ::fluentbase_sdk::codec::bytes::Buf,
         offset: usize,
     ) -> Result<(usize, usize), ::fluentbase_sdk::codec::CodecError> {
-        let aligned_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
         Ok((
-            aligned_offset,
+            offset,
             <Self as ::fluentbase_sdk::codec::Encoder<
                 B,
                 ALIGN,
@@ -1244,7 +1243,7 @@ where
         buf: &mut ::fluentbase_sdk::codec::bytes::BytesMut,
         offset: usize,
     ) -> Result<(), ::fluentbase_sdk::codec::CodecError> {
-        let mut current_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let mut current_offset = offset;
         let header_size = <Self as ::fluentbase_sdk::codec::Encoder<
             B,
             ALIGN,
@@ -1315,7 +1314,7 @@ where
         buf: &impl ::fluentbase_sdk::codec::bytes::Buf,
         offset: usize,
     ) -> Result<Self, ::fluentbase_sdk::codec::CodecError> {
-        let mut current_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let mut current_offset = offset;
         let bool_val = <bool as ::fluentbase_sdk::codec::Encoder<
             B,
             ALIGN,
@@ -1381,9 +1380,8 @@ where
         buffer: &impl ::fluentbase_sdk::codec::bytes::Buf,
         offset: usize,
     ) -> Result<(usize, usize), ::fluentbase_sdk::codec::CodecError> {
-        let aligned_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
         Ok((
-            aligned_offset,
+            offset,
             <Self as ::fluentbase_sdk::codec::Encoder<
                 B,
                 ALIGN,

@@ -143,3 +143,29 @@ fn derived_structs_reserve_their_head_before_appending_the_body() {
     };
     check_dynamic_head(&value, &(value.text.clone(), value.value).abi_encode());
 }
+
+/// The big-endian helper writes the value into the last four bytes of the aligned word; the
+/// padding in front of it has to be zero even when the buffer already held bytes there.
+#[test]
+fn write_u32_aligned_clears_stale_padding() {
+    fn check<B: ByteOrder, const ALIGN: usize>() {
+        let mut encoded = BytesMut::from(vec![0xa5; ALIGN + 2].as_slice());
+        write_u32_aligned::<B, ALIGN>(&mut encoded, 1, 0x0102_0304);
+
+        let mut expected = vec![0u8; ALIGN];
+        let value_at = if B::read_u16(&[0, 1]) == 1 {
+            ALIGN - 4
+        } else {
+            0
+        };
+        B::write_u32(&mut expected[value_at..value_at + 4], 0x0102_0304);
+        assert_eq!(&encoded[1..ALIGN + 1], expected.as_slice());
+        // Bytes outside the word are untouched.
+        assert_eq!(encoded[0], 0xa5);
+        assert_eq!(encoded[ALIGN + 1], 0xa5);
+    }
+
+    check::<BigEndian, 32>();
+    check::<BigEndian, 4>();
+    check::<LittleEndian, 4>();
+}

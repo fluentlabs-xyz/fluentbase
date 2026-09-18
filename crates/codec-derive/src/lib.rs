@@ -281,7 +281,9 @@ impl CodecStruct {
             }
         } else {
             quote! {
-                let mut current_offset = #crate_path::align_up::<ALIGN>(offset);
+                // The struct starts where the caller says, like every primitive and tuple
+                // encoder does; only the stride between fields is aligned.
+                let mut current_offset = offset;
                 let header_size = <Self as #crate_path::Encoder<B, ALIGN, {false}, {#is_static}>>::HEADER_SIZE;
 
                 if buf.len() < current_offset + header_size {
@@ -331,7 +333,7 @@ impl CodecStruct {
             }
         } else {
             quote! {
-                let mut current_offset = #crate_path::align_up::<ALIGN>(offset);
+                let mut current_offset = offset;
                 #decode_fields
             }
         };
@@ -373,10 +375,8 @@ impl CodecStruct {
             }
         } else {
             quote! {
-                // For Compact ABI encoding
-                let aligned_offset = #crate_path::align_up::<ALIGN>(offset);
-                // Return the current offset and the struct's header size
-                Ok((aligned_offset, <Self as #crate_path::Encoder<B, ALIGN, {false}, {#is_static}>>::HEADER_SIZE))
+                // For Compact ABI encoding: the struct starts at the requested offset
+                Ok((offset, <Self as #crate_path::Encoder<B, ALIGN, {false}, {#is_static}>>::HEADER_SIZE))
             }
         }
     }
@@ -432,14 +432,12 @@ impl CodecStruct {
 
         let generics = self.prepare_generics(&self.generics);
         let where_clause = self.add_encoder_bounds(&generics, sol_mode, is_static);
-        let (impl_generics, ty_generics, _) = generics.split_for_impl();
+        let (impl_generics, _, _) = generics.split_for_impl();
 
-        let has_custom_generics = !self.generics.params.is_empty();
-        let struct_name_with_ty = if has_custom_generics {
-            quote! { #struct_name #ty_generics }
-        } else {
-            quote! { #struct_name }
-        };
+        // `B` and `ALIGN` belong to the impl only: the struct is named with its own generics,
+        // otherwise a generic struct becomes `Struct<T, B, ALIGN>` and fails to compile.
+        let (_, ty_generics, _) = self.generics.split_for_impl();
+        let struct_name_with_ty = quote! { #struct_name #ty_generics };
 
         let header_size = self.generate_header_size_expr(sol_mode, is_static);
         let is_dynamic = self.generate_is_dynamic_expr(sol_mode, is_static);

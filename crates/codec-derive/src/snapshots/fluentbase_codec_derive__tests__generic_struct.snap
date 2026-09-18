@@ -6,8 +6,7 @@ impl<
     T,
     B: ::fluentbase_sdk::codec::byteorder::ByteOrder,
     const ALIGN: usize,
-> ::fluentbase_sdk::codec::Encoder<B, ALIGN, { true }, { true }>
-for GenericStruct<T, B, ALIGN>
+> ::fluentbase_sdk::codec::Encoder<B, ALIGN, { true }, { true }> for GenericStruct<T>
 where
     T: Clone + Default,
     T: ::fluentbase_sdk::codec::Encoder<B, ALIGN, { true }, { true }>,
@@ -378,8 +377,7 @@ impl<
     T,
     B: ::fluentbase_sdk::codec::byteorder::ByteOrder,
     const ALIGN: usize,
-> ::fluentbase_sdk::codec::Encoder<B, ALIGN, { true }, { false }>
-for GenericStruct<T, B, ALIGN>
+> ::fluentbase_sdk::codec::Encoder<B, ALIGN, { true }, { false }> for GenericStruct<T>
 where
     T: Clone + Default,
     T: ::fluentbase_sdk::codec::Encoder<B, ALIGN, { true }, { false }>,
@@ -755,8 +753,7 @@ impl<
     T,
     B: ::fluentbase_sdk::codec::byteorder::ByteOrder,
     const ALIGN: usize,
-> ::fluentbase_sdk::codec::Encoder<B, ALIGN, { false }, { true }>
-for GenericStruct<T, B, ALIGN>
+> ::fluentbase_sdk::codec::Encoder<B, ALIGN, { false }, { true }> for GenericStruct<T>
 where
     T: Clone + Default,
     T: ::fluentbase_sdk::codec::Encoder<B, ALIGN, { false }, { true }>,
@@ -805,7 +802,7 @@ where
         buf: &mut ::fluentbase_sdk::codec::bytes::BytesMut,
         offset: usize,
     ) -> Result<(), ::fluentbase_sdk::codec::CodecError> {
-        let mut current_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let mut current_offset = offset;
         let header_size = <Self as ::fluentbase_sdk::codec::Encoder<
             B,
             ALIGN,
@@ -859,7 +856,7 @@ where
         buf: &impl ::fluentbase_sdk::codec::bytes::Buf,
         offset: usize,
     ) -> Result<Self, ::fluentbase_sdk::codec::CodecError> {
-        let mut current_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let mut current_offset = offset;
         let field1 = <T as ::fluentbase_sdk::codec::Encoder<
             B,
             ALIGN,
@@ -904,9 +901,8 @@ where
         buffer: &impl ::fluentbase_sdk::codec::bytes::Buf,
         offset: usize,
     ) -> Result<(usize, usize), ::fluentbase_sdk::codec::CodecError> {
-        let aligned_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
         Ok((
-            aligned_offset,
+            offset,
             <Self as ::fluentbase_sdk::codec::Encoder<
                 B,
                 ALIGN,
@@ -920,8 +916,7 @@ impl<
     T,
     B: ::fluentbase_sdk::codec::byteorder::ByteOrder,
     const ALIGN: usize,
-> ::fluentbase_sdk::codec::Encoder<B, ALIGN, { false }, { false }>
-for GenericStruct<T, B, ALIGN>
+> ::fluentbase_sdk::codec::Encoder<B, ALIGN, { false }, { false }> for GenericStruct<T>
 where
     T: Clone + Default,
     T: ::fluentbase_sdk::codec::Encoder<B, ALIGN, { false }, { false }>,
@@ -970,7 +965,7 @@ where
         buf: &mut ::fluentbase_sdk::codec::bytes::BytesMut,
         offset: usize,
     ) -> Result<(), ::fluentbase_sdk::codec::CodecError> {
-        let mut current_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let mut current_offset = offset;
         let header_size = <Self as ::fluentbase_sdk::codec::Encoder<
             B,
             ALIGN,
@@ -1024,7 +1019,7 @@ where
         buf: &impl ::fluentbase_sdk::codec::bytes::Buf,
         offset: usize,
     ) -> Result<Self, ::fluentbase_sdk::codec::CodecError> {
-        let mut current_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
+        let mut current_offset = offset;
         let field1 = <T as ::fluentbase_sdk::codec::Encoder<
             B,
             ALIGN,
@@ -1069,9 +1064,8 @@ where
         buffer: &impl ::fluentbase_sdk::codec::bytes::Buf,
         offset: usize,
     ) -> Result<(usize, usize), ::fluentbase_sdk::codec::CodecError> {
-        let aligned_offset = ::fluentbase_sdk::codec::align_up::<ALIGN>(offset);
         Ok((
-            aligned_offset,
+            offset,
             <Self as ::fluentbase_sdk::codec::Encoder<
                 B,
                 ALIGN,
