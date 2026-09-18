@@ -1101,6 +1101,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let (input, lazy_metadata_input) = get_input_validated!(>= 20 + 4);
             // Read an account from its address.
             let address = Address::from_slice(&input[..20]);
+            // The offset word is part of the wire format but has never selected a partial
+            // write: the whole metadata payload is replaced by the bytes that follow it. Every
+            // runtime passes zero. Honoring it would change the result of historical calls, so
+            // it stays reserved.
             let _offset = LittleEndian::read_u32(&input[20..24]) as usize;
             debug_syscall!("METADATA_WRITE", "address={:?} offset={}", address, _offset);
             let account = ctx.journal_mut().load_account_with_code(address)?;
