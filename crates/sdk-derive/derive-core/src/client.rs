@@ -259,16 +259,9 @@ impl<T: MethodLike> Client<T> {
             quote! {}
         };
 
-        let value_check = if mutability.allows_value() {
-            quote! {
-                if context.tx_value() < value {
-                    ::core::panic!("Insufficient funds for transaction");
-                }
-            }
-        } else {
-            quote! {}
-        };
-
+        // No value pre-check: the root transaction value says nothing about what this
+        // contract can pay from its own balance, and the host rejects a transfer the caller
+        // cannot cover.
         let host_call = if mutability.is_static() {
             quote! {
                 self.sdk.static_call(
@@ -308,7 +301,6 @@ impl<T: MethodLike> Client<T> {
 
                 {
                     let context = self.sdk.context();
-                    #value_check
                     if context.tx_gas_limit() < gas_limit {
                         ::core::panic!("Insufficient gas limit for transaction");
                     }
@@ -448,7 +440,9 @@ mod tests {
             assert!(generated.contains("value:fluentbase_sdk::U256,gas_limit:u64"));
             assert!(generated
                 .contains("self.sdk.call(contract_address,value,&input,Some(fuel_limit),)"));
-            assert!(generated.contains("context.tx_value()<value"));
+            // The value is paid from the calling contract's balance, which the host checks;
+            // the root transaction value is no bound on it
+            assert!(!generated.contains("tx_value()"));
             assert!(!generated.contains("static_call"));
         }
     }
