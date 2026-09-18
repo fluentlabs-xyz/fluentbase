@@ -144,9 +144,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let result = ExecutionResult {
                 result: instruction_result_from_exit_code(ExitCode::$result, true),
                 output: Bytes::new(),
-                gas: Gas::new_spent(
-                    frame.interpreter.gas.total_gas_spent() - inputs.gas.total_gas_spent(),
-                ),
+                // Hand back the live tracker, as every other halt path does. A halted child
+                // returns its reservoir and state gas to the parent, and a fresh spent-only
+                // tracker would report both as zero and erase the parent's reservoir.
+                gas: frame.interpreter.gas,
             };
             return Ok(NextAction::Return(result));
         }};

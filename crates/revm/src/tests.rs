@@ -2014,4 +2014,27 @@ mod terminal_halt_tests {
             "a halted frame must not keep its runtime suspended for the rest of the transaction"
         );
     }
+
+    /// On a halt the parent rebuilds its reservoir from the child's reservoir and state gas, so
+    /// the halt has to report the frame's live tracker rather than a fresh spent-only one.
+    #[test]
+    fn terminal_halt_reports_the_frame_gas_tracker() {
+        let mut gas = Gas::new_with_regular_gas_and_reservoir(GAS_LIMIT, 5_000);
+        assert!(gas.record_state_cost(1_000));
+        assert!(
+            gas.reservoir() > 0,
+            "the reservoir must survive the state charge"
+        );
+
+        let NextAction::Return(result) = halt_static_call_with_value(0, gas) else {
+            panic!("CALL with value must halt inside a static context");
+        };
+        assert_eq!(
+            result.result,
+            InstructionResult::StateChangeDuringStaticCall
+        );
+        assert_eq!(result.gas.reservoir(), gas.reservoir());
+        assert_eq!(result.gas.state_gas_spent(), gas.state_gas_spent());
+        assert_eq!(result.gas.state_gas_spent(), 1_000);
+    }
 }
