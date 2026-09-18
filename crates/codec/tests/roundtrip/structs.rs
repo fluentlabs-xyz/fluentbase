@@ -482,3 +482,24 @@ fn test_generic_struct_roundtrip() {
     let decoded = SolidityABI::<Wrapper<u64>>::decode(&buf.freeze(), 0).unwrap();
     assert_eq!(decoded, value, "SolidityABI round-trip failed");
 }
+
+/// A compact struct is encoded at the offset it is given, like every primitive and tuple; the
+/// derive must not move it up to the next alignment boundary on its own.
+#[test]
+fn test_struct_compact_honors_requested_offset() {
+    #[derive(Codec, Default, Debug, PartialEq)]
+    struct Pair {
+        a: u32,
+        b: u16,
+    }
+
+    let value = Pair { a: 1, b: 2 };
+    let mut buf = BytesMut::from(&[0xa5u8; 6][..]);
+    CompactABI::encode(&value, &mut buf, 6).unwrap();
+
+    assert_eq!(&buf[..6], &[0xa5; 6]);
+    assert_eq!(&buf[6..10], &1u32.to_le_bytes());
+    assert_eq!(&buf[10..12], &2u16.to_le_bytes());
+    assert_eq!(CompactABI::<Pair>::partial_decode(&buf, 6).unwrap(), (6, 8));
+    assert_eq!(CompactABI::<Pair>::decode(&buf.freeze(), 6).unwrap(), value);
+}

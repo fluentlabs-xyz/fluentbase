@@ -281,7 +281,9 @@ impl CodecStruct {
             }
         } else {
             quote! {
-                let mut current_offset = #crate_path::align_up::<ALIGN>(offset);
+                // The struct starts where the caller says, like every primitive and tuple
+                // encoder does; only the stride between fields is aligned.
+                let mut current_offset = offset;
                 let header_size = <Self as #crate_path::Encoder<B, ALIGN, {false}, {#is_static}>>::HEADER_SIZE;
 
                 if buf.len() < current_offset + header_size {
@@ -331,7 +333,7 @@ impl CodecStruct {
             }
         } else {
             quote! {
-                let mut current_offset = #crate_path::align_up::<ALIGN>(offset);
+                let mut current_offset = offset;
                 #decode_fields
             }
         };
@@ -373,10 +375,8 @@ impl CodecStruct {
             }
         } else {
             quote! {
-                // For Compact ABI encoding
-                let aligned_offset = #crate_path::align_up::<ALIGN>(offset);
-                // Return the current offset and the struct's header size
-                Ok((aligned_offset, <Self as #crate_path::Encoder<B, ALIGN, {false}, {#is_static}>>::HEADER_SIZE))
+                // For Compact ABI encoding: the struct starts at the requested offset
+                Ok((offset, <Self as #crate_path::Encoder<B, ALIGN, {false}, {#is_static}>>::HEADER_SIZE))
             }
         }
     }
