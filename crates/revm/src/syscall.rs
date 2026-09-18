@@ -136,6 +136,11 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 });
                 return Ok(NextAction::InterruptionResult);
             }
+            // A terminal halt ends this frame, so the runtime that raised the syscall is never
+            // resumed. Drop it now: suspended runtimes are otherwise only cleared at the next
+            // transaction, and every retained store counts against the in-flight memory limit
+            // that admits later rWasm calls of this transaction.
+            default_runtime_executor().forget_runtime(inputs.call_id);
             let result = ExecutionResult {
                 result: instruction_result_from_exit_code(ExitCode::$result, true),
                 output: Bytes::new(),

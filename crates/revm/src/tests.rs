@@ -1902,3 +1902,116 @@ mod static_call_frame_tests {
         );
     }
 }
+
+/// A terminal syscall halt ends the frame, so the host must finish its bookkeeping for the
+/// runtime that raised the syscall instead of only handing back a result.
+mod terminal_halt_tests {
+    use super::*;
+    use fluentbase_runtime::{default_runtime_executor, RuntimeContext, RuntimeExecutor};
+    use fluentbase_sdk::{
+        import_linker_v1_preview, syscall::SYSCALL_ID_CALL, BytecodeOrHash, FUEL_DENOM_RATE,
+    };
+    use revm::handler::system_interruption::SystemInterruptionInputs;
+    use rwasm::{CompilationConfig, RwasmModule};
+
+    const CONTRACT: Address = address!("2222222222222222222222222222222222222222");
+    const CALLEE: Address = address!("3333333333333333333333333333333333333333");
+    const GAS_LIMIT: u64 = 1_000_000;
+
+    /// Runs a contract that raises `_exec` and returns the call id the executor saved it under.
+    fn suspend_interrupting_contract() -> u32 {
+        let wasm = wat::parse_str(
+            r#"(module
+                (import "fluentbase_v1preview" "_exec"
+                    (func $exec (param i32 i32 i32 i32 i32) (result i32)))
+                (memory (export "memory") 1)
+                (func (export "main")
+                    i32.const 0 i32.const 0 i32.const 0 i32.const 0 i32.const 0
+                    call $exec
+                    drop))"#,
+        )
+        .unwrap();
+        let config = CompilationConfig::default()
+            .with_entrypoint_name("main".into())
+            .with_import_linker(import_linker_v1_preview());
+        let (module, _) = RwasmModule::compile(config, &wasm).unwrap();
+        let result = default_runtime_executor().execute(
+            BytecodeOrHash::Bytecode {
+                bytecode: module,
+                hash: B256::with_last_byte(0x36),
+                address: Address::ZERO,
+            },
+            RuntimeContext::default()
+                .with_fuel_limit(100_000)
+                .with_call_depth(1),
+        );
+        assert!(result.exit_code > 0, "contract must interrupt: {result:?}");
+        result.exit_code as u32
+    }
+
+    /// Only a runtime that is still saved can serve a memory read.
+    fn is_suspended(call_id: u32) -> bool {
+        default_runtime_executor()
+            .memory_read(call_id, 0, &mut [0u8; 4])
+            .is_ok()
+    }
+
+    /// Raises CALL with value from a static frame executing `CONTRACT`, which halts the frame
+    /// before any gas is charged or any child frame is created.
+    fn halt_static_call_with_value(call_id: u32, gas: Gas) -> NextAction {
+        let mut ctx: RwasmContext<InMemoryDB> =
+            RwasmContext::new(InMemoryDB::default(), RwasmSpecId::PRAGUE);
+        ctx.cfg = CfgEnv::new_with_spec(RwasmSpecId::PRAGUE);
+        ctx.block = BlockEnv::default();
+        ctx.tx = TxEnv::default();
+
+        let mut frame = RwasmFrame::default();
+        frame.interpreter.input.target_address = CONTRACT;
+        frame.interpreter.runtime_flag.is_static = true;
+        frame.interpreter.gas = gas;
+
+        let mut input = vec![0u8; 52];
+        input[0..20].copy_from_slice(CALLEE.as_slice());
+        input[20..52].copy_from_slice(&U256::ONE.to_le_bytes::<32>());
+        let mr = ForwardInputMemoryReader(input.into());
+
+        let interruption_inputs = SystemInterruptionInputs {
+            call_id,
+            code_hash: SYSCALL_ID_CALL,
+            input: 0..mr.0.len(),
+            fuel_limit: GAS_LIMIT * FUEL_DENOM_RATE,
+            state: STATE_MAIN,
+            fuel16_ptr: 0,
+            gas,
+            preloaded_slot_costs: None,
+        };
+        execute_rwasm_interruption::<_, NoOpInspector>(
+            &mut frame,
+            None,
+            &mut ctx,
+            interruption_inputs,
+            mr,
+        )
+        .expect("the syscall must not fail the transaction")
+    }
+
+    #[test]
+    fn terminal_halt_forgets_the_suspended_runtime() {
+        default_runtime_executor().reset_call_id_counter();
+        let call_id = suspend_interrupting_contract();
+        assert!(is_suspended(call_id));
+
+        let NextAction::Return(result) = halt_static_call_with_value(call_id, Gas::new(GAS_LIMIT))
+        else {
+            panic!("CALL with value must halt inside a static context");
+        };
+        assert_eq!(
+            result.result,
+            InstructionResult::StateChangeDuringStaticCall
+        );
+        assert!(
+            !is_suspended(call_id),
+            "a halted frame must not keep its runtime suspended for the rest of the transaction"
+        );
+    }
+}
