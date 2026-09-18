@@ -217,6 +217,9 @@ pub fn write_u32_aligned<B: ByteOrder, const ALIGN: usize>(
     let aligned_value_size = align_up::<ALIGN>(4);
 
     ensure_buf_size(buf, offset + aligned_value_size);
+    // The buffer may already hold bytes in this word (a reused output buffer, a head slot
+    // written twice); growing it zeroes only the extension, so clear the padding explicitly.
+    buf[offset..offset + aligned_value_size].fill(0);
 
     if is_big_endian::<B>() {
         // For big-endian, copy to the end of the aligned array
