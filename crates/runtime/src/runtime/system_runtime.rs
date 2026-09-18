@@ -36,11 +36,13 @@ use fluentbase_types::{
     Address, CompilationBackend, CompilationConfigFingerprint, CompiledModuleCacheKey, ExitCode,
     HashMap, SysFuncIdx, B256, STATE_DEPLOY, STATE_MAIN,
 };
+#[cfg(feature = "wasmtime")]
+use rwasm::wasmtime::{compile_wasmtime_module_cached, WasmtimeExecutor, WasmtimeModule};
 use rwasm::{
-    wasmtime::{compile_wasmtime_module_cached, WasmtimeExecutor, WasmtimeModule},
     CompilationConfig, ImportLinker, Opcode, RwasmModule, StateRouterConfig, StoreTr,
     StrategyDefinition, StrategyExecutor, TrapCode, Value, N_MAX_ALLOWED_MEMORY_PAGES,
 };
+use wasmparser::{ExternalKind, FuncType, Parser, Payload, Type, TypeRef, ValType};
 
 /// A system runtime instance.
 ///
@@ -123,7 +125,7 @@ impl SystemRuntime {
     /// `import_linker`.
     /// Compilation and instantiation failures return an error without caching an instance.
     /// Loading uses only the backend selected by the `wasmtime` feature; admission
-    /// ([`validate_system_runtime`]) is where both backends must accept the hint.
+    /// ([`validate_system_runtime`]) is where the hint must pass every backend the crate links.
     ///
     /// ## Fuel metering
     ///
@@ -356,12 +358,14 @@ impl SystemRuntime {
     }
 }
 
-/// Checks system-runtime admission using the same rules on both node flavours.
+/// Checks system-runtime admission with the rules shared by both node flavours.
 ///
-/// Admission compiles and instantiates the hint with both rWasm and Wasmtime and enforces the
-/// executor's entrypoint ABI, so a hint accepted here loads on either flavour. It only
-/// initializes modules; it never invokes a runtime entrypoint, and the rWasm compiler rejects
-/// start sections before either backend can instantiate the module.
+/// Admission compiles and instantiates the hint with rWasm, the canonical validator on either
+/// flavour, and enforces the executor's entrypoint ABI straight from the Wasm export section, so
+/// that rule does not depend on which backend the crate links. With the `wasmtime` feature it
+/// also compiles and instantiates the hint with Wasmtime, the backend that flavour executes it
+/// with. It only initializes modules; it never invokes a runtime entrypoint, and the rWasm
+/// compiler rejects start sections before either backend can instantiate the module.
 ///
 /// The default executor is built with the same `import_linker_v1_preview`; keep them in sync.
 pub fn validate_system_runtime(wasm: &[u8], address: Address) -> Result<(), TrapCode> {
@@ -372,7 +376,6 @@ pub fn validate_system_runtime(wasm: &[u8], address: Address) -> Result<(), Trap
     );
     let definition = compile_rwasm(config.clone(), wasm)?;
     instantiate_rwasm(&definition, import_linker.clone())?;
-    let module = compile_wasmtime(config, wasm)?;
     // The rWasm state router permits arbitrary entrypoint types for trusted runtimes.
     // SystemRuntime::execute calls `main(argc, argv) -> i32` and `deploy() -> i32` and reads an
     // i32 status, so enforce that ABI before a backend can return a differently typed value.
@@ -380,29 +383,41 @@ pub fn validate_system_runtime(wasm: &[u8], address: Address) -> Result<(), Trap
     // also be the legacy SDK shape `deploy() -> ()`, which older upgrades already installed; the
     // executor fails such a call cleanly and identically on both backends, whereas a non-i32
     // result would be read as the i32 status.
-    require_entrypoint_abi(&module, "main", 2, true, false)?;
-    require_entrypoint_abi(&module, "deploy", 0, false, true)?;
-    instantiate_wasmtime(&module, import_linker).map(|_| ())
+    require_entrypoint_abi(wasm, "main", 2, true, false)?;
+    require_entrypoint_abi(wasm, "deploy", 0, false, true)?;
+    #[cfg(feature = "wasmtime")]
+    {
+        let module = compile_wasmtime(config, wasm)?;
+        instantiate_wasmtime(&module, import_linker)?;
+    }
+    Ok(())
 }
 
-/// Loads an admitted hint with the backend selected by the `wasmtime` feature.
+/// Loads an admitted hint with Wasmtime, the backend this build executes system runtimes with.
 ///
 /// The rWasm compiler always runs first as the canonical validator, so no start function can
-/// execute while loading on either flavour. Only admission exercises both backends; the rWasm
-/// flavour never compiles with Wasmtime here.
+/// execute while loading on either flavour.
+#[cfg(feature = "wasmtime")]
 fn load_system_runtime(
     wasm: &[u8],
     config: CompilationConfig,
     import_linker: Arc<ImportLinker>,
 ) -> Result<CompiledRuntime, TrapCode> {
-    let definition = compile_rwasm(config.clone(), wasm)?;
-    if cfg!(feature = "wasmtime") {
-        let module = compile_wasmtime(config, wasm)?;
-        let executor = instantiate_wasmtime(&module, import_linker)?;
-        Ok(StrategyExecutor::Wasmtime { executor })
-    } else {
-        instantiate_rwasm(&definition, import_linker)
-    }
+    compile_rwasm(config.clone(), wasm)?;
+    let module = compile_wasmtime(config, wasm)?;
+    let executor = instantiate_wasmtime(&module, import_linker)?;
+    Ok(StrategyExecutor::Wasmtime { executor })
+}
+
+/// Loads an admitted hint with rWasm, the only backend this build links.
+#[cfg(not(feature = "wasmtime"))]
+fn load_system_runtime(
+    wasm: &[u8],
+    config: CompilationConfig,
+    import_linker: Arc<ImportLinker>,
+) -> Result<CompiledRuntime, TrapCode> {
+    let definition = compile_rwasm(config, wasm)?;
+    instantiate_rwasm(&definition, import_linker)
 }
 
 /// Compiles the hint with the rWasm validator. In particular this rejects start functions,
@@ -428,6 +443,7 @@ fn instantiate_rwasm(
 
 /// Compiles the hint with Wasmtime through rWasm's process-wide module cache. The cache key
 /// covers the compilation config and the Wasm bytes, so admission pre-warms execution.
+#[cfg(feature = "wasmtime")]
 fn compile_wasmtime(config: CompilationConfig, wasm: &[u8]) -> Result<WasmtimeModule, TrapCode> {
     let mut cache_identity = CompilationConfigFingerprint::from_config(
         &config,
@@ -445,6 +461,7 @@ fn compile_wasmtime(config: CompilationConfig, wasm: &[u8]) -> Result<WasmtimeMo
 /// A module that links or instantiates badly is reported as an error, never a panic: admission
 /// runs this on untrusted upgrade payloads, and the store limits derive from
 /// `N_MAX_ALLOWED_MEMORY_PAGES` rather than from the module contents.
+#[cfg(feature = "wasmtime")]
 fn instantiate_wasmtime(
     module: &WasmtimeModule,
     import_linker: Arc<ImportLinker>,
@@ -464,29 +481,90 @@ fn instantiate_wasmtime(
 /// one i32, or nothing when `allow_unit_result`. A missing export is an error only when
 /// `required`.
 fn require_entrypoint_abi(
-    module: &WasmtimeModule,
+    wasm: &[u8],
     name: &str,
     params: usize,
     required: bool,
     allow_unit_result: bool,
 ) -> Result<(), TrapCode> {
-    let Some(export) = module.get_export(name) else {
-        return if required {
-            Err(TrapCode::IllegalOpcode)
-        } else {
-            Ok(())
-        };
+    let func_type = match exported_entrypoint(wasm, name)? {
+        ExportedEntrypoint::Missing if !required => return Ok(()),
+        ExportedEntrypoint::Missing | ExportedEntrypoint::NotAFunction => {
+            return Err(TrapCode::IllegalOpcode)
+        }
+        ExportedEntrypoint::Function(func_type) => func_type,
     };
-    let func = export.func().ok_or(TrapCode::IllegalOpcode)?;
-    let params_match = func.params().len() == params && func.params().all(|ty| ty.is_i32());
-    let result_matches = match func.results().len() {
-        0 => allow_unit_result,
-        1 => func.results().all(|ty| ty.is_i32()),
+    let params_match = func_type.params().len() == params
+        && func_type.params().iter().all(|ty| *ty == ValType::I32);
+    let result_matches = match func_type.results() {
+        [] => allow_unit_result,
+        [ValType::I32] => true,
         _ => false,
     };
     (params_match && result_matches)
         .then_some(())
         .ok_or(TrapCode::IllegalOpcode)
+}
+
+/// What a module exports under an entrypoint name.
+enum ExportedEntrypoint {
+    Missing,
+    NotAFunction,
+    Function(FuncType),
+}
+
+/// Resolves the export `name` of a Wasm binary the rWasm compiler has already validated.
+///
+/// Reading the export section directly keeps the entrypoint rule independent of the backend a
+/// build links. The function index space starts with the imported functions, so an export index
+/// below the import count names an import's type and the rest index the function section.
+fn exported_entrypoint(wasm: &[u8], name: &str) -> Result<ExportedEntrypoint, TrapCode> {
+    fn malformed(_: wasmparser::BinaryReaderError) -> TrapCode {
+        TrapCode::IllegalOpcode
+    }
+    let mut func_types = Vec::new();
+    let mut func_type_indices = Vec::new();
+    let mut export = None;
+    for payload in Parser::new(0).parse_all(wasm) {
+        match payload.map_err(malformed)? {
+            Payload::TypeSection(section) => {
+                for ty in section {
+                    let Type::Func(func_type) = ty.map_err(malformed)?;
+                    func_types.push(func_type);
+                }
+            }
+            Payload::ImportSection(section) => {
+                for import in section {
+                    if let TypeRef::Func(type_index) = import.map_err(malformed)?.ty {
+                        func_type_indices.push(type_index);
+                    }
+                }
+            }
+            Payload::FunctionSection(section) => {
+                for type_index in section {
+                    func_type_indices.push(type_index.map_err(malformed)?);
+                }
+            }
+            Payload::ExportSection(section) => {
+                for entry in section {
+                    let entry = entry.map_err(malformed)?;
+                    if entry.name == name {
+                        export = Some((entry.kind, entry.index));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(match export {
+        None => ExportedEntrypoint::Missing,
+        Some((ExternalKind::Func, index)) => func_type_indices
+            .get(index as usize)
+            .and_then(|type_index| func_types.get(*type_index as usize))
+            .map(|func_type| ExportedEntrypoint::Function(func_type.clone()))
+            .ok_or(TrapCode::IllegalOpcode)?,
+        Some(_) => ExportedEntrypoint::NotAFunction,
+    })
 }
 
 /// Compilation policy flags shared by every system runtime.
@@ -682,6 +760,55 @@ mod tests {
     }
 
     #[test]
+    fn system_runtime_entrypoint_abi_resolves_types_through_imports() {
+        // Imported functions come first in the function index space, and every real system
+        // runtime imports syscalls. The type indices are also shuffled so that a resolver
+        // confusing function indices with type indices would misread `main` as `() -> ()`.
+        let accepted = wat::parse_str(
+            r#"(module
+            (type $unit (func))
+            (type $exit (func (param i32)))
+            (type $main (func (param i32 i32) (result i32)))
+            (import "fluentbase_v1preview" "_exit" (func $_exit (type $exit)))
+            (import "fluentbase_v1preview" "_write" (func $_write (param i32 i32)))
+            (memory (export "memory") 1)
+            (func (export "deploy") (type $unit))
+            (func (export "main") (type $main) i32.const 0))"#,
+        )
+        .unwrap();
+        assert_eq!(validate_system_runtime(&accepted, Address::ZERO), Ok(()));
+        assert!(matches!(
+            exported_entrypoint(&accepted, "main"),
+            Ok(ExportedEntrypoint::Function(func_type))
+                if func_type.params() == [ValType::I32, ValType::I32]
+                    && func_type.results() == [ValType::I32]
+        ));
+        assert!(matches!(
+            exported_entrypoint(&accepted, "memory"),
+            Ok(ExportedEntrypoint::NotAFunction)
+        ));
+        assert!(matches!(
+            exported_entrypoint(&accepted, "_exit"),
+            Ok(ExportedEntrypoint::Missing)
+        ));
+        // Re-exporting an import resolves to the import's type, not to the type of the first
+        // function defined by the module.
+        let rejected = wat::parse_str(
+            r#"(module
+            (import "fluentbase_v1preview" "_exit" (func $_exit (param i32)))
+            (memory (export "memory") 1)
+            (func $deploy_shape (result i32) i32.const 0)
+            (export "deploy" (func $_exit))
+            (func (export "main") (param i32 i32) (result i32) i32.const 0))"#,
+        )
+        .unwrap();
+        assert_eq!(
+            validate_system_runtime(&rejected, Address::ZERO),
+            Err(TrapCode::IllegalOpcode)
+        );
+    }
+
+    #[test]
     fn system_runtime_admission_preserves_backend_and_execution() {
         for address in [
             fluentbase_types::PRECOMPILE_EVM_RUNTIME,
@@ -706,13 +833,16 @@ mod tests {
                 fluentbase_types::is_engine_metered_precompile(&address),
             )
             .unwrap();
-            assert_eq!(
-                matches!(
-                    *runtime.compiled_runtime.borrow(),
-                    StrategyExecutor::Wasmtime { .. }
-                ),
-                cfg!(feature = "wasmtime")
-            );
+            #[cfg(feature = "wasmtime")]
+            assert!(matches!(
+                *runtime.compiled_runtime.borrow(),
+                StrategyExecutor::Wasmtime { .. }
+            ));
+            #[cfg(not(feature = "wasmtime"))]
+            assert!(matches!(
+                *runtime.compiled_runtime.borrow(),
+                StrategyExecutor::Rwasm { .. }
+            ));
             runtime.execute().unwrap();
             assert_eq!(
                 runtime.context().execution_result.exit_code,

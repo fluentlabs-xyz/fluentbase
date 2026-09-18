@@ -16,7 +16,8 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 # workspace
 fluentbase-sdk = { workspace = true, features = ["std"] }
-fluentbase-runtime = { workspace = true, features = ["std"] }
+# Preflight validates system runtimes with both backends, as the Wasmtime node flavour does.
+fluentbase-runtime = { workspace = true, features = ["std", "wasmtime"] }
 rwasm = { workspace = true }
 alloy-genesis = { workspace = true }
 fluentbase-release-verify = { workspace = true, features = ["reqwest"] }

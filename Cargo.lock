@@ -4995,6 +4995,7 @@ dependencies = [
  "snowbridge-amcl",
  "sp1-curves",
  "tiny-keccak",
+ "wasmparser-nostd",
  "wat",
 ]
 

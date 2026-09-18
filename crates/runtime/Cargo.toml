@@ -13,9 +13,12 @@ categories.workspace = true
 [dependencies]
 # fluentbase
 fluentbase-types = { workspace = true }
-# Both node flavours validate system runtimes with both backends. The local `wasmtime`
-# feature still selects execution; it no longer selects the upgrade admission rules.
-rwasm = { workspace = true, features = ["wasmtime"] }
+# The local `wasmtime` feature selects the execution backend and adds the Wasmtime half of
+# system-runtime admission; without it the crate does not link Wasmtime at all.
+rwasm = { workspace = true }
+# Reads the export section for the backend-independent entrypoint ABI rule of system-runtime
+# admission. It is the parser rwasm validates with, so it adds no new crate to the tree.
+wasmparser = { package = "wasmparser-nostd", version = "0.100", default-features = false }
 
 # misc
 k256 = { version = "0.13.1", default-features = false, features = ["ecdsa"] }
