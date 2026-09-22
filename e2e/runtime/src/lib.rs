@@ -28,6 +28,8 @@ use revm::{bytecode::Bytecode, state::AccountInfo};
 #[cfg(test)]
 mod blockhash;
 #[cfg(test)]
+mod bls12381;
+#[cfg(test)]
 mod bootstrap_authority;
 #[cfg(test)]
 mod bridge;
@@ -59,6 +61,8 @@ mod helpers;
 mod router;
 #[cfg(test)]
 mod stateless;
+#[cfg(test)]
+mod syscall_cost;
 // #[cfg(all(test, feature = "svm"))]
 // pub mod svm;
 #[cfg(test)]
@@ -73,6 +77,10 @@ mod exec_input;
 mod fee_manager;
 #[cfg(test)]
 mod oom;
+#[cfg(test)]
+mod precompile_throughput;
+#[cfg(test)]
+mod precompile_vectors;
 #[cfg(test)]
 mod universal_token;
 #[cfg(test)]

@@ -14,6 +14,8 @@ mod weierstrass;
 pub use weierstrass::*;
 mod tower;
 pub use tower::*;
+#[cfg(test)]
+mod reference_tests;
 
 /// Routes a syscall identified by func_idx to the corresponding runtime instruction handler.
 pub(crate) fn runtime_syscall_handler(

@@ -1,0 +1,29 @@
+name: precompile-survey
+
+# Manual throughput survey of the guest precompiles and the crypto syscall round trip, in both
+# runtime flavours. The numbers are printed to the job log; nothing is asserted.
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  survey:
+    runs-on: self-hosted
+    strategy:
+      fail-fast: false
+      matrix:
+        features: ["std,wasmtime", "std"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+      - name: Run the survey (${{ matrix.features }})
+        run: |
+          cargo test -p fluentbase-e2e --release --no-default-features --features ${{ matrix.features }} \
+            precompile_throughput_survey bls_fp_mul_syscall_round_trip system_runtime_reload_cost \
+            -- --ignored --nocapture --test-threads=1
