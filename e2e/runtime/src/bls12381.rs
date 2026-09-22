@@ -1,21 +1,25 @@
-//! Reproduces the multi-second BLS12-381 (EIP-2537) precompile calls.
+//! Throughput of the BLS12-381 (EIP-2537) precompile, the calls that used to take seconds.
 //!
 //! All seven BLS addresses run one guest rWasm module (`contracts/bls12381`) built from
-//! `revm-precompile` with default features off, so the curve arithmetic is pure-Rust arkworks
-//! executed by the system runtime: through Wasmtime with the `wasmtime` feature, through the
-//! rWasm interpreter without it. Neither path has host-side acceleration, so the cost is the
-//! execution itself and grows linearly with the number of pairs or points. Reloading the module
-//! after a runtime-cache reset is not the problem: the rWasm compile costs about 10 ms and the
-//! Wasmtime artifact is cached process-wide.
+//! `revm-precompile`. The guest keeps the EIP gas schedule, input parsing and error semantics and
+//! installs the syscall-backed `Crypto` provider (`fluentbase-precompile-crypto`), so every
+//! pairing check, MSM and map crosses to the host in one `_crypto_*` syscall and runs on revm's
+//! `DefaultCrypto` (blst). Only parsing and gas accounting execute in the system runtime, through
+//! Wasmtime with the `wasmtime` feature or the rWasm interpreter without it, which is why both
+//! flavours now perform alike. Reloading the module after a runtime-cache reset is not a factor
+//! either: an rWasm compile costs milliseconds and the Wasmtime artifact is cached process-wide;
+//! `system_runtime_reload_cost` measures it.
 //!
 //! Each test first makes a minimal warm-up call (module load and, with `wasmtime`, the cranelift
 //! compile happen there and are reported separately), then times one call whose precompile gas
 //! equals the legacy EIP-7825 transaction cap and asserts a lenient throughput floor. Run with
 //! `--nocapture` to see the numbers.
 //!
-//! Measured on an M-series Mac, release build (2026-09-17): the 512-pair call takes 0.7 s under
-//! Wasmtime (1.4 ms per pair, 24 Mgas/s) and 260 s in the rWasm interpreter (0.5 s per pair,
-//! 0.1 Mgas/s); the block-sized 3066-pair call takes 4.2 s under Wasmtime.
+//! Measured on an M-series Mac, release build. With arkworks inside the guest (2026-09-17) the
+//! 512-pair call took 0.7 s under Wasmtime (24 Mgas/s) and 260 s in the rWasm interpreter, and
+//! the block-sized 3066-pair call took 4.2 s. With the syscall-backed provider (2026-09-21) the
+//! 512-pair call takes about 0.1 s in both flavours (roughly 170 Mgas/s) and the 3066-pair call
+//! about 0.6 s.
 
 use crate::EvmTestingContextWithGenesis;
 use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;

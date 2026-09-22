@@ -25,5 +25,5 @@ jobs:
       - name: Run the survey (${{ matrix.features }})
         run: |
           cargo test -p fluentbase-e2e --release --no-default-features --features ${{ matrix.features }} \
-            precompile_throughput_survey bls_fp_mul_syscall_round_trip system_runtime_reload_cost \
-            -- --ignored --nocapture --test-threads=1
+            -- precompile_throughput_survey bls_fp_mul_syscall_round_trip system_runtime_reload_cost \
+            --ignored --nocapture --test-threads=1

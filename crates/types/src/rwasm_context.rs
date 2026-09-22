@@ -134,7 +134,9 @@ impl NativeAPI for RwasmContext {
 impl CryptoAPI for RwasmContext {
     #[inline(always)]
     fn crypto_syscall(op: CryptoSyscall, input: &[u8], output: &mut [u8]) -> i32 {
-        debug_assert_eq!(output.len(), op.output_len());
+        if output.len() != op.output_len() {
+            return crate::crypto_syscalls::CryptoSyscallError::InvalidInput as i32;
+        }
         match op {
             CryptoSyscall::Bls12381G1Add => unsafe { _crypto_bls12381_g1_add(input.as_ptr(), input.len() as u32, output.as_mut_ptr()) },
             CryptoSyscall::Bls12381G1Msm => unsafe { _crypto_bls12381_g1_msm(input.as_ptr(), input.len() as u32, output.as_mut_ptr()) },

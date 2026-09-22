@@ -26,13 +26,14 @@ pub fn syscall_crypto_handler(
         result[0] = Value::I32(CryptoSyscallError::InvalidInput as i32);
         return Ok(());
     }
-    let input = caller.memory_read_into_vec(input_ptr, input_len)?;
-    // Engine-metered callers (contracts) pay the EIP price of the operation here. Self-metered
-    // system runtimes account for the same gas themselves through `sync_evm_gas`.
+    // Engine-metered callers (contracts) pay the EIP price of the operation here, before the
+    // input is copied out of guest memory, so an unpaid call never allocates. Self-metered system
+    // runtimes account for the same gas themselves through `sync_evm_gas`.
     if caller.data().engine_metered {
         let fuel = eip_gas(op, input_len).saturating_mul(FUEL_DENOM_RATE);
         caller.try_consume_fuel(fuel)?;
     }
+    let input = caller.memory_read_into_vec(input_ptr, input_len)?;
     let mut output = alloc::vec![0u8; op.output_len()];
     match syscall_crypto_impl(op, &input, &mut output) {
         Ok(()) => {

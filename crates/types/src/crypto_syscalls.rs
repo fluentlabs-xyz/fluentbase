@@ -36,9 +36,6 @@ pub const CRYPTO_BN254_G1_LEN: usize = 64;
 pub const CRYPTO_BN254_G2_LEN: usize = 128;
 /// bn254 scalar.
 pub const CRYPTO_BN254_SCALAR_LEN: usize = 32;
-/// Largest payload a crypto syscall accepts (bounds the host-side copy).
-pub const CRYPTO_SYSCALL_MAX_INPUT_LEN: usize = 4 * 1024 * 1024;
-
 /// The precompile-level crypto operations, in `SysFuncIdx` order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Display, FromRepr)]
 #[repr(u32)]
@@ -99,11 +96,11 @@ impl CryptoSyscall {
         }
     }
 
-    /// Whether `len` is an acceptable payload length for this operation.
+    /// Whether `len` is an acceptable payload length for this operation: the fixed size, or a
+    /// whole number of units. There is no size ceiling beyond that; every byte that reaches the
+    /// host has been paid for at the EIP rate, either by the engine before the copy or by the
+    /// self-metered precompile guest, so the payload is bounded by the caller's gas.
     pub const fn accepts_input_len(self, len: usize) -> bool {
-        if len > CRYPTO_SYSCALL_MAX_INPUT_LEN {
-            return false;
-        }
         match (self.fixed_input_len(), self.unit_len()) {
             (Some(fixed), _) => len == fixed,
             (None, Some(unit)) => len.is_multiple_of(unit),
@@ -219,8 +216,7 @@ mod tests {
         assert!(CryptoSyscall::Bls12381PairingCheck.accepts_input_len(0));
         assert!(CryptoSyscall::Bls12381PairingCheck.accepts_input_len(3 * 288));
         assert!(!CryptoSyscall::Bls12381PairingCheck.accepts_input_len(3 * 288 + 1));
-        assert!(!CryptoSyscall::Bls12381PairingCheck
-            .accepts_input_len(CRYPTO_SYSCALL_MAX_INPUT_LEN + 288));
+        assert!(CryptoSyscall::Bls12381PairingCheck.accepts_input_len(20_000 * 288));
         assert!(CryptoSyscall::Secp256k1Ecrecover.accepts_input_len(97));
         assert_eq!(CryptoSyscall::Secp256k1Ecrecover.output_len(), 32);
         assert_eq!(CryptoSyscall::KzgVerifyProof.output_len(), 1);
