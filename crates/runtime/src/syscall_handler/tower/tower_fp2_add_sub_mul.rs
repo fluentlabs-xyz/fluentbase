@@ -1,6 +1,8 @@
+use crate::syscall_handler::native_field::{
+    fe_from_le, fe_to_le, le_add_lt, modulus_le, NativeField,
+};
 use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
 use fluentbase_types::{ExitCode, BLS12381_FP_SIZE, BN254_FP_SIZE};
-use num::BigUint;
 use rwasm::{StoreTr, TrapCode, Value};
 use sp1_curves::weierstrass::{bls12_381::Bls12381BaseField, bn254::Bn254BaseField, FpOpField};
 
@@ -65,7 +67,7 @@ const FP_FIELD_MUL: u32 = 0x03;
 
 pub(crate) fn syscall_tower_fp2_add_sub_mul_handler<
     const NUM_BYTES: usize,
-    P: FpOpField,
+    P: FpOpField + NativeField,
     const FIELD_OP: u32,
 >(
     ctx: &mut impl StoreTr<RuntimeContext>,
@@ -162,7 +164,7 @@ pub fn syscall_tower_fp2_bls12381_mul_impl(
 
 pub(crate) fn syscall_tower_fp2_add_sub_mul_impl<
     const NUM_BYTES: usize,
-    P: FpOpField,
+    P: FpOpField + NativeField,
     const FIELD_OP: u32,
 >(
     ac0: [u8; NUM_BYTES],
@@ -170,41 +172,25 @@ pub(crate) fn syscall_tower_fp2_add_sub_mul_impl<
     bc0: [u8; NUM_BYTES],
     bc1: [u8; NUM_BYTES],
 ) -> Result<([u8; NUM_BYTES], [u8; NUM_BYTES]), ExitCode> {
-    let ac0 = &BigUint::from_bytes_le(&ac0);
-    let ac1 = &BigUint::from_bytes_le(&ac1);
-    let bc0 = &BigUint::from_bytes_le(&bc0);
-    let bc1 = &BigUint::from_bytes_le(&bc1);
-    let modulus = &BigUint::from_bytes_le(P::MODULUS);
+    let a0: P::Fq = fe_from_le(&ac0);
+    let a1: P::Fq = fe_from_le(&ac1);
+    let b0: P::Fq = fe_from_le(&bc0);
+    let b1: P::Fq = fe_from_le(&bc1);
+    // Fp2 = Fp[u] / (u^2 + 1) for both bn254 and bls12-381.
     let (c0, c1) = match FIELD_OP {
-        FP_FIELD_ADD => ((ac0 + bc0) % modulus, (ac1 + bc1) % modulus),
+        FP_FIELD_ADD => (a0 + b0, a1 + b1),
         FP_FIELD_SUB => {
-            if ac0 + modulus < *bc0 || ac1 + modulus < *bc1 {
+            // Each limb follows the raw-integer rule: `b` may not exceed `a + p`.
+            let modulus = modulus_le::<P::Fq, NUM_BYTES>();
+            if le_add_lt(&ac0, &modulus, &bc0) || le_add_lt(&ac1, &modulus, &bc1) {
                 return Err(ExitCode::MalformedBuiltinParams);
             }
-            (
-                (ac0 + modulus - bc0) % modulus,
-                (ac1 + modulus - bc1) % modulus,
-            )
+            (a0 - b0, a1 - b1)
         }
-        FP_FIELD_MUL => {
-            let c0 = match (ac0 * bc0) % modulus < (ac1 * bc1) % modulus {
-                true => ((modulus + (ac0 * bc0) % modulus) - (ac1 * bc1) % modulus) % modulus,
-                false => ((ac0 * bc0) % modulus - (ac1 * bc1) % modulus) % modulus,
-            };
-            let c1 = ((ac0 * bc1) % modulus + (ac1 * bc0) % modulus) % modulus;
-            (c0, c1)
-        }
+        FP_FIELD_MUL => (a0 * b0 - a1 * b1, a0 * b1 + a1 * b0),
         _ => unreachable!(),
     };
-    let mut res0 = c0.to_bytes_le();
-    res0.resize(NUM_BYTES, 0);
-    let mut res1 = c1.to_bytes_le();
-    res1.resize(NUM_BYTES, 0);
-    let result: ([u8; NUM_BYTES], [u8; NUM_BYTES]) = (
-        res0.try_into().expect("length checked"),
-        res1.try_into().expect("length checked"),
-    );
-    Ok(result)
+    Ok((fe_to_le(c0), fe_to_le(c1)))
 }
 
 #[cfg(test)]
@@ -212,6 +198,7 @@ mod tests {
     use super::*;
     use crate::executor::{RuntimeExecutor, RuntimeFactoryExecutor};
     use fluentbase_types::{import_linker_v1_preview, Address, BytecodeOrHash, B256};
+    use num::BigUint;
     use rand::Rng;
     use rwasm::{CompilationConfig, RwasmModule};
     use std::str::FromStr;

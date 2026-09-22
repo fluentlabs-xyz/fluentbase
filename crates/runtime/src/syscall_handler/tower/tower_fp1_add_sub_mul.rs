@@ -1,6 +1,8 @@
+use crate::syscall_handler::native_field::{
+    fe_from_le, fe_to_le, le_add_lt, modulus_le, NativeField,
+};
 use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
 use fluentbase_types::{ExitCode, BLS12381_FP_SIZE, BN254_FP_SIZE};
-use num::BigUint;
 use rwasm::{StoreTr, TrapCode, Value};
 use sp1_curves::weierstrass::{bls12_381::Bls12381BaseField, bn254::Bn254BaseField, FpOpField};
 
@@ -65,7 +67,7 @@ const FP_FIELD_MUL: u32 = 0x03;
 
 pub(crate) fn syscall_tower_fp1_add_sub_mul_handler<
     const NUM_BYTES: usize,
-    P: FpOpField,
+    P: FpOpField + NativeField,
     const FIELD_OP: u32,
 >(
     ctx: &mut impl StoreTr<RuntimeContext>,
@@ -127,35 +129,33 @@ pub fn syscall_tower_fp1_bls12381_mul_impl(
 
 pub(crate) fn syscall_tower_fp1_add_sub_mul_impl<
     const NUM_BYTES: usize,
-    P: FpOpField,
+    P: FpOpField + NativeField,
     const FIELD_OP: u32,
 >(
     x: [u8; NUM_BYTES],
     y: [u8; NUM_BYTES],
 ) -> Result<[u8; NUM_BYTES], ExitCode> {
-    let modulus = &BigUint::from_bytes_le(P::MODULUS);
-    let a = BigUint::from_bytes_le(&x);
-    let b = BigUint::from_bytes_le(&y);
+    let a: P::Fq = fe_from_le(&x);
+    let b: P::Fq = fe_from_le(&y);
     let result = match FIELD_OP {
-        FP_FIELD_ADD => (a + b) % modulus,
+        FP_FIELD_ADD => a + b,
         FP_FIELD_SUB => {
-            if &a + modulus < b {
+            // The rule is on the raw integers: `b` may not exceed `a + p`.
+            if le_add_lt(&x, &modulus_le::<P::Fq, NUM_BYTES>(), &y) {
                 return Err(ExitCode::MalformedBuiltinParams);
             }
-            ((a + modulus) - b) % modulus
+            a - b
         }
-        FP_FIELD_MUL => (a * b) % modulus,
+        FP_FIELD_MUL => a * b,
         _ => unreachable!(),
     };
-    let mut result = result.to_bytes_le();
-    result.resize(NUM_BYTES, 0);
-    let result: [u8; NUM_BYTES] = result.try_into().expect("length checked");
-    Ok(result)
+    Ok(fe_to_le(result))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use num::BigUint;
     use rand::Rng;
     use std::str::FromStr;
 

@@ -17,7 +17,7 @@ use fluentbase_types::{
 };
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use num::BigUint;
-use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
+use rand::{rngs::StdRng, Rng, SeedableRng};
 use sp1_curves::{
     params::FieldParameters,
     weierstrass::{
@@ -224,9 +224,12 @@ fn write_le(dst: &mut [u8], v: &BigUint) {
 /// rejected, coordinates at or above the modulus are rejected, and adding `P` to `-P` yields
 /// what the SP1 formula yields when the slope denominator is zero (the inverse of zero is zero):
 /// `x3 = -2 * px`, `y3 = -py`.
+/// `(p, q, p + q, 2p)` in the syscall encoding.
+type CurveCase<const N: usize> = ([u8; N], [u8; N], [u8; N], [u8; N]);
+
 fn check_curve<const N: usize>(
     modulus: &BigUint,
-    points: &[([u8; N], [u8; N], [u8; N], [u8; N])], // (p, q, p + q, 2p)
+    points: &[CurveCase<N>],
     add: impl Fn([u8; N], [u8; N]) -> Result<[u8; N], ExitCode>,
     double: impl Fn([u8; N]) -> Result<[u8; N], ExitCode>,
 ) {
@@ -267,7 +270,7 @@ fn check_curve<const N: usize>(
     }
 }
 
-fn ark_curve_points<C: AffineRepr, const N: usize>() -> Vec<([u8; N], [u8; N], [u8; N], [u8; N])>
+fn ark_curve_points<C: AffineRepr, const N: usize>() -> Vec<CurveCase<N>>
 where
     C::BaseField: PrimeField,
 {

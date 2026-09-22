@@ -1,19 +1,16 @@
+use crate::syscall_handler::native_field::{
+    encode_point, fe_from_le, le_ge, modulus_le, NativeCurve,
+};
 use crate::{syscall_handler::syscall_process_exit_code, RuntimeContext};
+use ark_ff::{AdditiveGroup, Field};
 use fluentbase_types::{
     ExitCode, BLS12381_G1_RAW_AFFINE_SIZE, BN254_G1_RAW_AFFINE_SIZE, SECP256K1_G1_RAW_AFFINE_SIZE,
     SECP256R1_G1_RAW_AFFINE_SIZE,
 };
-use num::BigUint;
 use rwasm::{StoreTr, TrapCode, Value};
 use sp1_curves::{
-    params::FieldParameters,
-    weierstrass::{
-        bls12_381::{Bls12381, Bls12381BaseField},
-        bn254::{Bn254, Bn254BaseField},
-        secp256k1::{Secp256k1, Secp256k1BaseField},
-        secp256r1::{Secp256r1, Secp256r1BaseField},
-    },
-    AffinePoint, EllipticCurve,
+    weierstrass::{bls12_381::Bls12381, bn254::Bn254, secp256k1::Secp256k1, secp256r1::Secp256r1},
+    EllipticCurve,
 };
 
 pub fn syscall_secp256k1_double_handler(
@@ -21,47 +18,37 @@ pub fn syscall_secp256k1_double_handler(
     params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    syscall_weierstrass_double_handler::<
-        Secp256k1,
-        Secp256k1BaseField,
-        { SECP256K1_G1_RAW_AFFINE_SIZE },
-    >(ctx, params, result)
+    syscall_weierstrass_double_handler::<Secp256k1, { SECP256K1_G1_RAW_AFFINE_SIZE }>(
+        ctx, params, result,
+    )
 }
 pub fn syscall_secp256r1_double_handler(
     ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    syscall_weierstrass_double_handler::<
-        Secp256r1,
-        Secp256r1BaseField,
-        { SECP256R1_G1_RAW_AFFINE_SIZE },
-    >(ctx, params, result)
+    syscall_weierstrass_double_handler::<Secp256r1, { SECP256R1_G1_RAW_AFFINE_SIZE }>(
+        ctx, params, result,
+    )
 }
 pub fn syscall_bn254_double_handler(
     ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    syscall_weierstrass_double_handler::<Bn254, Bn254BaseField, { BN254_G1_RAW_AFFINE_SIZE }>(
-        ctx, params, result,
-    )
+    syscall_weierstrass_double_handler::<Bn254, { BN254_G1_RAW_AFFINE_SIZE }>(ctx, params, result)
 }
 pub fn syscall_bls12381_double_handler(
     ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     result: &mut [Value],
 ) -> Result<(), TrapCode> {
-    syscall_weierstrass_double_handler::<Bls12381, Bls12381BaseField, { BLS12381_G1_RAW_AFFINE_SIZE }>(
+    syscall_weierstrass_double_handler::<Bls12381, { BLS12381_G1_RAW_AFFINE_SIZE }>(
         ctx, params, result,
     )
 }
 
-fn syscall_weierstrass_double_handler<
-    E: EllipticCurve,
-    P: FieldParameters,
-    const POINT_SIZE: usize,
->(
+fn syscall_weierstrass_double_handler<E: EllipticCurve + NativeCurve, const POINT_SIZE: usize>(
     ctx: &mut impl StoreTr<RuntimeContext>,
     params: &[Value],
     _result: &mut [Value],
@@ -71,7 +58,7 @@ fn syscall_weierstrass_double_handler<
     let mut p = [0u8; POINT_SIZE];
     ctx.memory_read(p_ptr as usize, &mut p)?;
 
-    let result = syscall_weierstrass_double_impl::<E, P, POINT_SIZE>(p)
+    let result = syscall_weierstrass_double_impl::<E, POINT_SIZE>(p)
         .map_err(|exit_code| syscall_process_exit_code(ctx, exit_code))?;
     ctx.memory_write(p_ptr as usize, &result)?;
 
@@ -90,9 +77,7 @@ fn syscall_weierstrass_double_handler<
 pub fn syscall_secp256k1_double_impl(
     p: [u8; SECP256K1_G1_RAW_AFFINE_SIZE],
 ) -> Result<[u8; SECP256K1_G1_RAW_AFFINE_SIZE], ExitCode> {
-    syscall_weierstrass_double_impl::<Secp256k1, Secp256k1BaseField, { SECP256K1_G1_RAW_AFFINE_SIZE }>(
-        p,
-    )
+    syscall_weierstrass_double_impl::<Secp256k1, { SECP256K1_G1_RAW_AFFINE_SIZE }>(p)
 }
 
 /// Secp256r1 curve point doubling.
@@ -107,9 +92,7 @@ pub fn syscall_secp256k1_double_impl(
 pub fn syscall_secp256r1_double_impl(
     p: [u8; SECP256R1_G1_RAW_AFFINE_SIZE],
 ) -> Result<[u8; SECP256R1_G1_RAW_AFFINE_SIZE], ExitCode> {
-    syscall_weierstrass_double_impl::<Secp256r1, Secp256r1BaseField, { SECP256R1_G1_RAW_AFFINE_SIZE }>(
-        p,
-    )
+    syscall_weierstrass_double_impl::<Secp256r1, { SECP256R1_G1_RAW_AFFINE_SIZE }>(p)
 }
 
 /// BN254 curve point doubling.
@@ -124,7 +107,7 @@ pub fn syscall_secp256r1_double_impl(
 pub fn syscall_bn254_double_impl(
     p: [u8; BN254_G1_RAW_AFFINE_SIZE],
 ) -> Result<[u8; BN254_G1_RAW_AFFINE_SIZE], ExitCode> {
-    syscall_weierstrass_double_impl::<Bn254, Bn254BaseField, { BN254_G1_RAW_AFFINE_SIZE }>(p)
+    syscall_weierstrass_double_impl::<Bn254, { BN254_G1_RAW_AFFINE_SIZE }>(p)
 }
 
 /// BLS12-381 curve point doubling.
@@ -139,36 +122,27 @@ pub fn syscall_bn254_double_impl(
 pub fn syscall_bls12381_double_impl(
     p: [u8; BLS12381_G1_RAW_AFFINE_SIZE],
 ) -> Result<[u8; BLS12381_G1_RAW_AFFINE_SIZE], ExitCode> {
-    syscall_weierstrass_double_impl::<Bls12381, Bls12381BaseField, { BLS12381_G1_RAW_AFFINE_SIZE }>(
-        p,
-    )
+    syscall_weierstrass_double_impl::<Bls12381, { BLS12381_G1_RAW_AFFINE_SIZE }>(p)
 }
 
-fn syscall_weierstrass_double_impl<
-    E: EllipticCurve,
-    P: FieldParameters,
-    const POINT_SIZE: usize,
->(
+fn syscall_weierstrass_double_impl<E: EllipticCurve + NativeCurve, const POINT_SIZE: usize>(
     p: [u8; POINT_SIZE],
 ) -> Result<[u8; POINT_SIZE], ExitCode> {
-    let (px, py) = p.split_at(p.len() / 2);
-    let (px, py) = (BigUint::from_bytes_le(px), BigUint::from_bytes_le(py));
+    let half = POINT_SIZE / 2;
     // Make sure px/py are always less than modulus (to avoid neg underflow)
-    let modulus = P::modulus();
-    if px >= modulus || py >= modulus {
+    let modulus = modulus_le::<E::Fq, POINT_SIZE>();
+    let modulus = &modulus[..half];
+    if le_ge(&p[..half], modulus) || le_ge(&p[half..], modulus) {
         return Err(ExitCode::MalformedBuiltinParams);
     }
-    let p_affine = AffinePoint::<E>::new(px, py);
-    let result_affine = E::ec_double(&p_affine);
-    let (rx, ry) = (result_affine.x, result_affine.y);
-    let mut result = [0u8; POINT_SIZE];
-    let mut rx = rx.to_bytes_le();
-    rx.resize(POINT_SIZE / 2, 0);
-    let mut ry = ry.to_bytes_le();
-    ry.resize(POINT_SIZE / 2, 0);
-    result[..POINT_SIZE / 2].copy_from_slice(&rx);
-    result[POINT_SIZE / 2..].copy_from_slice(&ry);
-    Ok(result)
+    let x: E::Fq = fe_from_le(&p[..half]);
+    let y: E::Fq = fe_from_le(&p[half..]);
+    // SP1's doubling formula; a zero denominator (`y == 0`) inverts to zero.
+    let slope = (x.square().double() + x.square() + E::coeff_a())
+        * y.double().inverse().unwrap_or(E::Fq::ZERO);
+    let x3 = slope.square() - x.double();
+    let y3 = slope * (x - x3) - y;
+    Ok(encode_point::<E::Fq, POINT_SIZE>(x3, y3))
 }
 
 #[cfg(test)]

@@ -30,6 +30,12 @@ sha2 = { workspace = true, default-features = false }
 #solana-poseidon = { workspace = true }
 num = "0.4.3"
 sp1-curves = { workspace = true }
+# Fixed-width field and curve arithmetic behind the tower and weierstrass syscalls.
+ark-bn254 = { workspace = true, features = ["curve"] }
+ark-bls12-381 = { version = "0.5", default-features = false, features = ["curve"] }
+ark-secp256k1 = { version = "0.5", default-features = false }
+ark-secp256r1 = { version = "0.5", default-features = false }
+ark-ff = { workspace = true }
 bytemuck = { workspace = true }
 schnellru = { workspace = true }
 metrics = { workspace = true, optional = true }
@@ -41,11 +47,8 @@ amcl = { package = "snowbridge-amcl", version = "1.0.2", default-features = fals
 sha2 = { workspace = true, default-features = false }
 rand = "0.9.2"
 wat = "1.223.0"
-ark-bn254 = { workspace = true, features = ["curve"] }
-ark-bls12-381 = { version = "0.5", default-features = false, features = ["curve"] }
-ark-ec = { workspace = true }
-ark-ff = { workspace = true }
 ark-std = { version = "0.5", default-features = false }
+ark-ec = { workspace = true }
 
 [features]
 default = ["std"]

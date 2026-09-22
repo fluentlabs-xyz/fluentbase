@@ -14,6 +14,7 @@ mod weierstrass;
 pub use weierstrass::*;
 mod tower;
 pub use tower::*;
+pub(crate) mod native_field;
 #[cfg(test)]
 mod reference_tests;
 
