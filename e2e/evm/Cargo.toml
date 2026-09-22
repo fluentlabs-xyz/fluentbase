@@ -61,3 +61,8 @@ wasmtime = [
 # A single codegen unit keeps the same compile at ~1.6 GiB.
 [profile.release.package.fluentbase-genesis]
 codegen-units = 1
+
+[patch.crates-io]
+# rwasm with the wide-arithmetic proposal (rwasm#216 + rwasm#217), pending a release; keep in
+# step with the root manifest so this suite decodes the same genesis bytecode
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm.git", branch = "dmitry/flu-1464-wide-arithmetic" }

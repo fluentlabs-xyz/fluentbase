@@ -290,6 +290,8 @@ fluentbase-testing = { path = "./crates/testing" }
 fluentbase-types = { path = "./crates/types" }
 
 [patch.crates-io]
+# rwasm with the wide-arithmetic proposal (rwasm#216 + rwasm#217), pending a release
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm.git", branch = "dmitry/flu-1464-wide-arithmetic" }
 # reth
 reth-codecs = { git = "https://github.com/fluentlabs-xyz/reth-core-rwasm", branch = "v0.3.1-patched" }
 reth-primitives-traits = { git = "https://github.com/fluentlabs-xyz/reth-core-rwasm", branch = "v0.3.1-patched" }
