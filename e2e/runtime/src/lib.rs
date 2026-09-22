@@ -38,6 +38,8 @@ mod builtins;
 #[cfg(test)]
 mod constructor;
 #[cfg(test)]
+mod crypto_syscalls;
+#[cfg(test)]
 mod deployer;
 #[cfg(test)]
 mod eip2935;

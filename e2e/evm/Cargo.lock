@@ -2195,6 +2195,7 @@ dependencies = [
  "metrics",
  "num",
  "p256",
+ "revm-precompile",
  "rwasm",
  "schnellru",
  "sha2",
