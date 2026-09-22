@@ -7,7 +7,6 @@ edition = "2021"
 fluentbase-sdk = { workspace = true }
 sha2 = { version = "0.10", default-features = false }
 revm-precompile = { workspace = true }
-fluentbase-precompile-crypto = { workspace = true }
 
 [dev-dependencies]
 fluentbase-testing = { workspace = true }
@@ -24,5 +23,5 @@ path = "src/lib.rs"
 
 [features]
 default = ["std"]
-std = ["fluentbase-sdk/std", "fluentbase-testing/std", "fluentbase-precompile-crypto/std"]
+std = ["fluentbase-sdk/std", "fluentbase-testing/std"]
 debug-print = ["fluentbase-sdk/debug-print", "fluentbase-testing/debug-print"]

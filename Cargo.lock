@@ -4964,15 +4964,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-precompile-crypto"
-version = "1.5.0"
-dependencies = [
- "fluentbase-crypto",
- "fluentbase-types",
- "revm-precompile",
-]
-
-[[package]]
 name = "fluentbase-release-verify"
 version = "1.5.0"
 dependencies = [

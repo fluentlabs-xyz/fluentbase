@@ -22,8 +22,6 @@ use revm_precompile::{
 /// - Returns a 32-byte value ending in 1 if the signature is valid
 /// - Returns an empty byte array if the signature is invalid
 pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
-    // Route revm-precompile's arithmetic to the host through the crypto syscalls.
-    fluentbase_precompile_crypto::install();
     let input = sdk.bytes_input();
     sdk.sync_evm_gas(P256VERIFY_BASE_GAS_FEE_OSAKA)?;
     let result = p256_verify_osaka(input.as_ref(), u64::MAX).map_err(|err| match err {

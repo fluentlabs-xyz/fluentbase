@@ -6,7 +6,9 @@ edition = "2021"
 [dependencies]
 fluentbase-sdk = { workspace = true }
 revm-precompile = { workspace = true }
-fluentbase-precompile-crypto = { workspace = true }
+ark-bn254 = { version = "0.5.0", default-features = false }
+ark-ec = { version = "0.5.0", default-features = false }
+ark-serialize = { version = "0.5.0", default-features = false }
 
 [dev-dependencies]
 fluentbase-testing = { workspace = true }
@@ -17,5 +19,5 @@ path = "src/lib.rs"
 
 [features]
 default = ["std"]
-std = ["fluentbase-sdk/std", "fluentbase-testing/std", "fluentbase-precompile-crypto/std"]
+std = ["fluentbase-sdk/std", "fluentbase-testing/std"]
 debug-print = ["fluentbase-sdk/debug-print", "fluentbase-testing/debug-print"]

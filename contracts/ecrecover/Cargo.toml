@@ -6,7 +6,6 @@ edition = "2021"
 [dependencies]
 fluentbase-sdk = { workspace = true, features = [] }
 revm-precompile = { workspace = true }
-fluentbase-precompile-crypto = { workspace = true }
 #ecdsa = { workspace = true }
 #k256 = { workspace = true }
 
@@ -19,5 +18,5 @@ path = "src/lib.rs"
 
 [features]
 default = ["std"]
-std = ["fluentbase-sdk/std", "revm-precompile/std", "fluentbase-testing/std", "fluentbase-precompile-crypto/std"]
+std = ["fluentbase-sdk/std", "revm-precompile/std", "fluentbase-testing/std"]
 debug-print = ["fluentbase-sdk/debug-print", "fluentbase-testing/debug-print"]
