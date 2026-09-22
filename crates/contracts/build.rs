@@ -74,6 +74,12 @@ fn contracts_build_args(fluentbase_root_dir: &Path) -> BuildArgs {
         locked: true,
         ignore_default_rust_flags: env_bool("FLUENTBASE_CONTRACTS_IGNORE_DEFAULT_RUST_FLAGS")
             .unwrap_or(has_contracts_cargo_config),
+        // The wide-arithmetic proposal (`i64.mul_wide_*`, `i64.add128`, `i64.sub128`) for the
+        // big-integer arithmetic of the crypto guests; rwasm lowers the four instructions to
+        // single opcodes on both backends. Passed explicitly because a non-empty
+        // `CARGO_ENCODED_RUSTFLAGS` is what the guest build sees, whatever
+        // `contracts/.cargo/config.toml` says. rustc still marks the feature unstable and warns.
+        rustflags: vec!["-Ctarget-feature=+wide-arithmetic".to_string()],
         ..BuildArgs::default()
     }
 }
