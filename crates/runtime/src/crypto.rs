@@ -9,6 +9,23 @@ use fluentbase_types::{
 #[rustfmt::skip]
 impl CryptoAPI for RuntimeContextWrapper {
     #[inline(always)]
+    fn crypto_syscall(op: fluentbase_types::CryptoSyscall, input: &[u8], output: &mut [u8]) -> i32 {
+        #[cfg(feature = "std")]
+        {
+            if !op.accepts_input_len(input.len()) || output.len() != op.output_len() {
+                return fluentbase_types::CryptoSyscallError::InvalidInput as i32;
+            }
+            crate::syscall_handler::crypto::syscall_crypto_impl(op, input, output)
+                .map_or_else(|code| code as i32, |()| 0)
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            let _ = (op, input, output);
+            fluentbase_types::CryptoSyscallError::Other as i32
+        }
+    }
+
+    #[inline(always)]
     fn keccak256_permute(state: &mut [u64; 25]) {
         syscall_hashing_keccak256_permute_impl(state);
     }

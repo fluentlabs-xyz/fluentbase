@@ -16,6 +16,12 @@ pub struct RuntimeContext {
     pub execution_result: ExecutionResult,
     /// Deferred invocation metadata used to resume an interrupted call.
     pub resumable_context: Option<InterruptionHolder>,
+    /// Whether the engine meters this invocation (instructions and builtins).
+    ///
+    /// `true` for contracts and engine-metered system runtimes; `false` for self-metered system
+    /// runtimes, which account for gas themselves through `_charge_fuel` and must not be charged
+    /// again by builtins that price their own work, such as the crypto syscalls.
+    pub engine_metered: bool,
 }
 
 impl Default for RuntimeContext {
@@ -27,6 +33,7 @@ impl Default for RuntimeContext {
             input: Bytes::default(),
             execution_result: ExecutionResult::default(),
             resumable_context: None,
+            engine_metered: true,
         }
     }
 }
@@ -35,6 +42,12 @@ impl RuntimeContext {
     /// Sets the fuel limit for this context.
     pub fn with_fuel_limit(mut self, fuel_limit: u64) -> Self {
         self.fuel_limit = fuel_limit;
+        self
+    }
+
+    /// Records whether the engine meters this invocation (see [`Self::engine_metered`]).
+    pub fn with_engine_metered(mut self, engine_metered: bool) -> Self {
+        self.engine_metered = engine_metered;
         self
     }
 

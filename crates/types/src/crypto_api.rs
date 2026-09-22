@@ -133,6 +133,12 @@ pub trait CryptoAPI {
     /// Input: affine x||y; Output: affine x||y.
     fn bn254_double(p: [u8; BN254_G1_RAW_AFFINE_SIZE]) -> [u8; BN254_G1_RAW_AFFINE_SIZE];
 
+    /// Runs one precompile-level crypto operation (see [`crate::CryptoSyscall`]).
+    ///
+    /// `input` is the operation payload, `output` must be `op.output_len()` bytes and receives
+    /// the result on success. Returns `0` on success or a [`crate::CryptoSyscallError`] code.
+    fn crypto_syscall(op: crate::CryptoSyscall, input: &[u8], output: &mut [u8]) -> i32;
+
     /// Compute (x * y) mod m for 256-bit integers.
     /// Inputs: `x`, `y`, `m` are 32-byte little-endian;
     /// Output: 32-byte little-endian result in [0, m).

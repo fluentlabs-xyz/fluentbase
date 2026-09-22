@@ -119,6 +119,65 @@ extern "C" {
     pub fn _bn254_add(p_ptr: *mut u8, q_ptr: *const u8);
     pub fn _bn254_double(p_ptr: *mut u8);
 
+    // EVM precompile crypto (0x09)
+    pub fn _crypto_bls12381_g1_add(
+        input_ptr: *const u8,
+        input_len: u32,
+        output_ptr: *mut u8,
+    ) -> i32;
+    pub fn _crypto_bls12381_g1_msm(
+        input_ptr: *const u8,
+        input_len: u32,
+        output_ptr: *mut u8,
+    ) -> i32;
+    pub fn _crypto_bls12381_g2_add(
+        input_ptr: *const u8,
+        input_len: u32,
+        output_ptr: *mut u8,
+    ) -> i32;
+    pub fn _crypto_bls12381_g2_msm(
+        input_ptr: *const u8,
+        input_len: u32,
+        output_ptr: *mut u8,
+    ) -> i32;
+    pub fn _crypto_bls12381_pairing_check(
+        input_ptr: *const u8,
+        input_len: u32,
+        output_ptr: *mut u8,
+    ) -> i32;
+    pub fn _crypto_bls12381_map_fp_to_g1(
+        input_ptr: *const u8,
+        input_len: u32,
+        output_ptr: *mut u8,
+    ) -> i32;
+    pub fn _crypto_bls12381_map_fp2_to_g2(
+        input_ptr: *const u8,
+        input_len: u32,
+        output_ptr: *mut u8,
+    ) -> i32;
+    pub fn _crypto_bn254_g1_add(input_ptr: *const u8, input_len: u32, output_ptr: *mut u8) -> i32;
+    pub fn _crypto_bn254_g1_mul(input_ptr: *const u8, input_len: u32, output_ptr: *mut u8) -> i32;
+    pub fn _crypto_bn254_pairing_check(
+        input_ptr: *const u8,
+        input_len: u32,
+        output_ptr: *mut u8,
+    ) -> i32;
+    pub fn _crypto_secp256k1_ecrecover(
+        input_ptr: *const u8,
+        input_len: u32,
+        output_ptr: *mut u8,
+    ) -> i32;
+    pub fn _crypto_secp256r1_verify(
+        input_ptr: *const u8,
+        input_len: u32,
+        output_ptr: *mut u8,
+    ) -> i32;
+    pub fn _crypto_kzg_verify_proof(
+        input_ptr: *const u8,
+        input_len: u32,
+        output_ptr: *mut u8,
+    ) -> i32;
+
     // uint256 (0x08)
     pub fn _uint256_mul_mod(x32_ptr: *mut u8, y32_ptr: *const u8, m32_ptr: *const u8);
     pub fn _uint256_x2048_mul(a_ptr: *const u8, b_ptr: *const u8, lo_ptr: *mut u8, hi_ptr: *mut u8);

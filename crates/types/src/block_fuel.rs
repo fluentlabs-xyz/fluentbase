@@ -193,6 +193,21 @@ pub(crate) fn calculate_syscall_fuel(sys_func_idx: SysFuncIdx) -> SyscallFuelPar
         BN254_ADD => const_fuel!(BN254_ADD_COST),
         BN254_DOUBLE => const_fuel!(BN254_DOUBLE_COST),
 
+        // EVM precompile crypto (0x09): engine-metered callers are charged the EIP gas of the
+        // payload by the handler, self-metered system runtimes charge it themselves.
+        CRYPTO_BLS12381_G1_ADD => no_fuel!(),
+        CRYPTO_BLS12381_G1_MSM => no_fuel!(),
+        CRYPTO_BLS12381_G2_ADD => no_fuel!(),
+        CRYPTO_BLS12381_G2_MSM => no_fuel!(),
+        CRYPTO_BLS12381_PAIRING_CHECK => no_fuel!(),
+        CRYPTO_BLS12381_MAP_FP_TO_G1 => no_fuel!(),
+        CRYPTO_BLS12381_MAP_FP2_TO_G2 => no_fuel!(),
+        CRYPTO_BN254_G1_ADD => no_fuel!(),
+        CRYPTO_BN254_G1_MUL => no_fuel!(),
+        CRYPTO_BN254_PAIRING_CHECK => no_fuel!(),
+        CRYPTO_SECP256K1_ECRECOVER => no_fuel!(),
+        CRYPTO_SECP256R1_VERIFY => no_fuel!(),
+        CRYPTO_KZG_VERIFY_PROOF => no_fuel!(),
         // uint256 (0x08)
         UINT256_MUL_MOD => const_fuel!(UINT256_MUL_MOD_COST),
         UINT256_X2048_MUL => const_fuel!(UINT256_X2048_MUL_COST),
