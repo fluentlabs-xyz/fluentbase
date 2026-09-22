@@ -4,8 +4,8 @@ extern crate core;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{
-    crypto::CryptoRuntime, system_entrypoint, ContextReader, CryptoAPI, ExitCode, SystemAPI,
-    BN254_G1_RAW_AFFINE_SIZE, PRECOMPILE_BN256_ADD, PRECOMPILE_BN256_MUL, PRECOMPILE_BN256_PAIR,
+    system_entrypoint, ContextReader, ExitCode, SystemAPI, PRECOMPILE_BN256_ADD,
+    PRECOMPILE_BN256_MUL, PRECOMPILE_BN256_PAIR,
 };
 use revm_precompile::{
     bn254,
@@ -18,117 +18,23 @@ use revm_precompile::{
     PrecompileHalt,
 };
 
-const BN254_ADD_INPUT_SIZE: usize = BN254_G1_RAW_AFFINE_SIZE * 2;
-const COORDINATE_SIZE: usize = 32;
-
-#[inline]
-fn point_be_to_le(point: &mut [u8; BN254_G1_RAW_AFFINE_SIZE]) {
-    point[..COORDINATE_SIZE].reverse();
-    point[COORDINATE_SIZE..].reverse();
-}
-
-/// Converts a BN254 point from SP1's little-endian format back to Ethereum's big-endian format.
-#[inline]
-fn point_le_to_be(point: &mut [u8; BN254_G1_RAW_AFFINE_SIZE]) {
-    point[..COORDINATE_SIZE].reverse();
-    point[COORDINATE_SIZE..].reverse();
-}
-
-/// Checks if a point is the identity element (point at infinity, represented as (0,0)).
-#[inline]
-fn is_identity(point: &[u8; BN254_G1_RAW_AFFINE_SIZE]) -> bool {
-    *point == [0u8; BN254_G1_RAW_AFFINE_SIZE]
-}
-
-/// Checks if two points are inverses of each other (same x-coordinate, different y-coordinate).
-#[inline]
-fn are_inverses(p: &[u8; BN254_G1_RAW_AFFINE_SIZE], q: &[u8; BN254_G1_RAW_AFFINE_SIZE]) -> bool {
-    p[..COORDINATE_SIZE] == q[..COORDINATE_SIZE] && p[COORDINATE_SIZE..] != q[COORDINATE_SIZE..]
-}
-
-#[inline]
-fn is_valid_point(point: &[u8; BN254_G1_RAW_AFFINE_SIZE]) -> bool {
-    use ark_bn254::{Fq, G1Affine};
-    use ark_serialize::CanonicalDeserialize;
-
-    // Identity point (0,0) is always valid
-    if is_identity(point) {
-        return true;
-    }
-
-    // Extract x and y coordinates (big-endian, convert to little-endian for arkworks)
-    let mut x_bytes = [0u8; 32];
-    let mut y_bytes = [0u8; 32];
-    x_bytes.copy_from_slice(&point[..32]);
-    y_bytes.copy_from_slice(&point[32..]);
-    x_bytes.reverse(); // Convert to little-endian
-    y_bytes.reverse();
-
-    // Deserialize field elements - this checks they're < field modulus
-    let x = match Fq::deserialize_uncompressed(&x_bytes[..]) {
-        Ok(x) => x,
-        Err(_) => return false,
-    };
-    let y = match Fq::deserialize_uncompressed(&y_bytes[..]) {
-        Ok(y) => y,
-        Err(_) => return false,
-    };
-
-    // Create point without checking (to avoid assert)
-    let point = G1Affine::new_unchecked(x, y);
-
-    // Validate: 1) on curve, 2) in correct subgroup
-    point.is_on_curve() && point.is_in_correct_subgroup_assuming_on_curve()
-}
-
 pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    // Route revm-precompile's arithmetic to the host through the crypto syscalls.
+    fluentbase_precompile_crypto::install();
     let bytecode_address = sdk.context().contract_bytecode_address();
     let input = sdk.bytes_input();
 
     match bytecode_address {
         PRECOMPILE_BN256_ADD => {
             sdk.sync_evm_gas(ISTANBUL_ADD_GAS_COST)?;
-
-            // Pad input to 128 bytes (two 64-byte points) with zeros if needed
-            let mut padded_input = [0u8; BN254_ADD_INPUT_SIZE];
-            let copy_len = core::cmp::min(input.len(), BN254_ADD_INPUT_SIZE);
-            padded_input[..copy_len].copy_from_slice(&input[..copy_len]);
-
-            // Extract the two points from input (in big-endian format)
-            let p_be: [u8; BN254_G1_RAW_AFFINE_SIZE] =
-                padded_input[..BN254_G1_RAW_AFFINE_SIZE].try_into().unwrap();
-            let q_be: [u8; BN254_G1_RAW_AFFINE_SIZE] =
-                padded_input[BN254_G1_RAW_AFFINE_SIZE..].try_into().unwrap();
-
-            // Validate both points are either identity or on the curve
-            if !is_valid_point(&p_be) || !is_valid_point(&q_be) {
-                // Invalid point: fail the transaction by exiting with error
-                return Err(ExitCode::PrecompileError);
-            }
-
-            // Convert from Ethereum's big-endian to SP1's little-endian format
-            let mut p = p_be;
-            let mut q = q_be;
-
-            point_be_to_le(&mut p);
-            point_be_to_le(&mut q);
-
-            // Handle special cases for elliptic curve addition
-            let mut result = if is_identity(&p) {
-                q // Identity + Q = Q
-            } else if is_identity(&q) {
-                p // P + Identity = P
-            } else if p == q {
-                CryptoRuntime::bn254_double(p) // P + P = 2P (point doubling)
-            } else if are_inverses(&p, &q) {
-                [0u8; BN254_G1_RAW_AFFINE_SIZE] // P + (-P) = Identity
-            } else {
-                CryptoRuntime::bn254_add(p, q) // General case: P + Q
-            };
-
-            // Convert result back to Ethereum's big-endian format
-            point_le_to_be(&mut result);
-            sdk.write(result);
+            let result =
+                bn254::run_add(input.as_ref(), ISTANBUL_ADD_GAS_COST, u64::MAX).map_err(|err| {
+                    match err {
+                        PrecompileHalt::OutOfGas => ExitCode::OutOfFuel,
+                        _ => ExitCode::PrecompileError,
+                    }
+                })?;
+            sdk.write(result.bytes);
             Ok(())
         }
         PRECOMPILE_BN256_MUL => {

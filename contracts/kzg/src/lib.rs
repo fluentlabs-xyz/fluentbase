@@ -6,6 +6,8 @@ use fluentbase_sdk::{system_entrypoint, ContextReader, ExitCode, SystemAPI};
 use revm_precompile::PrecompileHalt;
 
 pub fn main_entry(sdk: &mut impl SystemAPI) -> Result<(), ExitCode> {
+    // Route revm-precompile's arithmetic to the host through the crypto syscalls.
+    fluentbase_precompile_crypto::install();
     // read full input data
     let gas_limit = sdk.context().contract_gas_limit();
     let input = sdk.bytes_input().clone();

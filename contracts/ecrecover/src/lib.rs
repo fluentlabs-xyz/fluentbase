@@ -4,9 +4,11 @@ extern crate core;
 extern crate fluentbase_sdk;
 
 use fluentbase_sdk::{system_entrypoint, ExitCode, SystemAPI, B256, B512};
-use revm_precompile::{secp256k1::ecrecover, utilities::right_pad};
+use revm_precompile::{crypto, utilities::right_pad};
 
 pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    // Route revm-precompile's arithmetic to the host through the crypto syscalls.
+    fluentbase_precompile_crypto::install();
     // Make sure we have enough gas for execution
     const ECRECOVER_BASE: u64 = 3_000;
     sdk.sync_evm_gas(ECRECOVER_BASE)?;
@@ -24,7 +26,7 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     let rec_id = input[63] - 27;
     let sig = <&B512>::try_from(&input[64..128]).unwrap();
 
-    if let Ok(result) = ecrecover(sig, rec_id, msg) {
+    if let Ok(result) = crypto().secp256k1_ecrecover(&sig.0, rec_id, &msg.0) {
         sdk.write(result);
     }
 
