@@ -39,8 +39,6 @@ ark-ff = { workspace = true }
 bytemuck = { workspace = true }
 schnellru = { workspace = true }
 metrics = { workspace = true, optional = true }
-# Host-side provider behind the precompile-level crypto syscalls (blst, k256, c-kzg).
-revm-precompile = { workspace = true, optional = true, features = ["std", "blst", "secp256k1", "c-kzg", "portable"] }
 amcl = { package = "snowbridge-amcl", version = "1.0.2", default-features = false, features = [
     "bls381",
 ] }
@@ -56,7 +54,6 @@ ark-ec = { workspace = true }
 default = ["std"]
 std = [
     "dep:metrics",
-    "dep:revm-precompile",
     "rwasm/std",
     "fluentbase-types/std",
 ]

@@ -120,21 +120,6 @@ pub fn import_linker_v1_preview() -> Arc<ImportLinker> {
     import_function!("_bn254_add", BN254_ADD, &[ValType::I32; 2], &[]);
     import_function!("_bn254_double", BN254_DOUBLE, &[ValType::I32; 1], &[]);
 
-    // EVM precompile crypto (0x09): `(input_ptr, input_len, output_ptr) -> code`
-    import_function!("_crypto_bls12381_g1_add", CRYPTO_BLS12381_G1_ADD, &[ValType::I32; 3], &[ValType::I32; 1]);
-    import_function!("_crypto_bls12381_g1_msm", CRYPTO_BLS12381_G1_MSM, &[ValType::I32; 3], &[ValType::I32; 1]);
-    import_function!("_crypto_bls12381_g2_add", CRYPTO_BLS12381_G2_ADD, &[ValType::I32; 3], &[ValType::I32; 1]);
-    import_function!("_crypto_bls12381_g2_msm", CRYPTO_BLS12381_G2_MSM, &[ValType::I32; 3], &[ValType::I32; 1]);
-    import_function!("_crypto_bls12381_pairing_check", CRYPTO_BLS12381_PAIRING_CHECK, &[ValType::I32; 3], &[ValType::I32; 1]);
-    import_function!("_crypto_bls12381_map_fp_to_g1", CRYPTO_BLS12381_MAP_FP_TO_G1, &[ValType::I32; 3], &[ValType::I32; 1]);
-    import_function!("_crypto_bls12381_map_fp2_to_g2", CRYPTO_BLS12381_MAP_FP2_TO_G2, &[ValType::I32; 3], &[ValType::I32; 1]);
-    import_function!("_crypto_bn254_g1_add", CRYPTO_BN254_G1_ADD, &[ValType::I32; 3], &[ValType::I32; 1]);
-    import_function!("_crypto_bn254_g1_mul", CRYPTO_BN254_G1_MUL, &[ValType::I32; 3], &[ValType::I32; 1]);
-    import_function!("_crypto_bn254_pairing_check", CRYPTO_BN254_PAIRING_CHECK, &[ValType::I32; 3], &[ValType::I32; 1]);
-    import_function!("_crypto_secp256k1_ecrecover", CRYPTO_SECP256K1_ECRECOVER, &[ValType::I32; 3], &[ValType::I32; 1]);
-    import_function!("_crypto_secp256r1_verify", CRYPTO_SECP256R1_VERIFY, &[ValType::I32; 3], &[ValType::I32; 1]);
-    import_function!("_crypto_kzg_verify_proof", CRYPTO_KZG_VERIFY_PROOF, &[ValType::I32; 3], &[ValType::I32; 1]);
-
     // uint256 (0x08)
     import_function!("_uint256_mul_mod", UINT256_MUL_MOD, &[ValType::I32; 3], &[]);
     import_function!("_uint256_x2048_mul", UINT256_X2048_MUL, &[ValType::I32; 4], &[]);

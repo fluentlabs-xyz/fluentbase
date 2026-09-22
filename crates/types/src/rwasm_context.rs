@@ -1,9 +1,8 @@
 use crate::{
-    BytecodeOrHash, CryptoAPI, CryptoSyscall, ExitCode, NativeAPI, BLS12381_FP_SIZE,
-    BLS12381_G1_COMPRESSED_SIZE, BLS12381_G1_RAW_AFFINE_SIZE, BN254_FP_SIZE,
-    BN254_G1_RAW_AFFINE_SIZE, ED25519_POINT_COMPRESSED_SIZE, ED25519_POINT_DECOMPRESSED_SIZE,
-    SECP256K1_G1_COMPRESSED_SIZE, SECP256K1_G1_RAW_AFFINE_SIZE, SECP256R1_G1_COMPRESSED_SIZE,
-    SECP256R1_G1_RAW_AFFINE_SIZE,
+    BytecodeOrHash, CryptoAPI, ExitCode, NativeAPI, BLS12381_FP_SIZE, BLS12381_G1_COMPRESSED_SIZE,
+    BLS12381_G1_RAW_AFFINE_SIZE, BN254_FP_SIZE, BN254_G1_RAW_AFFINE_SIZE,
+    ED25519_POINT_COMPRESSED_SIZE, ED25519_POINT_DECOMPRESSED_SIZE, SECP256K1_G1_COMPRESSED_SIZE,
+    SECP256K1_G1_RAW_AFFINE_SIZE, SECP256R1_G1_COMPRESSED_SIZE, SECP256R1_G1_RAW_AFFINE_SIZE,
 };
 use alloc::borrow::Cow;
 use core::convert::Into;
@@ -132,28 +131,6 @@ impl NativeAPI for RwasmContext {
 
 #[rustfmt::skip]
 impl CryptoAPI for RwasmContext {
-    #[inline(always)]
-    fn crypto_syscall(op: CryptoSyscall, input: &[u8], output: &mut [u8]) -> i32 {
-        if output.len() != op.output_len() {
-            return crate::crypto_syscalls::CryptoSyscallError::InvalidInput as i32;
-        }
-        match op {
-            CryptoSyscall::Bls12381G1Add => unsafe { _crypto_bls12381_g1_add(input.as_ptr(), input.len() as u32, output.as_mut_ptr()) },
-            CryptoSyscall::Bls12381G1Msm => unsafe { _crypto_bls12381_g1_msm(input.as_ptr(), input.len() as u32, output.as_mut_ptr()) },
-            CryptoSyscall::Bls12381G2Add => unsafe { _crypto_bls12381_g2_add(input.as_ptr(), input.len() as u32, output.as_mut_ptr()) },
-            CryptoSyscall::Bls12381G2Msm => unsafe { _crypto_bls12381_g2_msm(input.as_ptr(), input.len() as u32, output.as_mut_ptr()) },
-            CryptoSyscall::Bls12381PairingCheck => unsafe { _crypto_bls12381_pairing_check(input.as_ptr(), input.len() as u32, output.as_mut_ptr()) },
-            CryptoSyscall::Bls12381MapFpToG1 => unsafe { _crypto_bls12381_map_fp_to_g1(input.as_ptr(), input.len() as u32, output.as_mut_ptr()) },
-            CryptoSyscall::Bls12381MapFp2ToG2 => unsafe { _crypto_bls12381_map_fp2_to_g2(input.as_ptr(), input.len() as u32, output.as_mut_ptr()) },
-            CryptoSyscall::Bn254G1Add => unsafe { _crypto_bn254_g1_add(input.as_ptr(), input.len() as u32, output.as_mut_ptr()) },
-            CryptoSyscall::Bn254G1Mul => unsafe { _crypto_bn254_g1_mul(input.as_ptr(), input.len() as u32, output.as_mut_ptr()) },
-            CryptoSyscall::Bn254PairingCheck => unsafe { _crypto_bn254_pairing_check(input.as_ptr(), input.len() as u32, output.as_mut_ptr()) },
-            CryptoSyscall::Secp256k1Ecrecover => unsafe { _crypto_secp256k1_ecrecover(input.as_ptr(), input.len() as u32, output.as_mut_ptr()) },
-            CryptoSyscall::Secp256r1Verify => unsafe { _crypto_secp256r1_verify(input.as_ptr(), input.len() as u32, output.as_mut_ptr()) },
-            CryptoSyscall::KzgVerifyProof => unsafe { _crypto_kzg_verify_proof(input.as_ptr(), input.len() as u32, output.as_mut_ptr()) },
-        }
-    }
-
     #[inline(always)]
     fn keccak256_permute(state: &mut [u64; 25]) {
         unsafe { _keccak256_permute(state.as_mut_ptr() as *mut [u64; 25]) }

@@ -14,8 +14,6 @@ mod weierstrass;
 pub use weierstrass::*;
 mod tower;
 pub use tower::*;
-#[cfg(feature = "std")]
-pub mod crypto;
 pub(crate) mod native_field;
 #[cfg(test)]
 mod reference_tests;
@@ -109,60 +107,6 @@ pub fn invoke_runtime_handler(
         // bn254 (0x07)
         SysFuncIdx::BN254_ADD => syscall_bn254_add_handler(caller, params, result),
         SysFuncIdx::BN254_DOUBLE => syscall_bn254_double_handler(caller, params, result),
-
-        // EVM precompile crypto (0x09)
-        #[cfg(feature = "std")]
-        SysFuncIdx::CRYPTO_BLS12381_G1_ADD => crypto::syscall_crypto_handler(fluentbase_types::CryptoSyscall::Bls12381G1Add, caller, params, result),
-        #[cfg(not(feature = "std"))]
-        SysFuncIdx::CRYPTO_BLS12381_G1_ADD => Err(TrapCode::UnreachableCodeReached),
-        #[cfg(feature = "std")]
-        SysFuncIdx::CRYPTO_BLS12381_G1_MSM => crypto::syscall_crypto_handler(fluentbase_types::CryptoSyscall::Bls12381G1Msm, caller, params, result),
-        #[cfg(not(feature = "std"))]
-        SysFuncIdx::CRYPTO_BLS12381_G1_MSM => Err(TrapCode::UnreachableCodeReached),
-        #[cfg(feature = "std")]
-        SysFuncIdx::CRYPTO_BLS12381_G2_ADD => crypto::syscall_crypto_handler(fluentbase_types::CryptoSyscall::Bls12381G2Add, caller, params, result),
-        #[cfg(not(feature = "std"))]
-        SysFuncIdx::CRYPTO_BLS12381_G2_ADD => Err(TrapCode::UnreachableCodeReached),
-        #[cfg(feature = "std")]
-        SysFuncIdx::CRYPTO_BLS12381_G2_MSM => crypto::syscall_crypto_handler(fluentbase_types::CryptoSyscall::Bls12381G2Msm, caller, params, result),
-        #[cfg(not(feature = "std"))]
-        SysFuncIdx::CRYPTO_BLS12381_G2_MSM => Err(TrapCode::UnreachableCodeReached),
-        #[cfg(feature = "std")]
-        SysFuncIdx::CRYPTO_BLS12381_PAIRING_CHECK => crypto::syscall_crypto_handler(fluentbase_types::CryptoSyscall::Bls12381PairingCheck, caller, params, result),
-        #[cfg(not(feature = "std"))]
-        SysFuncIdx::CRYPTO_BLS12381_PAIRING_CHECK => Err(TrapCode::UnreachableCodeReached),
-        #[cfg(feature = "std")]
-        SysFuncIdx::CRYPTO_BLS12381_MAP_FP_TO_G1 => crypto::syscall_crypto_handler(fluentbase_types::CryptoSyscall::Bls12381MapFpToG1, caller, params, result),
-        #[cfg(not(feature = "std"))]
-        SysFuncIdx::CRYPTO_BLS12381_MAP_FP_TO_G1 => Err(TrapCode::UnreachableCodeReached),
-        #[cfg(feature = "std")]
-        SysFuncIdx::CRYPTO_BLS12381_MAP_FP2_TO_G2 => crypto::syscall_crypto_handler(fluentbase_types::CryptoSyscall::Bls12381MapFp2ToG2, caller, params, result),
-        #[cfg(not(feature = "std"))]
-        SysFuncIdx::CRYPTO_BLS12381_MAP_FP2_TO_G2 => Err(TrapCode::UnreachableCodeReached),
-        #[cfg(feature = "std")]
-        SysFuncIdx::CRYPTO_BN254_G1_ADD => crypto::syscall_crypto_handler(fluentbase_types::CryptoSyscall::Bn254G1Add, caller, params, result),
-        #[cfg(not(feature = "std"))]
-        SysFuncIdx::CRYPTO_BN254_G1_ADD => Err(TrapCode::UnreachableCodeReached),
-        #[cfg(feature = "std")]
-        SysFuncIdx::CRYPTO_BN254_G1_MUL => crypto::syscall_crypto_handler(fluentbase_types::CryptoSyscall::Bn254G1Mul, caller, params, result),
-        #[cfg(not(feature = "std"))]
-        SysFuncIdx::CRYPTO_BN254_G1_MUL => Err(TrapCode::UnreachableCodeReached),
-        #[cfg(feature = "std")]
-        SysFuncIdx::CRYPTO_BN254_PAIRING_CHECK => crypto::syscall_crypto_handler(fluentbase_types::CryptoSyscall::Bn254PairingCheck, caller, params, result),
-        #[cfg(not(feature = "std"))]
-        SysFuncIdx::CRYPTO_BN254_PAIRING_CHECK => Err(TrapCode::UnreachableCodeReached),
-        #[cfg(feature = "std")]
-        SysFuncIdx::CRYPTO_SECP256K1_ECRECOVER => crypto::syscall_crypto_handler(fluentbase_types::CryptoSyscall::Secp256k1Ecrecover, caller, params, result),
-        #[cfg(not(feature = "std"))]
-        SysFuncIdx::CRYPTO_SECP256K1_ECRECOVER => Err(TrapCode::UnreachableCodeReached),
-        #[cfg(feature = "std")]
-        SysFuncIdx::CRYPTO_SECP256R1_VERIFY => crypto::syscall_crypto_handler(fluentbase_types::CryptoSyscall::Secp256r1Verify, caller, params, result),
-        #[cfg(not(feature = "std"))]
-        SysFuncIdx::CRYPTO_SECP256R1_VERIFY => Err(TrapCode::UnreachableCodeReached),
-        #[cfg(feature = "std")]
-        SysFuncIdx::CRYPTO_KZG_VERIFY_PROOF => crypto::syscall_crypto_handler(fluentbase_types::CryptoSyscall::KzgVerifyProof, caller, params, result),
-        #[cfg(not(feature = "std"))]
-        SysFuncIdx::CRYPTO_KZG_VERIFY_PROOF => Err(TrapCode::UnreachableCodeReached),
 
         // uint256 (0x08)
         SysFuncIdx::UINT256_MUL_MOD => syscall_uint256_mul_mod_handler(caller, params, result),

@@ -5018,7 +5018,6 @@ dependencies = [
  "num",
  "p256",
  "rand 0.9.4",
- "revm-precompile",
  "rwasm",
  "schnellru",
  "sha2",

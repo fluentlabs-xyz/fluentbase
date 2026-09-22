@@ -167,7 +167,7 @@ impl SystemRuntime {
 
         Ok(Self {
             compiled_runtime,
-            ctx: ctx.with_engine_metered(consume_fuel),
+            ctx,
             cache_key,
             consume_fuel,
         })
