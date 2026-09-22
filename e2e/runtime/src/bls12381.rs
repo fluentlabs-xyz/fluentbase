@@ -2,7 +2,7 @@
 //!
 //! All seven BLS addresses run one guest rWasm module (`contracts/bls12381`) built from
 //! `revm-precompile`. The guest keeps the EIP gas schedule, input parsing and error semantics and
-//! installs the syscall-backed `Crypto` provider (`fluentbase-precompile-crypto`), so every
+//! installs the syscall-backed `Crypto` provider (`fluentbase_crypto::PrecompileCrypto`), so every
 //! pairing check, MSM and map crosses to the host in one `_crypto_*` syscall and runs on revm's
 //! `DefaultCrypto` (blst). Only parsing and gas accounting execute in the system runtime, through
 //! Wasmtime with the `wasmtime` feature or the rWasm interpreter without it, which is why both
@@ -152,7 +152,10 @@ fn timed_call(
 }
 
 fn pairing_input(pairs: usize) -> Vec<u8> {
-    assert!(pairs % 2 == 0, "the identity template holds two pairs");
+    assert!(
+        pairs.is_multiple_of(2),
+        "the identity template holds two pairs"
+    );
     PAIRING_IDENTITY_PAIRS.repeat(pairs / 2)
 }
 

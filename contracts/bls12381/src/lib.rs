@@ -132,6 +132,8 @@ fn map_fp2_to_g2_checked<SDK: SystemAPI>(sdk: &mut SDK) -> Result<EthPrecompileO
 }
 
 pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
+    // Route revm-precompile's arithmetic to the host through the crypto syscalls.
+    revm_precompile::install_crypto(fluentbase_crypto::PrecompileCrypto);
     let bytecode_address = sdk.context().contract_bytecode_address();
     // dispatch to SDK-backed implementation (w/ pre-gas/input checks)
     let result = match bytecode_address {

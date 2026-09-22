@@ -1986,6 +1986,7 @@ dependencies = [
 name = "fluentbase-contracts-bls12381"
 version = "0.1.0"
 dependencies = [
+ "fluentbase-crypto",
  "fluentbase-sdk",
  "fluentbase-testing",
  "revm-precompile",
@@ -1997,9 +1998,7 @@ dependencies = [
 name = "fluentbase-contracts-bn256"
 version = "0.1.0"
 dependencies = [
- "ark-bn254",
- "ark-ec",
- "ark-serialize 0.5.0",
+ "fluentbase-crypto",
  "fluentbase-sdk",
  "fluentbase-testing",
  "revm-precompile",
@@ -2009,6 +2008,7 @@ dependencies = [
 name = "fluentbase-contracts-ecrecover"
 version = "0.1.0"
 dependencies = [
+ "fluentbase-crypto",
  "fluentbase-sdk",
  "fluentbase-testing",
  "revm-precompile",
@@ -2026,6 +2026,7 @@ dependencies = [
 name = "fluentbase-contracts-eip7951"
 version = "0.1.0"
 dependencies = [
+ "fluentbase-crypto",
  "fluentbase-sdk",
  "fluentbase-testing",
  "hex",
@@ -2065,6 +2066,7 @@ dependencies = [
 name = "fluentbase-contracts-kzg"
 version = "0.1.0"
 dependencies = [
+ "fluentbase-crypto",
  "fluentbase-sdk",
  "fluentbase-testing",
  "revm-precompile",
@@ -2161,6 +2163,7 @@ dependencies = [
  "elliptic-curve",
  "fluentbase-runtime",
  "fluentbase-types",
+ "revm-precompile",
  "tiny-keccak",
 ]
 

@@ -22,6 +22,7 @@ fluentbase-evm = { path = "../crates/evm", default-features = false }
 #fluentbase-svm-common = { path = "../crates/svm-common", default-features = false }
 #fluentbase-svm = { path = "../crates/svm", default-features = false }
 fluentbase-testing = { path = "../crates/testing", default-features = false }
+fluentbase-crypto = { path = "../crates/crypto", default-features = false }
 # revm
 revm-precompile = { version = "34.0.0", git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v107-patched", default-features = false }
 # solana

@@ -17,9 +17,12 @@ elliptic-curve = { workspace = true }
 fluentbase-runtime = { workspace = true, optional = true }
 cfg-if = { workspace = true }
 tiny-keccak = { workspace = true }
+# revm-precompile `Crypto` provider over the precompile-level crypto syscalls.
+revm-precompile = { workspace = true, optional = true }
 
 [features]
 default = ["std"]
+revm-precompile = ["dep:revm-precompile"]
 serde = [
     "fluentbase-types/serde",
 ]

@@ -4832,6 +4832,7 @@ dependencies = [
  "elliptic-curve",
  "fluentbase-runtime",
  "fluentbase-types",
+ "revm-precompile",
  "tiny-keccak",
 ]
 

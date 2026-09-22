@@ -17,7 +17,11 @@ pub use sha256::*;
 mod blake3;
 mod keccak256;
 pub use keccak256::*;
+#[cfg(feature = "revm-precompile")]
+mod revm;
 pub mod utils;
+#[cfg(feature = "revm-precompile")]
+pub use revm::PrecompileCrypto;
 
 cfg_if::cfg_if! {
     if #[cfg(target_arch = "wasm32")] {
