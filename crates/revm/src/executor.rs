@@ -447,8 +447,10 @@ fn execute_rwasm_frame<CTX: ContextTr, INSP: Inspector<CTX>>(
     // On some networks we floor vs. ceil; keep the behavior feature-gated.
     let gas_consumed = fuel_consumed.div_ceil(FUEL_DENOM_RATE);
 
-    // Charge gas. If we cannot, halt with out-of-fuel.
+    // Charge gas. If we cannot, halt with out-of-fuel. The halt ends the frame, so a runtime the
+    // guest suspended under a positive exit code must not stay saved.
     if !interpreter.gas.record_regular_cost(gas_consumed) {
+        forget_suspended_runtime(exit_code);
         return Ok(NextAction::error(ExitCode::OutOfFuel, interpreter.gas));
     }
 
@@ -577,8 +579,10 @@ pub(crate) fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     // Convert consumed fuel into gas for REVM.
     let gas_consumed = fuel_consumed.div_ceil(FUEL_DENOM_RATE);
 
-    // Charge gas for the resumed segment.
+    // Charge gas for the resumed segment. The halt ends the frame, so a runtime the resumed
+    // segment suspended under a positive exit code must not stay saved.
     if !frame.interpreter.gas.record_regular_cost(gas_consumed) {
+        forget_suspended_runtime(exit_code);
         return Ok(NextAction::error(
             ExitCode::OutOfFuel,
             frame.interpreter.gas,
@@ -601,12 +605,27 @@ pub(crate) fn execute_rwasm_resume<CTX: ContextTr, INSP: Inspector<CTX>>(
     )?;
 
     // If the interruption resolves to a final return, forget the saved runtime state;
-    // otherwise we risk retaining contexts longer than necessary.
+    // otherwise we risk retaining contexts longer than necessary. `resume` already removed
+    // `call_id` itself; the runtime that may still be saved is the one the resumed segment
+    // suspended under the new exit code.
     if matches!(&result, NextAction::Return(_)) {
         default_runtime_executor().forget_runtime(call_id);
+        forget_suspended_runtime(exit_code);
     }
 
     Ok(result)
+}
+
+/// Drops the runtime a guest suspended under `exit_code`, if that exit code is a call id.
+///
+/// Positive exit codes identify a saved runtime awaiting resumption. Every path that ends the
+/// frame without servicing that interruption has to drop it: the executor only clears saved
+/// runtimes at the next transaction, and their memory counts against the in-flight limit that
+/// admits later rWasm calls of the same transaction.
+fn forget_suspended_runtime(exit_code: i32) {
+    if exit_code > 0 {
+        default_runtime_executor().forget_runtime(exit_code as u32);
+    }
 }
 
 /// If the currently executing bytecode address holds an `OwnableAccount` that delegates to the

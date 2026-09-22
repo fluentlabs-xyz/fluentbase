@@ -336,17 +336,16 @@ where
     const IS_DYNAMIC: bool = true;
 
     fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let aligned_offset = align_up::<ALIGN>(offset);
         let aligned_header_el_size = align_up::<ALIGN>(4);
         let aligned_header_size = align_up::<ALIGN>(Self::HEADER_SIZE);
 
         // Ensure buf is large enough for the header
-        if buf.len() < aligned_offset + aligned_header_size {
-            buf.resize(aligned_offset + aligned_header_size, 0);
+        if buf.len() < offset + aligned_header_size {
+            buf.resize(offset + aligned_header_size, 0);
         }
 
         // Write set size
-        write_u32_aligned::<B, ALIGN>(buf, aligned_offset, self.len() as u32);
+        write_u32_aligned::<B, ALIGN>(buf, offset, self.len() as u32);
 
         // Make sure a set is sorted
         let mut entries: Vec<_> = self.iter().collect();
@@ -362,7 +361,7 @@ where
         // Write values
         write_bytes::<B, ALIGN, false>(
             buf,
-            aligned_offset + aligned_header_el_size,
+            offset + aligned_header_el_size,
             &value_buf,
             entries.len() as u32,
         );
@@ -371,10 +370,9 @@ where
     }
 
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
-        let aligned_offset = align_up::<ALIGN>(offset);
         let aligned_header_size = align_up::<ALIGN>(Self::HEADER_SIZE);
 
-        let header_end = aligned_offset
+        let header_end = offset
             .checked_add(aligned_header_size)
             .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
 
@@ -386,9 +384,9 @@ where
             }));
         }
 
-        let length = read_u32_aligned::<B, ALIGN>(buf, aligned_offset)? as usize;
+        let length = read_u32_aligned::<B, ALIGN>(buf, offset)? as usize;
 
-        let data_header_offset = aligned_offset
+        let data_header_offset = offset
             .checked_add(align_up::<ALIGN>(4))
             .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
         let (data_offset, data_length) =
@@ -426,19 +424,18 @@ where
     }
 
     fn partial_decode(buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
-        let aligned_offset = align_up::<ALIGN>(offset);
         let aligned_header_size = align_up::<ALIGN>(Self::HEADER_SIZE);
 
-        if buf.remaining() < aligned_offset + aligned_header_size {
+        if buf.remaining() < offset + aligned_header_size {
             return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: aligned_offset + aligned_header_size,
+                expected: offset + aligned_header_size,
                 found: buf.remaining(),
                 msg: "Not enough data to decode HashSet header".to_string(),
             }));
         }
 
         let (data_offset, data_length) =
-            read_bytes_header::<B, ALIGN, false>(buf, aligned_offset + align_up::<ALIGN>(4))?;
+            read_bytes_header::<B, ALIGN, false>(buf, offset + align_up::<ALIGN>(4))?;
 
         Ok((data_offset, data_length))
     }
@@ -452,18 +449,16 @@ where
     const HEADER_SIZE: usize = 32 + 32 + 32; // offset + length + data_header
     const IS_DYNAMIC: bool = true;
     fn encode(&self, buf: &mut BytesMut, offset: usize) -> Result<(), CodecError> {
-        let aligned_offset = align_up::<ALIGN>(offset);
-
         // Ensure buf is large enough for the header
-        if buf.len() < aligned_offset + Self::HEADER_SIZE {
-            buf.resize(aligned_offset + Self::HEADER_SIZE, 0);
+        if buf.len() < offset + Self::HEADER_SIZE {
+            buf.resize(offset + Self::HEADER_SIZE, 0);
         }
 
         // Write offset size
-        write_u32_aligned::<B, ALIGN>(buf, aligned_offset, 32_u32);
+        write_u32_aligned::<B, ALIGN>(buf, offset, 32_u32);
 
         // Write set size
-        write_u32_aligned::<B, ALIGN>(buf, aligned_offset + 32, self.len() as u32);
+        write_u32_aligned::<B, ALIGN>(buf, offset + 32, self.len() as u32);
 
         // Make sure set is sorted
         let mut entries: Vec<_> = self.iter().collect();
@@ -477,8 +472,8 @@ where
         }
 
         // Write data offset
-        let relative_data_offset = buf.len() - aligned_offset - 64;
-        write_u32_aligned::<B, ALIGN>(buf, aligned_offset + 64, relative_data_offset as u32);
+        let relative_data_offset = buf.len() - offset - 64;
+        write_u32_aligned::<B, ALIGN>(buf, offset + 64, relative_data_offset as u32);
 
         // Write values
         write_bytes_solidity::<B, ALIGN>(buf, buf.len(), &value_buf, entries.len() as u32);
@@ -489,10 +484,8 @@ where
     fn decode(buf: &impl Buf, offset: usize) -> Result<Self, CodecError> {
         const DATA_OFFSET: usize = 32;
 
-        let aligned_offset = align_up::<ALIGN>(offset);
-
         // Check if there's enough data to read the header
-        let header_end = aligned_offset
+        let header_end = offset
             .checked_add(Self::HEADER_SIZE)
             .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
 
@@ -505,10 +498,10 @@ where
         }
 
         // Read data offset
-        let data_offset = read_u32_aligned::<B, ALIGN>(buf, aligned_offset)? as usize;
+        let data_offset = read_u32_aligned::<B, ALIGN>(buf, offset)? as usize;
 
         // Calculate start offset
-        let start_offset = aligned_offset
+        let start_offset = offset
             .checked_add(data_offset)
             .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
 
@@ -558,25 +551,24 @@ where
     }
 
     fn partial_decode(buf: &impl Buf, offset: usize) -> Result<(usize, usize), CodecError> {
-        let aligned_offset = align_up::<ALIGN>(offset);
         let aligned_header_size = align_up::<ALIGN>(Self::HEADER_SIZE);
 
-        if buf.remaining() < aligned_offset + aligned_header_size {
+        if buf.remaining() < offset + aligned_header_size {
             return Err(CodecError::Decoding(DecodingError::BufferTooSmall {
-                expected: aligned_offset + aligned_header_size,
+                expected: offset + aligned_header_size,
                 found: buf.remaining(),
                 msg: "Not enough data to decode HashSet header".to_string(),
             }));
         }
 
         // Where the length word sits, and how many elements are stored there. As with `HashMap`,
-        // the body offset is relative to this head, so it is rebased on `aligned_offset`.
+        // the body offset is relative to this head, so it is rebased on `offset`.
         //
         // The previous version read the region offset from `start_offset + 64`, where the layout
         // puts the region's own count rather than its offset, and reported an unaligned position
         // derived from it.
-        let body = aligned_offset
-            .checked_add(read_u32_aligned::<B, ALIGN>(buf, aligned_offset)? as usize)
+        let body = offset
+            .checked_add(read_u32_aligned::<B, ALIGN>(buf, offset)? as usize)
             .ok_or(CodecError::Decoding(DecodingError::Overflow))?;
         let length = read_u32_aligned::<B, ALIGN>(buf, body)? as usize;
 
@@ -744,6 +736,28 @@ mod tests {
 
         let values2 = CompactABI::<HashSet<i32>>::decode(&encoded, 0).unwrap();
         assert_eq!(values, values2);
+    }
+
+    #[test]
+    fn test_set_compact_honors_requested_offset() {
+        let values = HashSet::from([7u32, 3, 5]);
+        let mut buf = BytesMut::from(&[0xa5u8; 6][..]);
+        CompactABI::encode(&values, &mut buf, 6).unwrap();
+
+        // Count, then the values region's absolute offset and byte length, then the region.
+        assert_eq!(&buf[..6], &[0xa5; 6]);
+        assert_eq!(&buf[6..10], &3u32.to_le_bytes());
+        assert_eq!(&buf[10..14], &18u32.to_le_bytes());
+        assert_eq!(&buf[14..18], &12u32.to_le_bytes());
+        assert_eq!(
+            <HashSet<u32> as Encoder<byteorder::LE, 4, false, false>>::partial_decode(&buf, 6)
+                .unwrap(),
+            (18, 12)
+        );
+        assert_eq!(
+            CompactABI::<HashSet<u32>>::decode(&buf.freeze(), 6).unwrap(),
+            values
+        );
     }
 
     #[test]

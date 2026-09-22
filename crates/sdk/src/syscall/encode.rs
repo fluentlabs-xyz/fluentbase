@@ -96,6 +96,10 @@ pub const fn metadata_write_size_hint(metadata_len: usize) -> usize {
     Address::len_bytes() + size_of::<u32>() + metadata_len
 }
 
+/// Encodes a `METADATA_WRITE` request.
+///
+/// The host replaces the account's whole metadata with `metadata`. `offset` is carried for wire
+/// compatibility only and is ignored; pass zero.
 #[inline(always)]
 pub fn metadata_write_into<B: BufMut>(
     out: &mut B,

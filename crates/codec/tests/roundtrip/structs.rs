@@ -456,3 +456,50 @@ mod solidity {
         assert_eq!(decoded, original);
     }
 }
+
+/// Deriving `Codec` on a generic struct names the impl target with the struct's own generics,
+/// not with the `B` and `ALIGN` parameters that belong to the trait impl.
+#[test]
+fn test_generic_struct_roundtrip() {
+    #[derive(Codec, Default, Debug, PartialEq)]
+    struct Wrapper<T> {
+        inner: T,
+        tag: u32,
+    }
+
+    let value = Wrapper {
+        inner: 7u64,
+        tag: 9,
+    };
+
+    let mut buf = BytesMut::new();
+    CompactABI::encode(&value, &mut buf, 0).unwrap();
+    let decoded = CompactABI::<Wrapper<u64>>::decode(&buf.freeze(), 0).unwrap();
+    assert_eq!(decoded, value, "CompactABI round-trip failed");
+
+    let mut buf = BytesMut::new();
+    SolidityABI::encode(&value, &mut buf, 0).unwrap();
+    let decoded = SolidityABI::<Wrapper<u64>>::decode(&buf.freeze(), 0).unwrap();
+    assert_eq!(decoded, value, "SolidityABI round-trip failed");
+}
+
+/// A compact struct is encoded at the offset it is given, like every primitive and tuple; the
+/// derive must not move it up to the next alignment boundary on its own.
+#[test]
+fn test_struct_compact_honors_requested_offset() {
+    #[derive(Codec, Default, Debug, PartialEq)]
+    struct Pair {
+        a: u32,
+        b: u16,
+    }
+
+    let value = Pair { a: 1, b: 2 };
+    let mut buf = BytesMut::from(&[0xa5u8; 6][..]);
+    CompactABI::encode(&value, &mut buf, 6).unwrap();
+
+    assert_eq!(&buf[..6], &[0xa5; 6]);
+    assert_eq!(&buf[6..10], &1u32.to_le_bytes());
+    assert_eq!(&buf[10..12], &2u16.to_le_bytes());
+    assert_eq!(CompactABI::<Pair>::partial_decode(&buf, 6).unwrap(), (6, 8));
+    assert_eq!(CompactABI::<Pair>::decode(&buf.freeze(), 6).unwrap(), value);
+}

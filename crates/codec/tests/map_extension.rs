@@ -188,12 +188,21 @@ fn a_map_with_dynamic_values_round_trips() {
 /// `partial_decode` is asserted here too: a map writes its body offset relative to its own head
 /// while a `Vec` writes an absolute buffer position, so the map has to rebase on `offset` to report
 /// the same thing. Read as absolute, it answered `(32, 32)` at a lead of 32 and `(32, 0)` at 64.
+///
+/// The unaligned lead of 6 pins that the head starts at `offset` itself rather than at `offset`
+/// rounded up to a word, which is where `HashSet` used to put it. The lead is filled with a marker
+/// byte so a write that strays into it shows up.
 #[test]
 fn maps_and_sets_encode_away_from_the_start_of_the_buffer() {
-    for lead in [0usize, 32, 64, 96] {
+    for lead in [0usize, 6, 32, 64, 96] {
         let map: HashMap<u32, u32> = HashMap::from([(1, 100), (2, 200), (3, 300)]);
-        let mut buf = BytesMut::zeroed(lead);
+        let mut buf = BytesMut::from(vec![0xa5u8; lead].as_slice());
         SolidityABI::encode(&map, &mut buf, lead).expect("encoding a map at an offset");
+        assert_eq!(
+            &buf[..lead],
+            vec![0xa5u8; lead],
+            "bytes before the map at {lead}"
+        );
         let back: HashMap<u32, u32> =
             SolidityABI::decode(&buf.clone().freeze(), lead).expect("decoding a map at an offset");
         assert_eq!(back, map, "map written at {lead}");
@@ -207,8 +216,13 @@ fn maps_and_sets_encode_away_from_the_start_of_the_buffer() {
         );
 
         let set: HashSet<u32> = HashSet::from([7, 3, 5]);
-        let mut buf = BytesMut::zeroed(lead);
+        let mut buf = BytesMut::from(vec![0xa5u8; lead].as_slice());
         SolidityABI::encode(&set, &mut buf, lead).expect("encoding a set at an offset");
+        assert_eq!(
+            &buf[..lead],
+            vec![0xa5u8; lead],
+            "bytes before the set at {lead}"
+        );
         let back: HashSet<u32> =
             SolidityABI::decode(&buf.clone().freeze(), lead).expect("decoding a set at an offset");
         assert_eq!(back, set, "set written at {lead}");

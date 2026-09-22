@@ -8,7 +8,7 @@ use convert_case::{Case, Casing};
 use darling::{ast::NestedMeta, FromMeta};
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote, ToTokens};
-use syn::{spanned::Spanned, visit, Error, Ident, ImplItemFn, ItemImpl, Result};
+use syn::{spanned::Spanned, visit, Error, Ident, ImplItemFn, ItemImpl, Result, ReturnType, Type};
 /// Attributes for the router configuration.
 #[derive(Debug, FromMeta, Default, Clone)]
 pub struct RouterAttributes {
@@ -378,8 +378,11 @@ impl Router {
 
         let fallback_arm = self.generate_fallback_arm();
 
+        // Every arm ends in a block, so no separators are needed. A separator in front of the
+        // fallback would be invalid for a router that dispatches no selector at all, such as a
+        // fallback-only or constructor-only implementation.
         Ok(quote! {
-            #(#arms),*,
+            #(#arms)*
             #fallback_arm
         })
     }
@@ -443,6 +446,13 @@ impl Router {
             }
         };
 
+        // A declared `(T,)` is already the one-element tuple the return constructor takes; a
+        // bare `T` has to be wrapped into it.
+        let returns_tuple = matches!(
+            route.parsed_signature().output(),
+            ReturnType::Type(_, ty) if matches!(&**ty, Type::Tuple(_))
+        );
+
         // Generate result handling based on return type count
         let result_handling = match return_type_count {
             0 => quote! {
@@ -450,11 +460,18 @@ impl Router {
                 let encoded_output = [0u8; 0];
                 self.sdk.write(&encoded_output);
             },
-            1 => quote! {
-                let output = #fn_call;
-                let encoded_output = #return_struct::new((output,)).encode();
-                self.sdk.write(&encoded_output);
-            },
+            1 => {
+                let return_args = if returns_tuple {
+                    quote! { output }
+                } else {
+                    quote! { (output,) }
+                };
+                quote! {
+                    let output = #fn_call;
+                    let encoded_output = #return_struct::new(#return_args).encode();
+                    self.sdk.write(&encoded_output);
+                }
+            }
             _ => quote! {
                 let output = #fn_call;
                 let encoded_output = #return_struct::new(output).encode();
@@ -973,5 +990,49 @@ mod b {
                 .count(),
             2
         );
+    }
+
+    /// A router made of a fallback alone still has to expand to valid dispatch code
+    #[test]
+    fn test_fallback_only_router_generates_valid_dispatch() {
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                fn fallback(&self) {}
+            }
+        };
+
+        let router = process_router(quote! { mode = "solidity" }, impl_block.into_token_stream())
+            .expect("a fallback-only router is accepted");
+        assert!(router.available_methods().is_empty());
+
+        let generated = router.generate().expect("Failed to generate router code");
+        syn::parse2::<syn::File>(generated).expect("generated dispatch must be valid Rust");
+    }
+
+    /// A declared `(T,)` return is already the tuple the return constructor takes
+    #[test]
+    fn test_singleton_tuple_return_is_not_wrapped_twice() {
+        let impl_block: syn::ItemImpl = parse_quote! {
+            impl<SDK: SharedAPI> App<SDK> {
+                pub fn one(&self) -> (u32,) {
+                    (1,)
+                }
+
+                pub fn plain(&self) -> u32 {
+                    1
+                }
+            }
+        };
+
+        let router = process_router(quote! { mode = "solidity" }, impl_block.into_token_stream())
+            .expect("Failed to process router");
+
+        let generated = router
+            .generate()
+            .expect("Failed to generate router code")
+            .to_string()
+            .replace(' ', "");
+        assert!(generated.contains("OneReturn::new(output)"));
+        assert!(generated.contains("PlainReturn::new((output,))"));
     }
 }

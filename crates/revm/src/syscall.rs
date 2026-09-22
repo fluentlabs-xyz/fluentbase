@@ -136,12 +136,18 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 });
                 return Ok(NextAction::InterruptionResult);
             }
+            // A terminal halt ends this frame, so the runtime that raised the syscall is never
+            // resumed. Drop it now: suspended runtimes are otherwise only cleared at the next
+            // transaction, and every retained store counts against the in-flight memory limit
+            // that admits later rWasm calls of this transaction.
+            default_runtime_executor().forget_runtime(inputs.call_id);
             let result = ExecutionResult {
                 result: instruction_result_from_exit_code(ExitCode::$result, true),
                 output: Bytes::new(),
-                gas: Gas::new_spent(
-                    frame.interpreter.gas.total_gas_spent() - inputs.gas.total_gas_spent(),
-                ),
+                // Hand back the live tracker, as every other halt path does. A halted child
+                // returns its reservoir and state gas to the parent, and a fresh spent-only
+                // tracker would report both as zero and erase the parent's reservoir.
+                gas: frame.interpreter.gas,
             };
             return Ok(NextAction::Return(result));
         }};
@@ -1095,6 +1101,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let (input, lazy_metadata_input) = get_input_validated!(>= 20 + 4);
             // Read an account from its address.
             let address = Address::from_slice(&input[..20]);
+            // The offset word is part of the wire format but has never selected a partial
+            // write: the whole metadata payload is replaced by the bytes that follow it. Every
+            // runtime passes zero. Honoring it would change the result of historical calls, so
+            // it stays reserved.
             let _offset = LittleEndian::read_u32(&input[20..24]) as usize;
             debug_syscall!("METADATA_WRITE", "address={:?} offset={}", address, _offset);
             let account = ctx.journal_mut().load_account_with_code(address)?;
