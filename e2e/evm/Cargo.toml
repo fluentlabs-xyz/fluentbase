@@ -63,6 +63,6 @@ wasmtime = [
 codegen-units = 1
 
 [patch.crates-io]
-# rwasm with the wide-arithmetic proposal (rwasm#216 + rwasm#217), pending a release; keep in
+# rwasm devel with the wide-arithmetic proposal (rwasm#216 + rwasm#217 merged), pending a release; keep in
 # step with the root manifest so this suite decodes the same genesis bytecode
-rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm.git", branch = "dmitry/flu-1464-wide-arithmetic" }
+rwasm = { git = "https://github.com/fluentlabs-xyz/rwasm.git", rev = "ff53fea760485364434abb3337490e761f67c782" }
