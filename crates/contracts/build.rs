@@ -45,6 +45,7 @@ fn env_bool(name: &str) -> Option<bool> {
 }
 
 fn contracts_build_args(fluentbase_root_dir: &Path) -> BuildArgs {
+    println!("cargo:rerun-if-env-changed=FLUENTBASE_CONTRACTS_WIDE_ARITHMETIC");
     let mut features = vec![];
     if env::var("CARGO_FEATURE_DEBUG_PRINT").is_ok() {
         features.push("debug-print".to_string());
@@ -75,11 +76,16 @@ fn contracts_build_args(fluentbase_root_dir: &Path) -> BuildArgs {
         ignore_default_rust_flags: env_bool("FLUENTBASE_CONTRACTS_IGNORE_DEFAULT_RUST_FLAGS")
             .unwrap_or(has_contracts_cargo_config),
         // The wide-arithmetic proposal (`i64.mul_wide_*`, `i64.add128`, `i64.sub128`) for the
-        // big-integer arithmetic of the crypto guests; rwasm lowers the four instructions to
-        // single opcodes on both backends. Passed explicitly because a non-empty
+        // big-integer arithmetic of the crypto guests and the EVM runtime; rwasm lowers the four
+        // instructions to single opcodes on both backends. Passed explicitly because a non-empty
         // `CARGO_ENCODED_RUSTFLAGS` is what the guest build sees, whatever
         // `contracts/.cargo/config.toml` says. rustc still marks the feature unstable and warns.
-        rustflags: vec!["-Ctarget-feature=+wide-arithmetic".to_string()],
+        // `FLUENTBASE_CONTRACTS_WIDE_ARITHMETIC=0` builds the guests without it, for A/B runs.
+        rustflags: if env_bool("FLUENTBASE_CONTRACTS_WIDE_ARITHMETIC").unwrap_or(true) {
+            vec!["-Ctarget-feature=+wide-arithmetic".to_string()]
+        } else {
+            vec![]
+        },
         ..BuildArgs::default()
     }
 }
