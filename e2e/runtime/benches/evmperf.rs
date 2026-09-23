@@ -43,6 +43,31 @@ fn loop_code(n: u16, body: &[u8]) -> Vec<u8> {
     code
 }
 
+/// `PUSH32 <word>`.
+fn push32(word: [u8; 32]) -> Vec<u8> {
+    let mut code = vec![0x7f];
+    code.extend_from_slice(&word);
+    code
+}
+
+/// `<op> a b` with `a` on top of the stack, result popped: `PUSH32 b; PUSH32 a; <op>; POP`.
+fn binop_body(op: u8, a: [u8; 32], b: [u8; 32]) -> Vec<u8> {
+    [push32(b), push32(a), vec![op, 0x50]].concat()
+}
+
+/// `<op> a b n` (`ADDMOD`/`MULMOD`), result popped.
+fn ternop_body(op: u8, a: [u8; 32], b: [u8; 32], n: [u8; 32]) -> Vec<u8> {
+    [push32(n), push32(b), push32(a), vec![op, 0x50]].concat()
+}
+
+// Full-width 256-bit operands, every limb populated, so the arithmetic takes its general path.
+const WORD_A: [u8; 32] = hex!("d3b1a95c7e2f4680b9c1d8e6f5a4037c2e9d1b6a8f4c3e7d5b2a9c8e1f6d4b3a");
+const WORD_B: [u8; 32] = hex!("6f2e8a1d4c9b7e3a5d8f1c6b2e9a4d7f3b5c8e1a6d2f9b4c7e3a1d5f8b2c6e9a");
+// ~2^255 modulus for `ADDMOD`/`MULMOD`
+const WORD_N: [u8; 32] = hex!("fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f");
+// ~2^130 divisor: a multi-limb divisor on a 4-limb dividend takes the long-division path
+const WORD_D: [u8; 32] = hex!("0000000000000000000000000000000497a3f1c5d2e8b6f4a1c3e5d7b9f2a4c6");
+
 fn deploy(ctx: &mut EvmTestingContext, init: Bytes) -> Address {
     let nonce = ctx.nonce(OWNER);
     let result = TxBuilder::create(ctx, OWNER, init)
@@ -95,6 +120,53 @@ fn main() {
         Case {
             name: "arith_loop_20k",
             init: initcode_for(&loop_code(20_000, &[])),
+            input: Bytes::new(),
+            iters: 200,
+        },
+        // 256-bit arithmetic on full-width operands: the EVM runtime's `ruint` limb products and
+        // carry chains, which the wide-arithmetic instructions lower directly.
+        Case {
+            name: "add256_loop_20k",
+            init: initcode_for(&loop_code(20_000, &binop_body(0x01, WORD_A, WORD_B))),
+            input: Bytes::new(),
+            iters: 200,
+        },
+        Case {
+            name: "mul256_loop_20k",
+            init: initcode_for(&loop_code(20_000, &binop_body(0x02, WORD_A, WORD_B))),
+            input: Bytes::new(),
+            iters: 200,
+        },
+        Case {
+            name: "div256_loop_10k",
+            init: initcode_for(&loop_code(10_000, &binop_body(0x04, WORD_A, WORD_D))),
+            input: Bytes::new(),
+            iters: 200,
+        },
+        Case {
+            name: "addmod256_loop_10k",
+            init: initcode_for(&loop_code(10_000, &ternop_body(0x08, WORD_A, WORD_B, WORD_N))),
+            input: Bytes::new(),
+            iters: 200,
+        },
+        Case {
+            name: "mulmod256_loop_10k",
+            init: initcode_for(&loop_code(10_000, &ternop_body(0x09, WORD_A, WORD_B, WORD_N))),
+            input: Bytes::new(),
+            iters: 200,
+        },
+        Case {
+            // `PUSH8 e; PUSH32 a; EXP; POP`: a 64-bit exponent is 64 squarings and multiplies
+            name: "exp256_loop_2k",
+            init: initcode_for(&loop_code(
+                2_000,
+                &[
+                    vec![0x67, 0x9b, 0x3d, 0xe7, 0x51, 0xa2, 0xc4, 0x8f, 0x6d],
+                    push32(WORD_A),
+                    vec![0x0a, 0x50],
+                ]
+                .concat(),
+            )),
             input: Bytes::new(),
             iters: 200,
         },
