@@ -4,9 +4,10 @@ use bytes::BytesMut;
 use fluentbase_codec::SolidityABI;
 use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
 use fluentbase_sdk::{
-    address, bytes, compile_rwasm_maybe_system, crypto::crypto_keccak256, Address, Bytes, B256,
-    DEFAULT_UPDATE_GENESIS_AUTH, PRECOMPILE_EVM_RUNTIME, PRECOMPILE_IDENTITY, PRECOMPILE_RIPEMD160,
-    PRECOMPILE_RUNTIME_UPGRADE, PRECOMPILE_WEBAUTHN_VERIFIER, U256, UPDATE_GENESIS_PREFIX,
+    address, bytes, compile_rwasm_maybe_system, crypto::crypto_keccak256,
+    system::RuntimeExecutionOutcomeV1, Address, Bytes, B256, DEFAULT_UPDATE_GENESIS_AUTH,
+    PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RIPEMD160, PRECOMPILE_RUNTIME_UPGRADE,
+    PRECOMPILE_WEBAUTHN_VERIFIER, U256, UPDATE_GENESIS_PREFIX,
 };
 use fluentbase_testing::{EvmTestingContext, TxResultExt};
 use hex_literal::hex;
@@ -228,22 +229,25 @@ fn test_system_runtime_trap_in_nested_call_halts_only_that_frame() {
     const DEPLOYER_ADDRESS: Address = address!("0x7777777777777777777777777777777777777777");
     let mut ctx = EvmTestingContext::default().with_full_genesis();
 
-    // PUSH0 x4; PUSH20 <identity>; GAS; STATICCALL; PUSH0; MSTORE; PUSH1 0x20; PUSH0; RETURN
+    // PUSH0 x4; PUSH20 <target>; GAS; STATICCALL; PUSH0; MSTORE; PUSH1 0x20; PUSH0; RETURN
     // Returns the STATICCALL success flag as a 32-byte word.
     let mut runtime = vec![0x5f, 0x5f, 0x5f, 0x5f, 0x73];
-    runtime.extend_from_slice(PRECOMPILE_IDENTITY.as_slice());
+    runtime.extend_from_slice(FLUENT_TARGET.as_slice());
     runtime.extend_from_slice(&[0x5a, 0xfa, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3]);
     let probe_address = deploy_evm_runtime(&mut ctx, DEPLOYER_ADDRESS, &runtime);
 
-    // The genesis identity precompile answers an empty call successfully.
+    // A system runtime that returns answers the empty call successfully. The target is a Fluent
+    // system address: the Ethereum precompile addresses run natively in the host, so an upgrade
+    // there would never be executed.
+    upgrade_wasm_runtime_with(&mut ctx, FLUENT_TARGET, returning_wasm_module());
     ctx.call_evm_tx(DEPLOYER_ADDRESS, probe_address, Bytes::new(), None, None)
         .expect_ok()
         .expect_output(B256::with_last_byte(1));
 
-    upgrade_wasm_runtime(&mut ctx, PRECOMPILE_IDENTITY);
+    upgrade_wasm_runtime(&mut ctx, FLUENT_TARGET);
 
-    // Now the identity precompile traps on entry. The nested frame fails and the caller carries
-    // on; without containment the node would panic on the child's fatal result.
+    // Now the runtime traps on entry. The nested frame fails and the caller carries on; without
+    // containment the node would panic on the child's fatal result.
     ctx.call_evm_tx(DEPLOYER_ADDRESS, probe_address, Bytes::new(), None, None)
         .expect_ok()
         .expect_output(B256::ZERO);
@@ -328,7 +332,7 @@ fn test_cant_upgrade_from_incorrect_address() {
     );
 }
 
-/// A canonical EVM precompile that Fluent implements as rWasm in state. EVM-facing code queries for
+/// A canonical EVM precompile address. The node serves it natively and EVM-facing code queries for
 /// these addresses are masked to empty by design, which is why upgrade events must not source their
 /// artifact hash from `EXTCODEHASH`.
 const CANONICAL_PRECOMPILE_TARGET: Address = PRECOMPILE_RIPEMD160;
@@ -383,6 +387,34 @@ fn test_system_runtime_upgrade_rejects_incompatible_main_without_state_changes()
     assert!(!result.is_success(), "{result:?}");
     assert!(result.logs().is_empty());
     assert_eq!(ctx.get_code(target).unwrap().original_bytes(), old_code);
+}
+
+/// A minimal system runtime that succeeds: `main` writes an empty `RuntimeExecutionOutcomeV1`,
+/// as the SDK's `finalize` does, and both entrypoints return the success exit code.
+fn returning_wasm_module() -> Bytes {
+    let outcome = RuntimeExecutionOutcomeV1::default().encode();
+    let data: String = outcome.iter().map(|b| format!("\\{b:02x}")).collect();
+    wat::parse_str(format!(
+        r#"
+(module
+  (import "fluentbase_v1preview" "_write" (func $_write (param i32 i32)))
+  (memory (export "memory") 1)
+  (data (i32.const 0) "{data}")
+  (func (export "main") (param i32 i32) (result i32)
+    i32.const 0
+    i32.const {len}
+    call $_write
+    i32.const 0
+  )
+  (func (export "deploy") (result i32)
+    i32.const 0
+  )
+)
+    "#,
+        len = outcome.len()
+    ))
+    .unwrap()
+    .into()
 }
 
 /// A minimal WASM runtime, valid enough to compile but small enough to keep upgrade tests cheap.
@@ -467,7 +499,15 @@ fn upgrade_wasm_runtime(
     ctx: &mut EvmTestingContext,
     target_address: Address,
 ) -> (RuntimeUpgraded, B256) {
-    let wasm_module = upgrade_wasm_module();
+    upgrade_wasm_runtime_with(ctx, target_address, upgrade_wasm_module())
+}
+
+/// Installs `wasm_module` at `target_address` through the runtime-upgrade contract.
+fn upgrade_wasm_runtime_with(
+    ctx: &mut EvmTestingContext,
+    target_address: Address,
+    wasm_module: Bytes,
+) -> (RuntimeUpgraded, B256) {
     let input = upgradeToCall {
         target_address,
         genesis_hash: U256::ZERO,

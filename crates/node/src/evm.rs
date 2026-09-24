@@ -21,7 +21,7 @@ use core::{
 };
 use fluentbase_revm::{
     revm::{
-        context::{BlockEnv, CfgEnv, TxEnv},
+        context::{BlockEnv, CfgEnv, Evm as RevmEvm, TxEnv},
         context_interface::result::{EVMError, HaltReason, ResultAndState},
         handler::{instructions::EthInstructions, EthPrecompiles, PrecompileProvider},
         inspector::NoOpInspector,
@@ -29,7 +29,7 @@ use fluentbase_revm::{
         primitives::hardfork::SpecId,
         Context, ExecuteEvm, InspectEvm, Inspector, SystemCallEvm,
     },
-    DefaultRwasm, RwasmBuilder, RwasmEvm, RwasmFrame, RwasmPrecompiles,
+    ColdPrecompiles, DefaultRwasm, RwasmBuilder, RwasmEvm, RwasmFrame, RwasmPrecompiles,
 };
 use reth_chainspec::ChainSpec;
 use reth_ethereum_engine_primitives::{EthBuiltPayload, EthEngineTypes};
@@ -58,20 +58,27 @@ use std::{convert::Infallible, sync::Arc};
 /// The Ethereum EVM context type.
 pub type EthRwasmContext<DB> = Context<BlockEnv, TxEnv, CfgEnv, DB>;
 
+/// The `RwasmEvm` instantiation behind [`FluentEvmExecutor`], over the given precompile provider.
+pub type FluentRwasmEvm<DB, I, PRECOMPILE> = RwasmEvm<
+    EthRwasmContext<DB>,
+    I,
+    EthInstructions<EthInterpreter, EthRwasmContext<DB>>,
+    PRECOMPILE,
+    RwasmFrame,
+>;
+
 /// Ethereum EVM implementation.
 ///
 /// This is a wrapper type around the `revm` ethereum evm with optional [`Inspector`] (tracing)
 /// support. [`Inspector`] support is configurable at runtime because it's part of the underlying
 /// `RwasmEvm` type.
+///
+/// The precompile provider runs inside [`ColdPrecompiles`]: the chain has never pre-warmed the
+/// precompile addresses, and the wrapper keeps it that way now that the provider carries the
+/// native precompiles (see `docs/04-gas-and-fuel.md`).
 #[expect(missing_debug_implementations)]
 pub struct FluentEvmExecutor<DB: Database, I, PRECOMPILE = EthPrecompiles> {
-    inner: RwasmEvm<
-        EthRwasmContext<DB>,
-        I,
-        EthInstructions<EthInterpreter, EthRwasmContext<DB>>,
-        PRECOMPILE,
-        RwasmFrame,
-    >,
+    inner: FluentRwasmEvm<DB, I, ColdPrecompiles<PRECOMPILE>>,
     inspect: bool,
 }
 
@@ -80,32 +87,32 @@ impl<DB: Database, I, PRECOMPILE> FluentEvmExecutor<DB, I, PRECOMPILE> {
     ///
     /// The `inspect` argument determines whether the configured [`Inspector`] of the given
     /// `RwasmEvm` should be invoked on `Evm::transact`.
-    pub const fn new(
-        evm: RwasmEvm<
-            EthRwasmContext<DB>,
-            I,
-            EthInstructions<EthInterpreter, EthRwasmContext<DB>>,
-            PRECOMPILE,
-        >,
-        inspect: bool,
-    ) -> Self {
+    pub fn new(evm: FluentRwasmEvm<DB, I, PRECOMPILE>, inspect: bool) -> Self {
+        let RwasmEvm(evm, options) = evm;
+        let evm = RevmEvm {
+            ctx: evm.ctx,
+            inspector: evm.inspector,
+            instruction: evm.instruction,
+            precompiles: ColdPrecompiles(evm.precompiles),
+            frame_stack: evm.frame_stack,
+        };
         Self {
-            inner: evm,
+            inner: RwasmEvm(evm, options),
             inspect,
         }
     }
 
     /// Consumes self and return the inner EVM instance.
-    pub fn into_inner(
-        self,
-    ) -> RwasmEvm<
-        EthRwasmContext<DB>,
-        I,
-        EthInstructions<EthInterpreter, EthRwasmContext<DB>>,
-        PRECOMPILE,
-        RwasmFrame,
-    > {
-        self.inner
+    pub fn into_inner(self) -> FluentRwasmEvm<DB, I, PRECOMPILE> {
+        let RwasmEvm(evm, options) = self.inner;
+        let evm = RevmEvm {
+            ctx: evm.ctx,
+            inspector: evm.inspector,
+            instruction: evm.instruction,
+            precompiles: evm.precompiles.0,
+            frame_stack: evm.frame_stack,
+        };
+        RwasmEvm(evm, options)
     }
 
     /// Provides a reference to the EVM context.
@@ -199,11 +206,11 @@ where
     }
 
     fn precompiles(&self) -> &Self::Precompiles {
-        &self.inner.0.precompiles
+        &self.inner.0.precompiles.0
     }
 
     fn precompiles_mut(&mut self) -> &mut Self::Precompiles {
-        &mut self.inner.0.precompiles
+        &mut self.inner.0.precompiles.0
     }
 
     fn inspector(&self) -> &Self::Inspector {
@@ -218,7 +225,7 @@ where
         (
             &self.inner.0.ctx.journaled_state.database,
             &self.inner.0.inspector,
-            &self.inner.0.precompiles,
+            &self.inner.0.precompiles.0,
         )
     }
 
@@ -226,7 +233,7 @@ where
         (
             &mut self.inner.0.ctx.journaled_state.database,
             &mut self.inner.0.inspector,
-            &mut self.inner.0.precompiles,
+            &mut self.inner.0.precompiles.0,
         )
     }
 }
@@ -255,9 +262,9 @@ impl EvmFactory for FluentEvmFactory {
                 .with_cfg(input.cfg_env)
                 .with_db(db)
                 .build_rwasm_with_inspector(NoOpInspector {})
-                .with_precompiles(PrecompilesMap::from_static(
+                .with_precompiles(ColdPrecompiles(PrecompilesMap::from_static(
                     RwasmPrecompiles::new_with_spec(spec_id).precompiles(),
-                )),
+                ))),
             inspect: false,
         }
     }
@@ -275,9 +282,9 @@ impl EvmFactory for FluentEvmFactory {
                 .with_cfg(input.cfg_env)
                 .with_db(db)
                 .build_rwasm_with_inspector(inspector)
-                .with_precompiles(PrecompilesMap::from_static(
+                .with_precompiles(ColdPrecompiles(PrecompilesMap::from_static(
                     RwasmPrecompiles::new_with_spec(spec_id).precompiles(),
-                )),
+                ))),
             inspect: true,
         }
     }

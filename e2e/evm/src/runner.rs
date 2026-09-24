@@ -9,7 +9,7 @@ use crate::{
         signed_transaction_sender_and_chain_id, GENESIS_CONTRACTS,
     },
 };
-use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmEvm, RwasmPrecompiles};
+use fluentbase_revm::{ColdPrecompiles, RwasmBuilder, RwasmContext, RwasmEvm, RwasmPrecompiles};
 use fluentbase_sdk::{testnet_burns_base_fee, Address, PRECOMPILE_EVM_RUNTIME};
 use indicatif::{ProgressBar, ProgressDrawTarget};
 use revm::{
@@ -1218,18 +1218,17 @@ pub fn resolve_externalized_bytecodes(v: &mut Value, base_dir: &Path) {
 
 /// The precompile provider the node installs for block execution.
 ///
-/// `crates/node/src/evm.rs` wraps `RwasmPrecompiles::precompiles()` (an empty set: Fluent
-/// precompiles are genesis rWASM contracts) in reth's `PrecompilesMap`, whose warm-address list is
-/// that same empty set. On chain no precompile address is therefore pre-warmed at transaction
-/// start, and the first call to one pays the cold account-access cost. The library default,
-/// `RwasmPrecompiles::warm_addresses`, pre-warms the canonical EIP-2929 list instead, which
-/// under-charges such a call by 2500 gas against canonical receipts. Fixtures replay real
-/// transactions, so they must use the node's semantics.
-fn node_precompiles(spec_id: SpecId) -> EthPrecompiles {
-    EthPrecompiles {
+/// `crates/node/src/evm.rs` runs the native precompile set of `RwasmPrecompiles` inside
+/// `ColdPrecompiles`, whose warm-address list is empty: on chain no precompile address is
+/// pre-warmed at transaction start, and the first call to one pays the cold account-access cost.
+/// The library default, `RwasmPrecompiles::warm_addresses`, pre-warms the canonical EIP-2929 list
+/// instead, which under-charges such a call by 2500 gas against canonical receipts. Fixtures
+/// replay real transactions, so they must use the node's semantics.
+fn node_precompiles(spec_id: SpecId) -> ColdPrecompiles<EthPrecompiles> {
+    ColdPrecompiles(EthPrecompiles {
         precompiles: RwasmPrecompiles::new_with_spec(spec_id).precompiles(),
         spec: spec_id,
-    }
+    })
 }
 
 pub fn execute_fluent_test_suite(

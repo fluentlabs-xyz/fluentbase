@@ -147,19 +147,28 @@ constraints above.
 [EIP-2929](https://eips.ethereum.org/EIPS/eip-2929) places the precompile addresses in the initial
 warm set of every transaction, so the first call to one costs the warm account-access price (100 gas).
 
-Fluent precompiles are ordinary rWASM contracts installed at genesis. The node wires the EVM with an
-empty precompile provider (`crates/node/src/evm.rs`: `PrecompilesMap::from_static(...)` over
-`RwasmPrecompiles::precompiles()`), and that provider's warm-address list is what seeds the access
-list at the start of a transaction. It is empty, so no precompile address starts warm: the first
-call to a precompile address in a transaction pays the cold account-access price (2600 gas), and
-later calls in the same transaction pay 100 gas. This has been the behavior on every live network
-since launch, and canonical receipts reflect it. Changing it alters gas usage for existing contracts
-and therefore requires a coordinated network fork.
+Fluent precompiles were shipped as ordinary rWASM contracts installed at genesis, and the node wired
+the EVM with an empty precompile provider. The provider's warm-address list is what seeds the access
+list at the start of a transaction, so no precompile address started warm: the first call to a
+precompile address in a transaction pays the cold account-access price (2600 gas), and later calls
+in the same transaction pay 100 gas. This has been the behavior on every live network since launch,
+and canonical receipts reflect it. Changing it alters gas usage for existing contracts and therefore
+requires a coordinated network fork.
+
+The node now executes the native `revm` precompiles (`RwasmPrecompiles` in `fluentbase-revm` carries
+the hardfork's set, floored at Osaka because that is the set the genesis guests implemented at every
+block), and the frame dispatches to them before it loads the account code. The rWASM guests the live
+networks were launched with remain in their state but are never executed, and a fresh genesis no
+longer installs them. The native implementations produce the same output and charge the same gas as
+the guests did, which `e2e/runtime/src/precompile_vectors.rs` pins. To keep the warm set unchanged,
+the node wraps its provider in `ColdPrecompiles` (`crates/node/src/evm.rs`), which reports no warm
+addresses.
 
 `RwasmPrecompiles::warm_addresses` in `fluentbase-revm` still returns the canonical EIP-2929 list
 because the native-versus-rWASM state-test comparison runs both sides with Ethereum semantics. Only
 the node wiring is authoritative for chain behavior: anything that replays real transactions must
-seed the same empty warm set, which is what the `e2e/evm` fixture runner does.
+seed the same empty warm set, which is what the `e2e/evm` fixture runner does through the same
+`ColdPrecompiles` wrapper.
 
 ---
 
