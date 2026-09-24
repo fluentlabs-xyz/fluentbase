@@ -159,8 +159,10 @@ The node now executes the native `revm` precompiles (`RwasmPrecompiles` in `flue
 the hardfork's set, floored at Osaka because that is the set the genesis guests implemented at every
 block), and the frame dispatches to them before it loads the account code. The rWASM guests the live
 networks were launched with remain in their state but are never executed, and a fresh genesis no
-longer installs them. The native implementations produce the same output and charge the same gas as
-the guests did, which `e2e/runtime/src/precompile_vectors.rs` pins. To keep the warm set unchanged,
+longer installs them. The native implementations produced the same output and gas as the guests on
+every vector of `e2e/runtime/src/precompile_vectors.rs` when that suite was run against the guests
+before their removal; the suite now pins the transaction path against the bare `revm` functions. To
+keep the warm set unchanged,
 the node wraps its provider in `ColdPrecompiles` (`crates/node/src/evm.rs`), which reports no warm
 addresses.
 

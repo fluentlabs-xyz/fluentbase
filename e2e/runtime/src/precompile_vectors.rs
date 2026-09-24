@@ -6,8 +6,10 @@
 //! the EIP-2537 suites in `assets/bls12381`; the others are the vectors from the unit tests of
 //! the former rWASM guests plus a few constructed inputs.
 //!
-//! The same suite passed against the genesis rWASM guests before the native provider replaced
-//! them, which is what made that replacement gas- and output-neutral.
+//! Both sides run the native implementation now. Before the guests were removed, the same suite
+//! was run once with the provider emptied, so the transactions reached the genesis rWASM guests,
+//! and passed; that one-off run is what established the parity, this suite only keeps the
+//! transaction path honest against the bare functions.
 
 use crate::EvmTestingContextWithGenesis;
 use fluentbase_sdk::{
@@ -521,10 +523,14 @@ fn bn256_vectors() {
 fn modexp_vectors() {
     let v1 = hex!("00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002003fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2efffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f");
     let v2 = hex!("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2efffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f");
-    // Large sizes, rejected by the EIP-7823 limit.
+    // Base length 1025, over the EIP-7823 limit of 1024 bytes; the precompile must reject it.
     let mut too_big = [0u8; 96];
-    too_big[31] = 0x04; // base length 1024 + 1
-    too_big[30] = 0x01;
+    too_big[30] = 0x04;
+    too_big[31] = 0x01;
+    assert!(
+        modexp::osaka_run(&too_big, GAS_LIMIT).is_err(),
+        "the oversized modexp input must be rejected"
+    );
     run_cases(vec![
         case(
             "modexp v1",

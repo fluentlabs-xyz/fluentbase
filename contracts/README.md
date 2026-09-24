@@ -31,8 +31,9 @@ There are no crates for the Ethereum precompiles (`0x01` to `0x11`, and `0x100` 
 revm's native implementations for those addresses (`RwasmPrecompiles` in `crates/revm`), so a fresh genesis installs
 no code there. The live networks were launched with rWASM guests at those addresses; that bytecode remains in their
 state, is shadowed by the native provider and is never executed, and a runtime upgrade of one of those addresses does
-not change execution. `e2e/runtime/src/precompile_vectors.rs` pins that the native path returns what the guests
-returned, for the same gas.
+not change execution. `e2e/runtime/src/precompile_vectors.rs` pins that a transaction to each address agrees with
+the bare `revm-precompile` function on output and gas; parity with the guests was established by running that
+suite once against them before their removal.
 
 ### System and utility contracts
 
