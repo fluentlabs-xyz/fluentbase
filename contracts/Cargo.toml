@@ -1,6 +1,6 @@
 [workspace]
 members = ["*"]
-exclude = [".cargo", "target", "svm", "create2-factory", "out"]
+exclude = [".cargo", "target", "create2-factory", "out"]
 resolver = "2"
 
 [workspace.package]
@@ -19,15 +19,9 @@ readme = "README.md"
 fluentbase-build = { path = "../crates/build" }
 fluentbase-sdk = { path = "../crates/sdk", default-features = false }
 fluentbase-evm = { path = "../crates/evm", default-features = false }
-#fluentbase-svm-common = { path = "../crates/svm-common", default-features = false }
-#fluentbase-svm = { path = "../crates/svm", default-features = false }
 fluentbase-testing = { path = "../crates/testing", default-features = false }
 # revm
 revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v107-patched", default-features = false }
-# solana
-#solana-program-error = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-program-option = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
-#solana-bincode = { git = "https://github.com/fluentlabs-xyz/agave", branch = "feat/svm", default-features = false }
 # misc
 alloy-json-abi = { version = "1.5.0", features = ["serde_json"] }
 alloy-sol-types = { version = "1.5.0" }
@@ -63,7 +57,5 @@ tiny-keccak = { git = "https://github.com/fluentlabs-xyz/tiny-keccak.git", branc
 # patch fluentbase
 fluentbase-sdk = { path = "../crates/sdk" }
 fluentbase-evm = { path = "../crates/evm" }
-#fluentbase-svm-common = { path = "../crates/svm-common" }
-#fluentbase-svm = { path = "../crates/svm" }
 fluentbase-testing = { path = "../crates/testing" }
 #ecdsa = { path = "../../signatures/ecdsa" }

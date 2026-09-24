@@ -51,16 +51,8 @@ mod evm;
 mod fuel;
 #[cfg(test)]
 mod gas;
-#[cfg(test)]
-mod helpers;
 // #[cfg(test)]
 // mod nitro;
-#[cfg(test)]
-mod router;
-#[cfg(test)]
-mod stateless;
-// #[cfg(all(test, feature = "svm"))]
-// pub mod svm;
 #[cfg(test)]
 mod bench;
 #[cfg(test)]
@@ -75,6 +67,10 @@ mod fee_manager;
 mod oom;
 #[cfg(test)]
 mod precompile_vectors;
+#[cfg(test)]
+mod router;
+#[cfg(test)]
+mod stateless;
 #[cfg(test)]
 mod universal_token;
 #[cfg(test)]

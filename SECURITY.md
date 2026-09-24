@@ -1,7 +1,7 @@
 # Security Policy
 
 This policy applies to Fluentbase, the Rust workspace for Fluent's blended execution stack.
-Fluentbase includes execution runtimes, EVM/rWasm/SVM compatibility layers, system contracts,
+Fluentbase includes execution runtimes, EVM/rWasm compatibility layers, system contracts,
 genesis and runtime-upgrade tooling, SDK crates, examples, tests, and node integration code.
 
 The project is security-sensitive because changes can affect consensus behavior, runtime

@@ -27,12 +27,10 @@ cargo_metadata = "0.19.1"
 # The following dependencies are not used directly but listed here to trigger execution of build.rs whenever they are changed
 revm-precompile = { workspace = true }
 fluentbase-evm = { workspace = true }
-#fluentbase-svm = { workspace = true }
 
 [features]
 default = ["std"]
 debug-print = ["fluentbase-sdk/debug-print"]
-svm = []
 wasmtime = []
 std = [
     "fluentbase-sdk/std",

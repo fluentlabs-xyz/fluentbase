@@ -32,8 +32,6 @@ const GENESIS_CONTRACTS: &[(Address, fluentbase_contracts::BuildOutput)] = &[
     (fluentbase_sdk::PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_UNIVERSAL_TOKEN),
     (fluentbase_sdk::PRECOMPILE_EIP2935, fluentbase_contracts::FLUENTBASE_CONTRACTS_EIP2935),
     (fluentbase_sdk::PRECOMPILE_EVM_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_EVM),
-    #[cfg(feature="svm")]
-    (fluentbase_sdk::PRECOMPILE_SVM_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_SVM),
     (fluentbase_sdk::PRECOMPILE_NITRO_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_NITRO),
     (fluentbase_sdk::PRECOMPILE_RUNTIME_UPGRADE, fluentbase_contracts::FLUENTBASE_CONTRACTS_RUNTIME_UPGRADE),
     (fluentbase_sdk::PRECOMPILE_FEE_MANAGER, fluentbase_contracts::FLUENTBASE_CONTRACTS_FEE_MANAGER),

@@ -31,8 +31,6 @@ which the runtime tests and benchmarks in `e2e/runtime` execute.
 - `storage-usage` — typed storage: `StorageMap`, `StorageVec`, `StorageString`, nested maps and custom slots.
 - `tiny-keccak` — running a third-party hashing crate. Prefer the SDK's `crypto_keccak256` in real contracts.
 - `unwiped-output` — output written before a later syscall is kept.
-- `svm` — Solana programs for the SVM runtime. Excluded from the workspace while SVM is unstable (see the root
-  README).
 
 ---
 

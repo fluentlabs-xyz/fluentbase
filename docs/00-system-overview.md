@@ -84,5 +84,5 @@ Precompile/delegated-runtime/system addresses are fixed in shared constants.
 Changing these mappings changes execution routing and is consensus-sensitive.
 
 That includes:
-- delegated runtime owners (EVM/SVM/WASM/Universal Token)
+- delegated runtime owners (EVM/WASM/Universal Token)
 - governance/system contracts (runtime-upgrade, fee manager, bridge, etc.)

@@ -5,7 +5,7 @@ This file is for coding agents working in this repository. Follow it unless a mo
 
 ## Project Snapshot
 
-Fluentbase is a Rust workspace for the Fluent L2 execution stack. The core idea is blended execution: EVM/SVM/WASM/UST
+Fluentbase is a Rust workspace for the Fluent L2 execution stack. The core idea is blended execution: EVM/WASM/UST
 compatibility layers converge into rWasm IR and a single proof-friendly runtime/STF.
 
 Important areas:
@@ -18,8 +18,6 @@ Important areas:
   state-test/fixture runner) and `e2e/codec` (Solidity ABI conformance corpus). The latter two are standalone crates
   intentionally excluded from the root workspace.
 - `flips/`, `docs/` - design and documentation.
-
-SVM-related crates are currently unstable and excluded from the top-level workspace unless explicitly requested.
 
 ## Working Rules
 

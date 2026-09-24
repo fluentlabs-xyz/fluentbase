@@ -12,8 +12,7 @@ exposes a single WASM entrypoint that routes calls by 4‑byte function selector
     - Optional: mint(address,uint256), pause(), unpause() (guarded by settings)
 - Events: Transfer, Approval, Pause/Unpause (topic layout compatible with EVM logs).
 - Storage: Keyed by addresses; balances, allowances, and config live in contract metadata via SharedAPI storage helpers.
-- Host integration: Uses SharedAPI for caller/context, storage, and I/O. On SVM targets, bindings bridge to Solana
-  Token‑2022 via fluentbase‑svm.
+- Host integration: Uses SharedAPI for caller/context, storage, and I/O.
 
 Notes
 

@@ -11,7 +11,7 @@
 //!
 //! 1. **Self-metering** (`consume_fuel=false`): The contract manages fuel internally by calling
 //!    the `_charge_fuel` syscall. Wasmtime fuel metering is disabled. This is used by runtimes
-//!    like EVM_RUNTIME and SVM_RUNTIME that have their own gas accounting.
+//!    like EVM_RUNTIME that have their own gas accounting.
 //!
 //! 2. **Engine-metered** (`consume_fuel=true`): Wasmtime automatically meters fuel for both
 //!    wasm instructions and builtin syscalls. This is used by precompiles that don't self-meter:
