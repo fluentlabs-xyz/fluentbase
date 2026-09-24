@@ -16,13 +16,13 @@ use revm::{
     Database,
 };
 
-fn new_signer() -> PrivateKeySigner {
+pub(crate) fn new_signer() -> PrivateKeySigner {
     "0xf0bc949485d112791637d7eb29dea3fd1e0758e8fea3ef542a4245bc896736cc"
         .parse()
         .unwrap()
 }
 
-fn signed_auth(
+pub(crate) fn signed_auth(
     signer: &PrivateKeySigner,
     chain_id: U256,
     delegated_address: Address,
