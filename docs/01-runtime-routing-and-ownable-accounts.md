@@ -32,7 +32,6 @@ On contract creation, init code is inspected by magic prefix.
 
 Resolver outcomes:
 - wasm/rwasm payload -> wasm delegated runtime
-- svm ELF payload (feature-gated) -> svm delegated runtime
 - universal token magic -> universal token delegated runtime
 - otherwise -> delegated EVM runtime
 

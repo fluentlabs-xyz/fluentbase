@@ -35,7 +35,6 @@ debug-print = [
     "fluentbase-revm/debug-print",
     "fluentbase-evm/debug-print",
 ]
-svm = ["fluentbase-contracts/svm"]
 wasmtime = []
 std = [
     "fluentbase-sdk/std",

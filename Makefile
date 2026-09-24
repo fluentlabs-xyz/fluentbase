@@ -164,11 +164,6 @@ test-debug:
 	# devnet/mainnet: rwasm case
 	$(MAKE) run-e2e-tests TEST_FEATURES=std TEST_PROFILE=
 
-#.PHONY: svm_tests
-#svm_tests:
-#	cargo test --frozen --profile test --manifest-path crates/svm/Cargo.toml --
-#	cargo test --frozen --lib svm::tests --profile test --manifest-path e2e/runtime/Cargo.toml --
-
 .PHONY: wasm_contracts_sizes
 wasm_contracts_sizes:
 	du -sch target/contracts/wasm32-unknown-unknown/release/*.wasm

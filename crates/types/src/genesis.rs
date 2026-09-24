@@ -7,10 +7,10 @@ use crate::{address, hex, Address, Bytes, B256, UNIVERSAL_TOKEN_MAGIC_BYTES, WAS
 /// "deployed contract" in the usual sense.
 pub const PRECOMPILE_EVM_RUNTIME: Address = address!("0x0000000000000000000000000000000000520001");
 
-/// Address of the delegated **SVM runtime** (Solana VM).
-///
-/// This is feature-gated in some parts of the codebase (see `cfg(feature = "svm")`).
-pub const PRECOMPILE_SVM_RUNTIME: Address = address!("0x0000000000000000000000000000000000520003");
+// `0x…520003` is reserved: it was allocated to the experimental SVM (Solana VM) runtime, which
+// never shipped in any genesis and has been removed from the tree. The address holds no code and
+// has no transaction history on any network, but it must not be reused for another runtime
+// without a fork.
 
 /// Address of the **Wrapped ETH** contract (ERC-20 compatible representation of native ETH).
 ///
@@ -149,7 +149,6 @@ pub const EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES: &[Address] = &[
     PRECOMPILE_RIPEMD160,
     PRECOMPILE_SECP256K1_RECOVER,
     PRECOMPILE_SHA256,
-    // PRECOMPILE_SVM_RUNTIME,
     PRECOMPILE_WASM_RUNTIME,
     PRECOMPILE_WEBAUTHN_VERIFIER,
 ];
@@ -194,12 +193,6 @@ pub fn is_engine_metered_precompile(address: &Address) -> bool {
 pub fn resolve_precompiled_runtime_from_input(input: &[u8]) -> Address {
     if input.len() > WASM_MAGIC_BYTES.len() && input[..WASM_MAGIC_BYTES.len()] == WASM_MAGIC_BYTES {
         return PRECOMPILE_WASM_RUNTIME;
-    }
-    #[cfg(feature = "svm")]
-    if input.len() > crate::SVM_ELF_MAGIC_BYTES.len()
-        && input[..crate::SVM_ELF_MAGIC_BYTES.len()] == crate::SVM_ELF_MAGIC_BYTES
-    {
-        return PRECOMPILE_SVM_RUNTIME;
     }
     if input.len() > UNIVERSAL_TOKEN_MAGIC_BYTES.len()
         && input[..UNIVERSAL_TOKEN_MAGIC_BYTES.len()] == UNIVERSAL_TOKEN_MAGIC_BYTES
@@ -263,7 +256,6 @@ pub struct GenesisContract {
 /// bytecode-bearing contracts).
 pub fn is_delegated_runtime_address(address: &Address) -> bool {
     address == &PRECOMPILE_EVM_RUNTIME
-        || address == &PRECOMPILE_SVM_RUNTIME
         || address == &PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME
         || address == &PRECOMPILE_WASM_RUNTIME
 }

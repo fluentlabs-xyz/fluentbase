@@ -22,8 +22,6 @@ therefore rebuilds everything in this directory.
   metering and rejects results larger than `RWASM_MAX_CODE_SIZE`.
 - `universal-token` — an ERC-20-style token runtime with a 4-byte selector ABI, ERC-2612 permits and optional
   mintable/pausable plugins.
-- `svm` — the Solana VM runtime (loader v4). Excluded from the workspace and gated behind the `svm` feature of
-  `crates/contracts` and `crates/genesis` while SVM remains unstable (see the root README).
 
 ### Ethereum precompiles
 
@@ -108,7 +106,7 @@ lints this workspace with `-D warnings`; CI does both.
 
 `Cargo.toml` in this directory owns the shared configuration:
 
-- **Members** — every subdirectory except `.cargo`, `target`, `out` (output of the `fluentbase-build` CLI), `svm`
+- **Members** — every subdirectory except `.cargo`, `target`, `out` (output of the `fluentbase-build` CLI)
   and `create2-factory`.
 - **Fluentbase crates** — `fluentbase-build`, `fluentbase-sdk`, `fluentbase-evm` and `fluentbase-testing`, all as
   path dependencies into `../crates`, with `[patch.crates-io]` entries so that transitive dependencies resolve to

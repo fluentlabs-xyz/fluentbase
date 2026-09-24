@@ -37,7 +37,7 @@ pub enum ExecutionMode {
 
     /// System-level execution runtime.
     ///
-    /// Used for privileged or delegated runtimes (e.g., EVM/SVM/Wasm system
+    /// Used for privileged or delegated runtimes (e.g., EVM/Wasm system
     /// runtimes) that may have different invariants or capabilities.
     System(SystemRuntime),
 }

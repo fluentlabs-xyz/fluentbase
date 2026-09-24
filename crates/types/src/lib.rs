@@ -140,8 +140,6 @@ pub const MAX_IN_FLIGHT_MEMORY_BYTES: u64 = 1536 * 1024 * 1024;
 /// Scope: this bounds untrusted deployment (`CREATE`/`CREATE2`). Runtime upgrades are exempt by
 /// design — see `compile_and_install` in `contracts/runtime-upgrade`.
 pub const WASM_MAX_CODE_SIZE: usize = 0x100000;
-#[cfg(feature = "svm")]
-pub const SVM_MAX_CODE_SIZE: usize = 0x200000;
 
 /// rWasm max code size
 ///
@@ -156,9 +154,6 @@ pub const RWASM_MAX_CODE_SIZE: usize = 12 * 1024 * 1024;
 ///
 /// These values are equal to \0ASM
 pub const WASM_MAGIC_BYTES: [u8; 4] = [0x00, 0x61, 0x73, 0x6d];
-/// Solana magic bytes
-#[cfg(feature = "svm")]
-pub const SVM_ELF_MAGIC_BYTES: [u8; 4] = [0x7f, 0x45, 0x4c, 0x46];
 /// ERC20 magic bytes: as char codes for "ERC" and the number 0x20
 pub const UNIVERSAL_TOKEN_MAGIC_BYTES: [u8; 4] = [0x45, 0x52, 0x43, 0x20];
 

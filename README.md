@@ -16,7 +16,7 @@
 
 <p align="center">
   Fluentbase is the execution stack behind <a href="https://fluent.xyz">Fluent</a>, the blended L2.
-  EVM, WASM and SVM contracts compile down to <strong>rWasm IR</strong>, run in one deterministic runtime,
+  EVM and WASM contracts compile down to <strong>rWasm IR</strong>, run in one deterministic runtime,
   share one account space, and are proven by one ZK circuit.
 </p>
 
@@ -49,11 +49,8 @@ state transition function.
 | Token model | per-VM | unified (UST20) |
 | Ahead-of-time compilation | varies | yes, via wasmtime |
 
-The practical payoff: a Solidity contract can call a Rust contract that calls a Solana program,
-in one transaction, with one gas model, and the whole thing is provable as a single trace.
-
-> **SVM status.** The Solana runtime is still under heavy development. It is excluded from the
-> workspace build, absent from the genesis files, and hidden behind a feature flag until it settles.
+The practical payoff: a Solidity contract can call a Rust contract in one transaction, with one
+gas model, and the whole thing is provable as a single trace.
 
 ---
 
@@ -65,7 +62,6 @@ flowchart TB
         direction LR
         EVM["EVM\ninterruptible interpreter"]
         WASM["WASM\nRust / any wasm32 target"]
-        SVM["SVM\n(experimental)"]
         UST["UST20\nuniversal token"]
     end
     SYS["System contracts\nprecompiles · runtimes · protocol"]
@@ -74,7 +70,7 @@ flowchart TB
     REVM["REVM integration\nframe lifecycle · journal · host syscalls"]
     ZK["ZK proof system"]
 
-    EVM & WASM & SVM & UST --> SYS
+    EVM & WASM & UST --> SYS
     SYS --> IR --> VM
     VM <--> REVM
     VM --> ZK
@@ -284,14 +280,11 @@ fluentbase
 | [`release-verify`](crates/release-verify) | Fail-closed authentication of signed release artifacts |
 | [`testing`](crates/testing) | In-process testing harness, including `TxBuilder` for EVM-style transaction tests |
 
-`svm`, `svm-common` and `svm-shared` exist in the tree but are excluded from the workspace
-until the Solana runtime stabilises.
-
 ### System contracts
 
 Everything under [`contracts/`](contracts/) is compiled to rWasm and shipped in genesis.
 
-- **Runtimes.** `evm`, `wasm` (Wasm to rWasm compiler, devnet and testnet only), `svm`.
+- **Runtimes.** `evm`, `wasm` (Wasm to rWasm compiler, devnet and testnet only).
 - **Protocol.** `fee-manager`, `runtime-upgrade`, `universal-token` (UST20, see
   [FLIP-20](flips/FLIP-20.md)), `create2-factory`.
 - **Precompiles.** The Ethereum precompiles (`0x01`..`0x11` and `eip7951` at `0x100`) run natively in the node

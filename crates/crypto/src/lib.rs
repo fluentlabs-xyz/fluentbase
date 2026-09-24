@@ -14,7 +14,6 @@ pub mod secp256k1;
 pub mod secp256r1;
 mod sha256;
 pub use sha256::*;
-mod blake3;
 mod keccak256;
 pub use keccak256::*;
 pub mod utils;
