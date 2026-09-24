@@ -3,11 +3,11 @@
 //! Each vector runs twice: directly through the `revm::precompile` function and as a transaction
 //! to the precompile address, which the EVM dispatches through `RwasmPrecompiles`. Both must
 //! produce the same output and the same total gas, or both must fail. The BLS12-381 vectors are
-//! the EIP-2537 suites in `contracts/bls12381/testcases`; the others are the vectors from the
-//! genesis guests' own unit tests plus a few constructed inputs.
+//! the EIP-2537 suites in `assets/bls12381`; the others are the vectors from the unit tests of
+//! the former rWASM guests plus a few constructed inputs.
 //!
 //! The same suite passed against the genesis rWASM guests before the native provider replaced
-//! them on the execution path, which is what makes that replacement gas- and output-neutral.
+//! them, which is what made that replacement gas- and output-neutral.
 
 use crate::EvmTestingContextWithGenesis;
 use fluentbase_sdk::{
@@ -141,7 +141,7 @@ macro_rules! bls_suite {
         #[test]
         fn $test() {
             run_cases(bls_cases(
-                include_str!(concat!("../../../contracts/bls12381/testcases/", $file, ".json")),
+                include_str!(concat!("../assets/bls12381/", $file, ".json")),
                 $address,
                 $native,
             ));

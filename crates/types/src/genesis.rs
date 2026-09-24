@@ -122,6 +122,10 @@ pub const PRECOMPILE_BLS12_381_MAP_G2: Address = evm_address(0x11);
 ///
 /// This is a narrower set than `PRECOMPILE_ADDRESSES`: some system contracts may
 /// exist, but not be executed by the system runtime (or may be feature/fork gated).
+///
+/// The Ethereum precompile addresses stay in the set although the node serves them with revm's
+/// native precompiles: the live networks still hold the historical rWASM guests there, and a
+/// runtime upgrade aimed at one of them must still compile and validate as a system runtime.
 pub const EXECUTE_USING_SYSTEM_RUNTIME_ADDRESSES: &[Address] = &[
     PRECOMPILE_BIG_MODEXP,
     PRECOMPILE_BLAKE2F,

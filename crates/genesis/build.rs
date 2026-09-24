@@ -22,34 +22,22 @@ use std::{
 };
 
 #[rustfmt::skip]
+/// System contracts installed at genesis.
+///
+/// The Ethereum precompile addresses (`0x01`..`0x11`, `0x100`) are not in this table: the node
+/// serves them with revm's native precompiles (`RwasmPrecompiles` in `crates/revm`), so a fresh
+/// genesis installs no code there. Live networks still carry the historical rWASM guests at those
+/// addresses in state; they are shadowed by the provider and never executed.
 const GENESIS_CONTRACTS: &[(Address, fluentbase_contracts::BuildOutput)] = &[
-    (fluentbase_sdk::PRECOMPILE_BIG_MODEXP, fluentbase_contracts::FLUENTBASE_CONTRACTS_MODEXP),
-    (fluentbase_sdk::PRECOMPILE_BLAKE2F, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLAKE2F),
-    (fluentbase_sdk::PRECOMPILE_BN256_ADD, fluentbase_contracts::FLUENTBASE_CONTRACTS_BN256),
-    (fluentbase_sdk::PRECOMPILE_BN256_MUL, fluentbase_contracts::FLUENTBASE_CONTRACTS_BN256),
-    (fluentbase_sdk::PRECOMPILE_BN256_PAIR, fluentbase_contracts::FLUENTBASE_CONTRACTS_BN256),
     (fluentbase_sdk::PRECOMPILE_UNIVERSAL_TOKEN_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_UNIVERSAL_TOKEN),
     (fluentbase_sdk::PRECOMPILE_EIP2935, fluentbase_contracts::FLUENTBASE_CONTRACTS_EIP2935),
-    (fluentbase_sdk::PRECOMPILE_EIP7951, fluentbase_contracts::FLUENTBASE_CONTRACTS_EIP7951),
     (fluentbase_sdk::PRECOMPILE_EVM_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_EVM),
     #[cfg(feature="svm")]
     (fluentbase_sdk::PRECOMPILE_SVM_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_SVM),
-    (fluentbase_sdk::PRECOMPILE_IDENTITY, fluentbase_contracts::FLUENTBASE_CONTRACTS_IDENTITY),
-    (fluentbase_sdk::PRECOMPILE_KZG_POINT_EVALUATION, fluentbase_contracts::FLUENTBASE_CONTRACTS_KZG),
-    (fluentbase_sdk::PRECOMPILE_BLS12_381_G1_ADD, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
-    (fluentbase_sdk::PRECOMPILE_BLS12_381_G1_MSM, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
-    (fluentbase_sdk::PRECOMPILE_BLS12_381_G2_ADD, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
-    (fluentbase_sdk::PRECOMPILE_BLS12_381_G2_MSM, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
-    (fluentbase_sdk::PRECOMPILE_BLS12_381_PAIRING, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
-    (fluentbase_sdk::PRECOMPILE_BLS12_381_MAP_G1, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
-    (fluentbase_sdk::PRECOMPILE_BLS12_381_MAP_G2, fluentbase_contracts::FLUENTBASE_CONTRACTS_BLS12381),
     (fluentbase_sdk::PRECOMPILE_NITRO_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_NITRO),
-    (fluentbase_sdk::PRECOMPILE_RIPEMD160, fluentbase_contracts::FLUENTBASE_CONTRACTS_RIPEMD160),
     (fluentbase_sdk::PRECOMPILE_RUNTIME_UPGRADE, fluentbase_contracts::FLUENTBASE_CONTRACTS_RUNTIME_UPGRADE),
     (fluentbase_sdk::PRECOMPILE_FEE_MANAGER, fluentbase_contracts::FLUENTBASE_CONTRACTS_FEE_MANAGER),
     (fluentbase_sdk::PRECOMPILE_WASM_RUNTIME, fluentbase_contracts::FLUENTBASE_CONTRACTS_WASM),
-    (fluentbase_sdk::PRECOMPILE_SECP256K1_RECOVER, fluentbase_contracts::FLUENTBASE_CONTRACTS_ECRECOVER),
-    (fluentbase_sdk::PRECOMPILE_SHA256, fluentbase_contracts::FLUENTBASE_CONTRACTS_SHA256),
     (fluentbase_sdk::PRECOMPILE_WEBAUTHN_VERIFIER, fluentbase_contracts::FLUENTBASE_CONTRACTS_WEBAUTHN),
 ];
 

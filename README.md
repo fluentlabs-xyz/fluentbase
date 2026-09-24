@@ -294,8 +294,8 @@ Everything under [`contracts/`](contracts/) is compiled to rWasm and shipped in 
 - **Runtimes.** `evm`, `wasm` (Wasm to rWasm compiler, devnet and testnet only), `svm`.
 - **Protocol.** `fee-manager`, `runtime-upgrade`, `universal-token` (UST20, see
   [FLIP-20](flips/FLIP-20.md)), `create2-factory`.
-- **Precompiles.** `ecrecover`, `sha256`, `ripemd160`, `identity`, `modexp`, `bn256`, `blake2f`,
-  `kzg`, `bls12381`, `eip2935`, `eip7951` (P-256), `webauthn`, `nitro` (AWS Nitro attestation).
+- **Precompiles.** The Ethereum precompiles (`0x01`..`0x11` and `eip7951` at `0x100`) run natively in the node
+  through revm; `eip2935`, `webauthn` and `nitro` (AWS Nitro attestation) are rWASM system contracts.
 
 ### Test suites
 

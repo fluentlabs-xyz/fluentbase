@@ -1,8 +1,7 @@
 # Fluentbase Contracts
 
 This directory is the Cargo workspace for the system contracts that form the Fluent genesis file and ship in runtime
-upgrades: the EVM, WASM and token runtimes, the Ethereum precompiles, and the privileged contracts that manage a live
-chain. Every crate is written with the Fluentbase SDK, compiles to `wasm32-unknown-unknown`, and also builds as a
+upgrades: the EVM, WASM and token runtimes, and the privileged contracts that manage a live chain. Every crate is written with the Fluentbase SDK, compiles to `wasm32-unknown-unknown`, and also builds as a
 normal Rust crate on the host so that its unit tests run without a node.
 
 The workspace is separate from the root workspace, but the root build drives it: the build script of `crates/contracts`
@@ -28,19 +27,12 @@ therefore rebuilds everything in this directory.
 
 ### Ethereum precompiles
 
-Thin wrappers around `revm-precompile` or the SDK's crypto syscalls that mirror EVM gas rules:
-
-- `ecrecover` — secp256k1 public key recovery.
-- `sha256` — SHA-256.
-- `ripemd160` — RIPEMD-160.
-- `identity` — identity copy.
-- `modexp` — modular exponentiation (EIP-198, EIP-2565).
-- `bn256` — alt_bn128 addition, scalar multiplication and pairing.
-- `blake2f` — BLAKE2b F compression (EIP-152).
-- `kzg` — KZG point evaluation (EIP-4844).
-- `bls12381` — BLS12-381 G1/G2 addition, MSM, pairing and map-to-curve (EIP-2537). One crate serves all seven
-  addresses.
-- `eip7951` — secp256r1 (P-256) signature verification (EIP-7951, the successor of EIP-7212).
+There are no crates for the Ethereum precompiles (`0x01` to `0x11`, and `0x100` for EIP-7951): the node executes
+revm's native implementations for those addresses (`RwasmPrecompiles` in `crates/revm`), so a fresh genesis installs
+no code there. The live networks were launched with rWASM guests at those addresses; that bytecode remains in their
+state, is shadowed by the native provider and is never executed, and a runtime upgrade of one of those addresses does
+not change execution. `e2e/runtime/src/precompile_vectors.rs` pins that the native path returns what the guests
+returned, for the same gas.
 
 ### System and utility contracts
 
@@ -68,10 +60,10 @@ make build # or: cargo build
 To build a single contract by hand from this directory:
 
 ```bash
-cargo build -p fluentbase-contracts-sha256 --release --target wasm32-unknown-unknown --no-default-features
+cargo build -p fluentbase-contracts-eip2935 --release --target wasm32-unknown-unknown --no-default-features
 ```
 
-The artifact lands in `target/contracts/wasm32-unknown-unknown/release/fluentbase_contracts_sha256.wasm` at the
+The artifact lands in `target/contracts/wasm32-unknown-unknown/release/fluentbase_contracts_eip2935.wasm` at the
 repository root. `.cargo/config.toml` sets that target directory and the rustflags every contract is built with
 (1 MiB stack, bulk memory, tail calls), and `--no-default-features` switches off the `std` feature that only exists
 for host-side tests.
@@ -102,7 +94,7 @@ The toolchain version is pinned in the root `rust-toolchain.toml`.
 Unit tests run on the host with the `std` feature enabled (the default):
 
 ```bash
-cargo test -p fluentbase-contracts-sha256 # one crate
+cargo test -p fluentbase-contracts-eip2935 # one crate
 cargo test --workspace                    # all crates
 ```
 
@@ -134,15 +126,15 @@ lints this workspace with `-D warnings`; CI does both.
 
 - Every crate starts with `#![cfg_attr(target_arch = "wasm32", no_std, no_main)]`: `no_std` on WASM, `std` on the
   host.
-- Precompiles and runtimes use `system_entrypoint!` with a
+- Runtimes and system contracts use `system_entrypoint!` with a
   `main_entry(sdk: &mut impl SystemAPI) -> Result<(), ExitCode>` (and an optional `deploy_entry`). Router-style
   contracts such as `fee-manager` and `runtime-upgrade` use
   `#[derive(Contract)]`, `#[router(mode = "solidity")]` and `basic_entrypoint!`, the same API as the
   [examples](../examples/README.md).
-- Addresses live in `crates/types` as `PRECOMPILE_*` constants. The Ethereum precompiles keep their canonical
-  addresses (`0x01` to `0x11`, and `0x100` for EIP-7951), `eip2935` sits at the address the EIP specifies, and the
-  Fluent runtimes and system contracts occupy the reserved `0x…5200xx` range. The same module lists which addresses
-  the system runtime executes and which are metered by the engine.
+- Addresses live in `crates/types` as `PRECOMPILE_*` constants, including the canonical Ethereum precompile
+  addresses (`0x01` to `0x11`, and `0x100` for EIP-7951) that the node serves natively. `eip2935` sits at the address
+  the EIP specifies, and the Fluent runtimes and system contracts occupy the reserved `0x…5200xx` range. The same
+  module lists which addresses the system runtime executes and which are metered by the engine.
 
 ## Repository
 
