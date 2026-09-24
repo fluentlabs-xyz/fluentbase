@@ -36,7 +36,7 @@ fn fuel_nitro_verifier_evm_ctx() {
     let result = TxBuilder::call(&mut ctx, PRECOMPILE_NITRO_VERIFIER)
         .caller(caller)
         .input(Bytes::from(input))
-        .gas_limit(100_000_000_000)
+        .gas_limit(100_000_000)
         .timestamp(1695050165) // ensure correct block timestamp to match certificate time window
         .exec();
     let elapsed = start.elapsed();

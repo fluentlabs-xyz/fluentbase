@@ -8,7 +8,7 @@
 use crate::TestingContextImpl;
 use core::{borrow::Borrow, mem::take, str::from_utf8};
 use fluentbase_evm::EthereumMetadata;
-use fluentbase_revm::{RwasmBuilder, RwasmContext, RwasmHaltReason};
+use fluentbase_revm::{fluent_cfg, RwasmBuilder, RwasmContext, RwasmHaltReason, RwasmSpecId};
 use fluentbase_runtime::{default_runtime_executor, RuntimeContext, RuntimeExecutor};
 use fluentbase_sdk::{
     bytes::BytesMut, calc_create_address, compile_wasm_to_rwasm, Address, BytecodeOrHash, Bytes,
@@ -17,6 +17,7 @@ use fluentbase_sdk::{
 };
 use revm::{
     context::{
+        result::EVMError,
         result::{ExecutionResult, ExecutionResult::Success, Output},
         transaction::SignedAuthorization,
         BlockEnv, CfgEnv, TransactTo, TxEnv,
@@ -49,7 +50,7 @@ impl EvmTestingContext {
         Self {
             sdk: TestingContextImpl::default(),
             db: InMemoryDB::default(),
-            cfg: CfgEnv::default(),
+            cfg: fluent_cfg(RwasmSpecId::OSAKA),
             disabled_rwasm: false,
         }
     }
@@ -447,6 +448,29 @@ impl<'a> TxBuilder<'a> {
     pub fn timestamp(mut self, timestamp: u64) -> Self {
         self.block.timestamp = U256::from(timestamp);
         self
+    }
+
+    /// Executes the transaction on the Fluent EVM and returns the pre-execution validation error
+    /// instead of panicking on it, for tests of the validation rules themselves.
+    pub fn try_exec(
+        &mut self,
+    ) -> Result<ExecutionResult<RwasmHaltReason>, EVMError<core::convert::Infallible>> {
+        assert!(
+            !self.ctx.disabled_rwasm,
+            "try_exec runs the Fluent EVM; use exec for the native comparison path"
+        );
+        self.tx.nonce = self.ctx.nonce(self.tx.caller);
+        let db = take(&mut self.ctx.db);
+        let mut context: RwasmContext<InMemoryDB> = RwasmContext::new(db, PRAGUE);
+        context.cfg = self.ctx.cfg.clone();
+        context.cfg.legacy_bytecode_enabled = false;
+        context.block = self.block.clone();
+        context.tx = self.tx.clone();
+        let mut evm = context.build_rwasm();
+        let result = evm.transact_commit(self.tx.clone());
+        let new_db = &mut evm.0.journaled_state.database;
+        self.ctx.db = take(new_db);
+        result.map(|result| result.map_haltreason(RwasmHaltReason::from))
     }
 
     pub fn exec(&mut self) -> ExecutionResult<RwasmHaltReason> {

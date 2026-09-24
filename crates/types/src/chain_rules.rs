@@ -1,6 +1,16 @@
-//! Historical Fluent Testnet rules. See `docs/release-upgrade.md` for the canonical evidence.
+//! Fluent chain rules that differ from Ethereum, and the historical Testnet rules. See
+//! `docs/release-upgrade.md` for the canonical evidence of the latter.
 
 use crate::U256;
+
+/// The highest gas limit a transaction may declare.
+///
+/// Fluent does not apply the fixed `2^24` of EIP-7825, which WASM execution can legitimately
+/// exceed, but it does cap transactions: this is the highest block gas limit any Fluent network
+/// has had (mainnet genesis), so no historical transaction is above it and it only binds once a
+/// block gas limit rises past it. Consensus-critical: a block carrying a larger transaction is
+/// invalid, and the transaction pool rejects one. See `docs/04-gas-and-fuel.md`.
+pub const TX_GAS_LIMIT_CAP: u64 = 100_000_000;
 
 pub const FLUENT_TESTNET_CHAIN_ID: u64 = 0x5202;
 

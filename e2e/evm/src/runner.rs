@@ -10,7 +10,7 @@ use crate::{
     },
 };
 use fluentbase_revm::{ColdPrecompiles, RwasmBuilder, RwasmContext, RwasmEvm, RwasmPrecompiles};
-use fluentbase_sdk::{testnet_burns_base_fee, Address, PRECOMPILE_EVM_RUNTIME};
+use fluentbase_sdk::{testnet_burns_base_fee, Address, PRECOMPILE_EVM_RUNTIME, TX_GAS_LIMIT_CAP};
 use indicatif::{ProgressBar, ProgressDrawTarget};
 use revm::{
     bytecode::Bytecode,
@@ -1086,6 +1086,7 @@ pub fn execute_evm_test_suite(
                         .build_rwasm_with_inspector(TraceInspector::new())
                         .with_base_fee_burn(true);
                     evm2.0.cfg.legacy_bytecode_enabled = false;
+                    evm2.0.cfg.tx_gas_limit_cap = Some(TX_GAS_LIMIT_CAP);
                     let result_fluent = evm2.inspect_tx_commit(tx_env.clone());
                     if cfg!(feature = "debug-print") {
                         println!("{:?}", start.elapsed());
@@ -1133,6 +1134,7 @@ pub fn execute_evm_test_suite(
                         .build_rwasm()
                         .with_base_fee_burn(true);
                     evm2.0.cfg.legacy_bytecode_enabled = false;
+                    evm2.0.cfg.tx_gas_limit_cap = Some(TX_GAS_LIMIT_CAP);
                     let start = Instant::now();
                     let result_fluent = evm2.transact_commit(tx_env.clone());
                     if cfg!(feature = "debug-print") {
@@ -1316,6 +1318,7 @@ pub fn execute_fluent_test_suite(
                         .build_rwasm_with_inspector(TraceInspector::new())
                         .with_precompiles(node_precompiles(spec_id));
                     evm.0.cfg.legacy_bytecode_enabled = false;
+                    evm.0.cfg.tx_gas_limit_cap = Some(TX_GAS_LIMIT_CAP);
                     let result_fluent = evm.inspect_tx_commit(tx_env.clone());
                     *elapsed.lock().unwrap() += start.elapsed();
                     let output = check_fluent_execution(
@@ -1336,6 +1339,7 @@ pub fn execute_fluent_test_suite(
                         .build_rwasm()
                         .with_precompiles(node_precompiles(spec_id));
                     evm.0.cfg.legacy_bytecode_enabled = false;
+                    evm.0.cfg.tx_gas_limit_cap = Some(TX_GAS_LIMIT_CAP);
                     let timer = Instant::now();
                     let result = evm.transact_commit(tx_env.clone());
                     *elapsed.lock().unwrap() += timer.elapsed();

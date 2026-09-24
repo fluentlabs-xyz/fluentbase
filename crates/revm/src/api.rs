@@ -6,7 +6,7 @@ pub mod exec;
 mod frame;
 
 pub use builder::RwasmBuilder;
-pub use default_ctx::{DefaultRwasm, RwasmContext};
+pub use default_ctx::{fluent_cfg, DefaultRwasm, RwasmContext};
 pub use exec::{RwasmContextTr, RwasmError};
 pub use frame::RwasmFrame;
 use revm::primitives::hardfork::SpecId;

@@ -120,12 +120,18 @@ The host must not charge that deposit again.
 transaction at `2^24` gas (16,777,216), independently of the block gas limit. Ethereum clients
 reject transactions above that cap from the transaction pool and reject blocks containing them.
 
-Fluentbase does not enforce this fixed per-transaction cap. WASM smart contracts can require more
-than `2^24` gas, so limiting every transaction to Ethereum's cap would prevent valid WASM execution.
-This does not make transaction execution literally unlimited: the transaction gas limit must still
-fit within the current block gas limit and pass the usual intrinsic-gas, balance, and fee checks.
+Fluentbase does not apply that fixed value: WASM smart contracts can require more than `2^24` gas,
+so Ethereum's cap would prevent valid WASM execution. It applies its own cap instead,
+`TX_GAS_LIMIT_CAP` in `crates/types` (100,000,000 gas). The value is the highest block gas limit
+any Fluent network has had (mainnet genesis), so no historical transaction exceeds it and it only
+binds once a block gas limit rises past it. The cap is consensus-critical: a block carrying a
+larger transaction is invalid, and the transaction pool rejects one. The node sets it on every EVM
+configuration it produces (`crates/node/src/evm.rs`), the library default context carries it
+(`fluent_cfg` in `fluentbase-revm`), and the `e2e/evm` runner applies it on the Fluent side of every
+comparison. The transaction gas limit must also still fit within the current block gas limit and
+pass the usual intrinsic-gas, balance, and fee checks.
 
-Fluentbase instead controls large transaction input through gas pricing. Input up to 128 KiB
+Large transaction input is controlled through gas pricing rather than a size limit. Input up to 128 KiB
 (131,072 bytes) receives no Fluent-specific surcharge beyond the normal intrinsic calldata gas.
 For larger input, only the excess is divided into 32-byte words and charged using:
 
@@ -138,9 +144,9 @@ The transaction is rejected if its declared gas limit cannot cover the intrinsic
 surcharge. This policy allows transactions above 128 KiB rather than imposing a protocol-level
 input-size limit, while the quadratic term constrains block-data pressure.
 
-Consequently, Ethereum tooling must not assume that Fluentbase applies EIP-7825: a transaction with
-a gas limit above `2^24` can be valid on Fluentbase if it satisfies the block-level and economic
-constraints above.
+Consequently, Ethereum tooling must not assume Ethereum's EIP-7825 value: a transaction with a gas
+limit above `2^24` and up to `TX_GAS_LIMIT_CAP` can be valid on Fluentbase if it satisfies the
+block-level and economic constraints above.
 
 ## Ethereum compatibility: precompile addresses are not pre-warmed
 

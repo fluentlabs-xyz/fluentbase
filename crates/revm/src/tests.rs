@@ -2038,3 +2038,74 @@ mod terminal_halt_tests {
         assert_eq!(result.gas.state_gas_spent(), 1_000);
     }
 }
+
+/// `TX_GAS_LIMIT_CAP` is the chain's per-transaction gas limit cap: the default Fluent
+/// configuration carries it, and pre-execution validation enforces it.
+mod tx_gas_limit_cap {
+    use crate::{RwasmBuilder, RwasmContext, RwasmSpecId};
+    use fluentbase_sdk::{Address, TX_GAS_LIMIT_CAP, U256};
+    use revm::{
+        context::{
+            result::{EVMError, ExecutionResult, InvalidTransaction},
+            BlockEnv, TxEnv,
+        },
+        database::InMemoryDB,
+        primitives::TxKind,
+        state::AccountInfo,
+        ExecuteEvm,
+    };
+
+    fn transact(gas_limit: u64) -> Result<ExecutionResult<crate::RwasmHaltReason>, String> {
+        let caller = Address::repeat_byte(0x11);
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            caller,
+            AccountInfo {
+                balance: U256::MAX,
+                ..Default::default()
+            },
+        );
+        let mut ctx = RwasmContext::new(db, RwasmSpecId::OSAKA);
+        ctx.cfg = crate::fluent_cfg(RwasmSpecId::OSAKA);
+        ctx.block = BlockEnv {
+            gas_limit: u64::MAX,
+            basefee: 0,
+            ..Default::default()
+        };
+        let mut evm = ctx.build_rwasm();
+        let tx = TxEnv {
+            caller,
+            kind: TxKind::Call(Address::repeat_byte(0x22)),
+            gas_limit,
+            gas_price: 0,
+            ..Default::default()
+        };
+        match evm.transact(tx) {
+            Ok(res) => Ok(res.result.map_haltreason(crate::RwasmHaltReason::from)),
+            Err(EVMError::Transaction(InvalidTransaction::TxGasLimitGreaterThanCap {
+                gas_limit,
+                cap,
+            })) => Err(format!("cap: gas_limit {gas_limit} > cap {cap}")),
+            Err(err) => Err(format!("other: {err:?}")),
+        }
+    }
+
+    #[test]
+    fn a_transaction_above_the_cap_is_rejected_before_execution() {
+        let err = transact(TX_GAS_LIMIT_CAP + 1).unwrap_err();
+        assert_eq!(
+            err,
+            format!(
+                "cap: gas_limit {} > cap {}",
+                TX_GAS_LIMIT_CAP + 1,
+                TX_GAS_LIMIT_CAP
+            )
+        );
+    }
+
+    #[test]
+    fn a_transaction_at_the_cap_executes() {
+        let result = transact(TX_GAS_LIMIT_CAP).unwrap();
+        assert!(result.is_success(), "{result:?}");
+    }
+}
