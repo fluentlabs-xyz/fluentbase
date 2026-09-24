@@ -74,6 +74,8 @@ mod fee_manager;
 #[cfg(test)]
 mod oom;
 #[cfg(test)]
+mod precompile_vectors;
+#[cfg(test)]
 mod universal_token;
 #[cfg(test)]
 mod universal_token_solidity;

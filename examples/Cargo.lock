@@ -1970,7 +1970,6 @@ dependencies = [
  "fluentbase-evm",
  "fluentbase-runtime",
  "fluentbase-sdk",
- "once_cell",
  "revm",
  "rwasm",
  "serde",

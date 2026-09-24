@@ -1952,64 +1952,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-contracts-blake2f"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-testing",
- "revm-precompile",
-]
-
-[[package]]
-name = "fluentbase-contracts-bls12381"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-testing",
- "revm-precompile",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "fluentbase-contracts-bn256"
-version = "0.1.0"
-dependencies = [
- "ark-bn254",
- "ark-ec",
- "ark-serialize 0.5.0",
- "fluentbase-sdk",
- "fluentbase-testing",
- "revm-precompile",
-]
-
-[[package]]
-name = "fluentbase-contracts-ecrecover"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-testing",
- "revm-precompile",
-]
-
-[[package]]
 name = "fluentbase-contracts-eip2935"
 version = "0.1.0"
 dependencies = [
  "fluentbase-sdk",
  "fluentbase-testing",
-]
-
-[[package]]
-name = "fluentbase-contracts-eip7951"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-testing",
- "hex",
- "p256",
- "revm-precompile",
- "sha2",
 ]
 
 [[package]]
@@ -2031,33 +1978,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-contracts-identity"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-testing",
- "revm-precompile",
-]
-
-[[package]]
-name = "fluentbase-contracts-kzg"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-testing",
- "revm-precompile",
-]
-
-[[package]]
-name = "fluentbase-contracts-modexp"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-testing",
- "revm-precompile",
-]
-
-[[package]]
 name = "fluentbase-contracts-nitro"
 version = "0.1.0"
 dependencies = [
@@ -2072,29 +1992,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "fluentbase-contracts-ripemd160"
-version = "0.1.0"
-dependencies = [
- "fluentbase-sdk",
- "fluentbase-testing",
- "revm-precompile",
-]
-
-[[package]]
 name = "fluentbase-contracts-runtime-upgrade"
 version = "0.1.0"
 dependencies = [
  "alloy-json-abi",
  "alloy-sol-types",
  "fluentbase-build",
- "fluentbase-sdk",
- "fluentbase-testing",
-]
-
-[[package]]
-name = "fluentbase-contracts-sha256"
-version = "0.1.0"
-dependencies = [
  "fluentbase-sdk",
  "fluentbase-testing",
 ]
@@ -2167,7 +2070,6 @@ dependencies = [
  "fluentbase-evm",
  "fluentbase-runtime",
  "fluentbase-sdk",
- "once_cell",
  "revm",
  "rwasm",
  "serde",

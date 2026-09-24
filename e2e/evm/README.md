@@ -39,9 +39,9 @@ that the entire upstream corpus passes or that Fluent has no intentional differe
 from Ethereum.
 
 The differential suite uses Osaka because the delegated EVM instruction set
-(`crates/revm/src/evm.rs`) and built-in precompiles such as MODEXP
-(`contracts/modexp/src/lib.rs`) are pinned to Osaka independently of the host chain's
-fork schedule. Comparing Prague reference results against those artifacts would
+(`crates/revm/src/evm.rs`) is pinned to Osaka and the native precompile set
+(`crates/revm/src/precompiles.rs`) is floored at Osaka, both independently of the host
+chain's fork schedule. Comparing Prague reference results against those artifacts would
 compare different rules, for example the 200 versus 500 minimum MODEXP gas cost.
 Historical host fork activation belongs to separate compatibility tests. The runner
 rejects suites containing only earlier forks rather than reporting them as passed.
