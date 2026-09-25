@@ -3761,7 +3761,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 [[package]]
 name = "revm"
 version = "38.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#d5cc0df848aa8f9208858015cdbfa02f8140fe70"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#9db0cea43195e5bf880ddd599e2e671fb029e763"
 dependencies = [
  "revm-bytecode",
  "revm-context",
@@ -3779,7 +3779,7 @@ dependencies = [
 [[package]]
 name = "revm-bytecode"
 version = "10.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#d5cc0df848aa8f9208858015cdbfa02f8140fe70"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#9db0cea43195e5bf880ddd599e2e671fb029e763"
 dependencies = [
  "bitvec",
  "phf",
@@ -3791,7 +3791,7 @@ dependencies = [
 [[package]]
 name = "revm-context"
 version = "16.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#d5cc0df848aa8f9208858015cdbfa02f8140fe70"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#9db0cea43195e5bf880ddd599e2e671fb029e763"
 dependencies = [
  "bitvec",
  "cfg-if",
@@ -3807,7 +3807,7 @@ dependencies = [
 [[package]]
 name = "revm-context-interface"
 version = "17.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#d5cc0df848aa8f9208858015cdbfa02f8140fe70"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#9db0cea43195e5bf880ddd599e2e671fb029e763"
 dependencies = [
  "alloy-eip2930",
  "alloy-eip7702",
@@ -3822,7 +3822,7 @@ dependencies = [
 [[package]]
 name = "revm-database"
 version = "13.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#d5cc0df848aa8f9208858015cdbfa02f8140fe70"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#9db0cea43195e5bf880ddd599e2e671fb029e763"
 dependencies = [
  "alloy-eips",
  "revm-bytecode",
@@ -3835,7 +3835,7 @@ dependencies = [
 [[package]]
 name = "revm-database-interface"
 version = "11.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#d5cc0df848aa8f9208858015cdbfa02f8140fe70"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#9db0cea43195e5bf880ddd599e2e671fb029e763"
 dependencies = [
  "auto_impl",
  "either",
@@ -3848,7 +3848,7 @@ dependencies = [
 [[package]]
 name = "revm-handler"
 version = "18.1.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#d5cc0df848aa8f9208858015cdbfa02f8140fe70"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#9db0cea43195e5bf880ddd599e2e671fb029e763"
 dependencies = [
  "auto_impl",
  "derive-where",
@@ -3866,7 +3866,7 @@ dependencies = [
 [[package]]
 name = "revm-inspector"
 version = "19.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#d5cc0df848aa8f9208858015cdbfa02f8140fe70"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#9db0cea43195e5bf880ddd599e2e671fb029e763"
 dependencies = [
  "auto_impl",
  "either",
@@ -3883,7 +3883,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "35.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#d5cc0df848aa8f9208858015cdbfa02f8140fe70"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#9db0cea43195e5bf880ddd599e2e671fb029e763"
 dependencies = [
  "revm-bytecode",
  "revm-context-interface",
@@ -3895,7 +3895,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "34.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#d5cc0df848aa8f9208858015cdbfa02f8140fe70"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#9db0cea43195e5bf880ddd599e2e671fb029e763"
 dependencies = [
  "ark-bls12-381",
  "ark-bn254",
@@ -3918,7 +3918,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "23.0.0"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#d5cc0df848aa8f9208858015cdbfa02f8140fe70"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#9db0cea43195e5bf880ddd599e2e671fb029e763"
 dependencies = [
  "alloy-primitives",
  "num_enum",
@@ -3929,7 +3929,7 @@ dependencies = [
 [[package]]
 name = "revm-state"
 version = "11.0.1"
-source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#d5cc0df848aa8f9208858015cdbfa02f8140fe70"
+source = "git+https://github.com/fluentlabs-xyz/revm-rwasm.git?branch=v107-patched#9db0cea43195e5bf880ddd599e2e671fb029e763"
 dependencies = [
  "alloy-eip7928",
  "bitflags",
