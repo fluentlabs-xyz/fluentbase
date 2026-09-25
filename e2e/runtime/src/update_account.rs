@@ -6,10 +6,10 @@ use fluentbase_genesis::GENESIS_CONTRACTS_BY_ADDRESS;
 use fluentbase_sdk::{
     address, bytes, compile_rwasm_maybe_system, crypto::crypto_keccak256,
     system::RuntimeExecutionOutcomeV1, Address, Bytes, B256, DEFAULT_UPDATE_GENESIS_AUTH,
-    PRECOMPILE_EVM_RUNTIME, PRECOMPILE_RIPEMD160, PRECOMPILE_RUNTIME_UPGRADE,
-    PRECOMPILE_WEBAUTHN_VERIFIER, U256, UPDATE_GENESIS_PREFIX,
+    PRECOMPILE_EVM_RUNTIME, PRECOMPILE_IDENTITY, PRECOMPILE_RIPEMD160, PRECOMPILE_RUNTIME_UPGRADE,
+    PRECOMPILE_SECP256K1_RECOVER, PRECOMPILE_WEBAUTHN_VERIFIER, U256, UPDATE_GENESIS_PREFIX,
 };
-use fluentbase_testing::{EvmTestingContext, TxResultExt};
+use fluentbase_testing::{EvmTestingContext, TxBuilder, TxResultExt};
 use hex_literal::hex;
 use revm::context::result::{ExecutionResult, HaltReason};
 
@@ -251,6 +251,134 @@ fn test_system_runtime_trap_in_nested_call_halts_only_that_frame() {
     ctx.call_evm_tx(DEPLOYER_ADDRESS, probe_address, Bytes::new(), None, None)
         .expect_ok()
         .expect_output(B256::ZERO);
+}
+
+/// An EVM runtime that forwards its calldata to `target` with `opcode` (one of CALL, CALLCODE,
+/// DELEGATECALL, STATICCALL) and returns whatever the callee returned.
+fn forwarding_probe(target: Address, opcode: u8) -> Vec<u8> {
+    // CALLDATASIZE PUSH0 PUSH0 CALLDATACOPY; PUSH0 (retLength) PUSH0 (retOffset) CALLDATASIZE
+    // (argsLength) PUSH0 (argsOffset) [PUSH0 (value)] PUSH20 target GAS <opcode> POP;
+    // RETURNDATASIZE PUSH0 PUSH0 RETURNDATACOPY; RETURNDATASIZE PUSH0 RETURN
+    let mut runtime = vec![0x36, 0x5f, 0x5f, 0x37, 0x5f, 0x5f, 0x36, 0x5f];
+    if matches!(opcode, 0xf1 | 0xf2) {
+        runtime.push(0x5f);
+    }
+    runtime.push(0x73);
+    runtime.extend_from_slice(target.as_slice());
+    runtime.extend_from_slice(&[0x5a, opcode, 0x50, 0x3d, 0x5f, 0x5f, 0x3e, 0x3d, 0x5f, 0xf3]);
+    runtime
+}
+
+/// The Ethereum precompile addresses are served by the native provider before any account code
+/// is loaded. The live networks still hold the historical rWASM guests at those addresses, so this
+/// installs a runtime that traps on entry at two of them and checks that every way of calling
+/// them still yields the native result instead of the trap: a direct transaction, the four call
+/// opcodes from EVM bytecode, and an EIP-7702 delegation that designates the address.
+#[test]
+fn test_native_precompiles_shadow_runtimes_installed_at_their_addresses() {
+    const DEPLOYER_ADDRESS: Address = address!("0x7777777777777777777777777777777777777777");
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    ctx.add_balance(DEPLOYER_ADDRESS, U256::from(10u128.pow(18)));
+
+    upgrade_wasm_runtime(&mut ctx, PRECOMPILE_IDENTITY);
+    upgrade_wasm_runtime(&mut ctx, PRECOMPILE_SECP256K1_RECOVER);
+    for address in [PRECOMPILE_IDENTITY, PRECOMPILE_SECP256K1_RECOVER] {
+        assert!(
+            !ctx.get_code(address).unwrap().is_empty(),
+            "the trapping runtime must sit at {address} for the check to mean anything"
+        );
+    }
+
+    let input = Bytes::from_static(b"native precompiles shadow whatever code sits at 0x04");
+    let expect_echo = |result: &ExecutionResult<fluentbase_revm::RwasmHaltReason>, what: &str| {
+        result.expect_ok();
+        assert_eq!(
+            result.output().map(|b| b.as_ref()),
+            Some(input.as_ref()),
+            "{what}: the identity precompile did not answer"
+        );
+    };
+
+    // A transaction straight to the address.
+    let result = ctx.call_evm_tx(
+        DEPLOYER_ADDRESS,
+        PRECOMPILE_IDENTITY,
+        input.clone(),
+        None,
+        None,
+    );
+    expect_echo(&result, "direct call");
+    let words = (input.len() as u64).div_ceil(32);
+    let initial = revm::interpreter::gas::calculate_initial_tx_gas(
+        revm::primitives::hardfork::SpecId::PRAGUE,
+        &input,
+        false,
+        0,
+        0,
+        0,
+    );
+    assert_eq!(
+        result.tx_gas_used(),
+        (initial.initial_total_gas + 15 + 3 * words).max(initial.floor_gas),
+        "direct call: gas is not the identity schedule"
+    );
+
+    // Every call opcode from EVM bytecode; `bytecode_address` is the precompile in each case.
+    for (name, opcode) in [
+        ("CALL", 0xf1),
+        ("CALLCODE", 0xf2),
+        ("DELEGATECALL", 0xf4),
+        ("STATICCALL", 0xfa),
+    ] {
+        let probe = deploy_evm_runtime(
+            &mut ctx,
+            DEPLOYER_ADDRESS,
+            &forwarding_probe(PRECOMPILE_IDENTITY, opcode),
+        );
+        let result = ctx.call_evm_tx(DEPLOYER_ADDRESS, probe, input.clone(), None, None);
+        expect_echo(&result, name);
+    }
+
+    // A nested call to the ecrecover address recovers the signer of the known vector.
+    let probe = deploy_evm_runtime(
+        &mut ctx,
+        DEPLOYER_ADDRESS,
+        &forwarding_probe(PRECOMPILE_SECP256K1_RECOVER, 0xfa),
+    );
+    let result = ctx.call_evm_tx(
+        DEPLOYER_ADDRESS,
+        probe,
+        hex!("18c547e4f7b0f325ad1e56f57e26c745b09a3e503d86e00e5255ff7f715d3d1c000000000000000000000000000000000000000000000000000000000000001c73b1693892219d736caba55bdb67216e485557ea6b6af75f37096c9aa6a5a75feeb940b1d03b21e36b0e47e79769f095fe2ab855bd91e3a38756b7d75a9c4549").into(),
+        None,
+        None,
+    );
+    result.expect_ok();
+    assert_eq!(
+        result.output().map(|b| b.as_ref()),
+        Some(hex!("000000000000000000000000a94f5374fce5edbc8e2a8697c15331677e6ebf0b").as_slice()),
+        "STATICCALL to ecrecover: the native precompile did not answer"
+    );
+
+    // An EIP-7702 account whose designator is the identity address: the delegated bytecode
+    // address is the precompile, so the provider answers here as well.
+    let signer = crate::eip7702::new_signer();
+    let authority = signer.address();
+    let auth = crate::eip7702::signed_auth(
+        &signer,
+        U256::from(ctx.cfg.chain_id),
+        PRECOMPILE_IDENTITY,
+        0,
+    );
+    let result = TxBuilder::call7702(&mut ctx, DEPLOYER_ADDRESS, Address::ZERO, vec![auth], None)
+        .gas_limit(200_000)
+        .exec();
+    result.expect_ok();
+    assert_eq!(
+        ctx.get_code(authority).unwrap().eip7702_address(),
+        Some(PRECOMPILE_IDENTITY)
+    );
+    let result = ctx.call_evm_tx(DEPLOYER_ADDRESS, authority, input.clone(), None, None);
+    expect_echo(&result, "EIP-7702 delegation");
 }
 
 #[test]
