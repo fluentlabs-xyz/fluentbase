@@ -54,6 +54,22 @@ bump that introduces them is verified by replaying every historical runtime-upgr
 `ContractRuntime` resolves; a module compiled with `CompilationConfig::entrypoint_name` would reject
 any other name with `UnknownExternalFunction` on both backends.
 
+rWasm 0.7.1 (the pinned version) adds `entrypoint_type` to `StrategyDefinition::Rwasm`, the Wasm
+signature a named entrypoint is checked against before it runs; state-routed contracts pass `None`,
+so nothing changes for them. Two execution rules moved for existing bytecode: the interpreter's
+value-stack window is `N_MAX_STACK_SIZE` plus 13 trampoline slots (4 before 0.7.0), and the
+Wasmtime backend traps `StackOverflow` at the interpreter's recursion depth and window instead of
+its native stack, so both flavours stop a call chain at the same frame. Neither is fork-gated; the
+bump is verified by replaying every historical runtime-upgrade payload through
+`validate_system_runtime` on both flavours and by re-executing network history. The compiler
+accepts the wide-arithmetic proposal (opcodes 90-93) unconditionally and nodes before 0.7.0 cannot
+decode those opcodes, so every node must run this release before the WASM runtime or the
+runtime-upgrade guest is rebuilt with an SDK on rWasm 0.7.x, and guests built with
+`-C target-feature=+wide-arithmetic` come only after that. 0.7.1 also emits smaller `StackCheck`
+reservations for functions with dead code and different active-segment table entries, so a module
+compiled by the node differs byte for byte from the same hint compiled by an older on-chain
+compiler; compare upgrade artifacts by hint-section hash, not by full module equality.
+
 ---
 
 ## Execution contract
