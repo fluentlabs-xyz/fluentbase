@@ -210,7 +210,7 @@ mod osaka {
         fn case_osaka_eip7823_modexp_upper_bounds_eip_mainnet_modexp_over_boundary("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/osaka/eip7823_modexp_upper_bounds/eip_mainnet/modexp_over_boundary.json");
         fn case_osaka_eip7823_modexp_upper_bounds_modexp_upper_bounds_modexp_upper_bounds("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/osaka/eip7823_modexp_upper_bounds/modexp_upper_bounds/modexp_upper_bounds.json");
         fn case_osaka_eip7825_transaction_gas_limit_cap_eip_mainnet_tx_gas_limit_cap_at_maximum("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/osaka/eip7825_transaction_gas_limit_cap/eip_mainnet/tx_gas_limit_cap_at_maximum.json");
-        #[ignore = "Fluent caps transactions at 100 Mgas (`TX_GAS_LIMIT_CAP`), not at the 2^24 of EIP-7825; the over-cap case of this file is below Fluent's cap and executes."]
+        #[ignore = "Fluent caps transactions at 100 Mgas (`TX_GAS_LIMIT_CAP`), not at the 2^24 of EIP-7825; the over-cap cases of this file are below Fluent's cap and execute."]
         fn case_osaka_eip7825_transaction_gas_limit_cap_eip_mainnet_tx_gas_limit_cap_exceeded("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/osaka/eip7825_transaction_gas_limit_cap/eip_mainnet/tx_gas_limit_cap_exceeded.json");
         fn case_osaka_eip7825_transaction_gas_limit_cap_tx_gas_limit_maximum_gas_refund("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/osaka/eip7825_transaction_gas_limit_cap/tx_gas_limit/maximum_gas_refund.json");
         fn case_osaka_eip7825_transaction_gas_limit_cap_tx_gas_limit_transaction_gas_limit_cap("tests/ethereum-tests-v20.0.2-osaka/state_tests/for_osaka/osaka/eip7825_transaction_gas_limit_cap/tx_gas_limit/transaction_gas_limit_cap.json");

@@ -110,8 +110,8 @@
   {
     "fork": "Osaka",
     "path": "osaka/eip7825_transaction_gas_limit_cap/eip_mainnet/tx_gas_limit_cap_exceeded.json",
-    "reason": "Fluent deliberately has no Ethereum EIP-7825 transaction gas cap. Below-cap cases in this file still execute.",
-    "source": "revm-rwasm 57e1bbd: crates/context/src/cfg.rs, tx_gas_limit_cap",
+    "reason": "Fluent caps transactions at 100 Mgas (`TX_GAS_LIMIT_CAP`), not at the 2^24 of EIP-7825; the over-cap cases of this file are below Fluent's cap and execute.",
+    "source": "revm-rwasm 9db0cea4: crates/context/src/cfg.rs, tx_gas_limit_cap; fluentbase crates/types/src/chain_rules.rs, TX_GAS_LIMIT_CAP",
     "exceptions": [
       "TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM"
     ]
@@ -119,8 +119,8 @@
   {
     "fork": "Osaka",
     "path": "osaka/eip7825_transaction_gas_limit_cap/tx_gas_limit/transaction_gas_limit_cap.json",
-    "reason": "Fluent deliberately has no Ethereum EIP-7825 transaction gas cap. Below-cap cases in this file still execute.",
-    "source": "revm-rwasm 57e1bbd: crates/context/src/cfg.rs, tx_gas_limit_cap",
+    "reason": "Fluent caps transactions at 100 Mgas (`TX_GAS_LIMIT_CAP`), not at the 2^24 of EIP-7825; the over-cap cases of this file are below Fluent's cap and execute.",
+    "source": "revm-rwasm 9db0cea4: crates/context/src/cfg.rs, tx_gas_limit_cap; fluentbase crates/types/src/chain_rules.rs, TX_GAS_LIMIT_CAP",
     "exceptions": [
       "TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM"
     ]
@@ -128,8 +128,8 @@
   {
     "fork": "Osaka",
     "path": "osaka/eip7825_transaction_gas_limit_cap/tx_gas_limit/tx_gas_limit_cap_access_list_with_diff_addr.json",
-    "reason": "Fluent deliberately has no Ethereum EIP-7825 transaction gas cap. Below-cap cases in this file still execute.",
-    "source": "revm-rwasm 57e1bbd: crates/context/src/cfg.rs, tx_gas_limit_cap",
+    "reason": "Fluent caps transactions at 100 Mgas (`TX_GAS_LIMIT_CAP`), not at the 2^24 of EIP-7825; the over-cap cases of this file are below Fluent's cap and execute.",
+    "source": "revm-rwasm 9db0cea4: crates/context/src/cfg.rs, tx_gas_limit_cap; fluentbase crates/types/src/chain_rules.rs, TX_GAS_LIMIT_CAP",
     "exceptions": [
       "TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM"
     ]
@@ -137,8 +137,8 @@
   {
     "fork": "Osaka",
     "path": "osaka/eip7825_transaction_gas_limit_cap/tx_gas_limit/tx_gas_limit_cap_access_list_with_diff_keys.json",
-    "reason": "Fluent deliberately has no Ethereum EIP-7825 transaction gas cap. Below-cap cases in this file still execute.",
-    "source": "revm-rwasm 57e1bbd: crates/context/src/cfg.rs, tx_gas_limit_cap",
+    "reason": "Fluent caps transactions at 100 Mgas (`TX_GAS_LIMIT_CAP`), not at the 2^24 of EIP-7825; the over-cap cases of this file are below Fluent's cap and execute.",
+    "source": "revm-rwasm 9db0cea4: crates/context/src/cfg.rs, tx_gas_limit_cap; fluentbase crates/types/src/chain_rules.rs, TX_GAS_LIMIT_CAP",
     "exceptions": [
       "TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM"
     ]
@@ -146,8 +146,8 @@
   {
     "fork": "Osaka",
     "path": "osaka/eip7825_transaction_gas_limit_cap/tx_gas_limit/tx_gas_limit_cap_authorized_tx.json",
-    "reason": "Fluent deliberately has no Ethereum EIP-7825 transaction gas cap. Below-cap cases in this file still execute.",
-    "source": "revm-rwasm 57e1bbd: crates/context/src/cfg.rs, tx_gas_limit_cap",
+    "reason": "Fluent caps transactions at 100 Mgas (`TX_GAS_LIMIT_CAP`), not at the 2^24 of EIP-7825; the over-cap cases of this file are below Fluent's cap and execute.",
+    "source": "revm-rwasm 9db0cea4: crates/context/src/cfg.rs, tx_gas_limit_cap; fluentbase crates/types/src/chain_rules.rs, TX_GAS_LIMIT_CAP",
     "exceptions": [
       "TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM"
     ]
