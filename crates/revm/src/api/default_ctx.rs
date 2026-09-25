@@ -1,5 +1,6 @@
 //! Contains trait [`DefaultRwasm`] used to create a default context.
 use crate::RwasmSpecId;
+use fluentbase_sdk::TX_GAS_LIMIT_CAP;
 use revm::{
     context::{BlockEnv, CfgEnv, TxEnv},
     database_interface::EmptyDB,
@@ -19,9 +20,17 @@ impl DefaultRwasm for RwasmContext<EmptyDB> {
     fn rwasm() -> Self {
         Context::mainnet()
             .with_tx(TxEnv::builder().build_fill())
-            .with_cfg(CfgEnv::new_with_spec(RwasmSpecId::OSAKA))
+            .with_cfg(fluent_cfg(RwasmSpecId::OSAKA))
             .with_chain(())
     }
+}
+
+/// A Fluent EVM configuration for `spec`: the per-transaction gas limit cap of the chain
+/// (`TX_GAS_LIMIT_CAP`) on top of revm's defaults.
+pub fn fluent_cfg(spec: RwasmSpecId) -> CfgEnv<RwasmSpecId> {
+    let mut cfg = CfgEnv::new_with_spec(spec);
+    cfg.tx_gas_limit_cap = Some(TX_GAS_LIMIT_CAP);
+    cfg
 }
 
 #[cfg(test)]

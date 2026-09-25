@@ -19,7 +19,7 @@ fn test_nitro_verifier_precompiled_version() {
     let result = TxBuilder::call(&mut ctx, PRECOMPILE_NITRO_VERIFIER)
         .caller(caller)
         .input(attestation_doc.into())
-        .gas_limit(1_000_000_000)
+        .gas_limit(100_000_000)
         .exec();
     if !result.is_success() {
         panic!("attestation verification failed, result: {:?}", result);

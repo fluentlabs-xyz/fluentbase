@@ -4,11 +4,41 @@ use fluentbase_codec::byteorder::LittleEndian;
 use fluentbase_contracts::FLUENTBASE_EXAMPLES_GREETING;
 use fluentbase_sdk::{
     address, byteorder::ByteOrder, bytes, syscall::SYSCALL_ID_CALL, Address, SysFuncIdx,
-    FUEL_DENOM_RATE, STATE_MAIN, U256,
+    FUEL_DENOM_RATE, STATE_MAIN, TX_GAS_LIMIT_CAP, U256,
 };
 use fluentbase_testing::{EvmTestingContext, TxBuilder};
 use hex_literal::hex;
-use revm::context::result::{ExecutionResult, Output};
+use revm::context::result::{EVMError, ExecutionResult, InvalidTransaction, Output};
+
+/// `TX_GAS_LIMIT_CAP` is Fluent's per-transaction gas limit cap: a transaction declaring more is
+/// rejected before execution, one declaring exactly the cap executes.
+#[test]
+fn test_tx_gas_limit_cap() {
+    const CALLER: Address = address!("1111111111111111111111111111111111111111");
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    ctx.add_balance(CALLER, U256::from(u128::MAX));
+
+    let mut over = TxBuilder::call(&mut ctx, Address::ZERO)
+        .caller(CALLER)
+        .gas_limit(TX_GAS_LIMIT_CAP + 1);
+    over.block.gas_limit = u64::MAX;
+    let err = over.try_exec().unwrap_err();
+    assert!(
+        matches!(
+            err,
+            EVMError::Transaction(InvalidTransaction::TxGasLimitGreaterThanCap { gas_limit, cap })
+                if gas_limit == TX_GAS_LIMIT_CAP + 1 && cap == TX_GAS_LIMIT_CAP
+        ),
+        "{err:?}"
+    );
+
+    let mut at = TxBuilder::call(&mut ctx, Address::ZERO)
+        .caller(CALLER)
+        .gas_limit(TX_GAS_LIMIT_CAP);
+    at.block.gas_limit = u64::MAX;
+    let result = at.try_exec().unwrap();
+    assert!(result.is_success(), "{result:?}");
+}
 use rwasm::{instruction_set, RwasmModule, RwasmModuleBuilder, RwasmModuleInner};
 
 #[test]

@@ -31,6 +31,7 @@ use fluentbase_revm::{
     },
     ColdPrecompiles, DefaultRwasm, RwasmBuilder, RwasmEvm, RwasmFrame, RwasmPrecompiles,
 };
+use fluentbase_types::TX_GAS_LIMIT_CAP;
 use reth_chainspec::ChainSpec;
 use reth_ethereum_engine_primitives::{EthBuiltPayload, EthEngineTypes};
 use reth_ethereum_primitives::{EthPrimitives, Receipt, TransactionSigned};
@@ -57,6 +58,14 @@ use std::{convert::Infallible, sync::Arc};
 
 /// The Ethereum EVM context type.
 pub type EthRwasmContext<DB> = Context<BlockEnv, TxEnv, CfgEnv, DB>;
+
+/// Applies the Fluent chain rules that live in the EVM configuration rather than in the chain
+/// spec: the per-transaction gas limit cap (`TX_GAS_LIMIT_CAP`). Every `EvmEnv` the node hands
+/// out, for block execution, payload building, RPC and the transaction pool, passes through here.
+fn with_fluent_cfg(mut env: EvmEnv) -> EvmEnv {
+    env.cfg_env.tx_gas_limit_cap = Some(TX_GAS_LIMIT_CAP);
+    env
+}
 
 /// The `RwasmEvm` instantiation behind [`FluentEvmExecutor`], over the given precompile provider.
 pub type FluentRwasmEvm<DB, I, PRECOMPILE> = RwasmEvm<
@@ -255,6 +264,7 @@ impl EvmFactory for FluentEvmFactory {
     type Precompiles = PrecompilesMap;
 
     fn create_evm<DB: Database>(&self, db: DB, input: EvmEnv) -> Self::Evm<DB, NoOpInspector> {
+        let input = with_fluent_cfg(input);
         let spec_id = input.cfg_env.spec;
         FluentEvmExecutor {
             inner: Context::rwasm()
@@ -275,6 +285,7 @@ impl EvmFactory for FluentEvmFactory {
         input: EvmEnv,
         inspector: I,
     ) -> Self::Evm<DB, I> {
+        let input = with_fluent_cfg(input);
         let spec_id = input.cfg_env.spec;
         FluentEvmExecutor {
             inner: Context::rwasm()
@@ -385,7 +396,7 @@ impl ConfigureEvm for FluentEvmConfig {
     }
 
     fn evm_env(&self, header: &Header) -> Result<EvmEnvFor<Self>, Self::Error> {
-        self.inner.evm_env(header)
+        self.inner.evm_env(header).map(with_fluent_cfg)
     }
 
     fn next_evm_env(
@@ -393,7 +404,9 @@ impl ConfigureEvm for FluentEvmConfig {
         parent: &Header,
         attributes: &Self::NextBlockEnvCtx,
     ) -> Result<EvmEnvFor<Self>, Self::Error> {
-        self.inner.next_evm_env(parent, attributes)
+        self.inner
+            .next_evm_env(parent, attributes)
+            .map(with_fluent_cfg)
     }
 
     fn context_for_block<'a>(
@@ -414,7 +427,7 @@ impl ConfigureEvm for FluentEvmConfig {
 
 impl ConfigureEngineEvm<ExecutionData> for FluentEvmConfig {
     fn evm_env_for_payload(&self, payload: &ExecutionData) -> Result<EvmEnvFor<Self>, Self::Error> {
-        self.inner.evm_env_for_payload(payload)
+        self.inner.evm_env_for_payload(payload).map(with_fluent_cfg)
     }
 
     fn context_for_payload<'a>(
@@ -571,5 +584,48 @@ where
 
     fn receipts(&self) -> &[Self::Receipt] {
         self.inner.receipts()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fluentbase_revm::revm::context::Cfg;
+    use reth_chainspec::{Chain, ChainSpecBuilder};
+
+    /// Every `EvmEnv` the node produces carries the chain's transaction gas limit cap, so block
+    /// validation, payload building and the transaction pool all enforce `TX_GAS_LIMIT_CAP`.
+    #[test]
+    fn evm_env_carries_the_transaction_gas_limit_cap() {
+        let chain = ChainSpecBuilder::default()
+            .chain(Chain::from(1337u64))
+            .genesis(Default::default())
+            .prague_activated()
+            .build();
+        let config = FluentEvmConfig::new(Arc::new(chain), FluentEvmFactory::default());
+        let header = Header {
+            gas_limit: 50_000_000,
+            base_fee_per_gas: Some(7),
+            ..Default::default()
+        };
+        let env = config.evm_env(&header).unwrap();
+        assert_eq!(env.cfg_env.tx_gas_limit_cap, Some(TX_GAS_LIMIT_CAP));
+        assert_eq!(env.cfg_env.tx_gas_limit_cap(), TX_GAS_LIMIT_CAP);
+        let next = config
+            .next_evm_env(
+                &header,
+                &NextBlockEnvAttributes {
+                    timestamp: header.timestamp + 1,
+                    suggested_fee_recipient: Address::ZERO,
+                    prev_randao: Default::default(),
+                    gas_limit: header.gas_limit,
+                    parent_beacon_block_root: None,
+                    withdrawals: None,
+                    extra_data: Bytes::new(),
+                    slot_number: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(next.cfg_env.tx_gas_limit_cap(), TX_GAS_LIMIT_CAP);
     }
 }

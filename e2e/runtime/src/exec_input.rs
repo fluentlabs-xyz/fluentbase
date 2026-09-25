@@ -1,9 +1,15 @@
 use crate::EvmTestingContextWithGenesis;
 use fluentbase_sdk::{
-    calc_create_address, syscall::SYSCALL_ID_CALL, Address, Bytes, STATE_MAIN, U256,
+    calc_create_address, calldata_quadratic_surcharge, syscall::SYSCALL_ID_CALL, Address, Bytes,
+    STATE_MAIN, TX_GAS_LIMIT_CAP, U256,
 };
 use fluentbase_testing::{EvmTestingContext, TxBuilder};
-use revm::context_interface::cfg::gas::TOTAL_COST_FLOOR_PER_TOKEN;
+use revm::{
+    context::result::{EVMError, InvalidTransaction},
+    context_interface::cfg::gas::TOTAL_COST_FLOOR_PER_TOKEN,
+    interpreter::gas::calculate_initial_tx_gas,
+    primitives::hardfork::SpecId,
+};
 use std::{
     fmt::Write,
     time::{Duration, Instant},
@@ -161,7 +167,7 @@ fn measure_call_gas(payload_size: usize) -> (u64, Duration) {
             deployer,
             callee,
             Bytes::from(vec![1u8; payload_size]),
-            Some(500_000_000),
+            Some(TX_GAS_LIMIT_CAP),
             None,
         );
         let output = call.output().unwrap();
@@ -178,7 +184,7 @@ fn measure_call_gas(payload_size: usize) -> (u64, Duration) {
     let start = Instant::now();
     let call = TxBuilder::call(&mut ctx, caller)
         .caller(deployer)
-        .gas_limit(500_000_000)
+        .gas_limit(100_000_000)
         .exec();
     let elapsed = start.elapsed();
 
@@ -255,7 +261,7 @@ fn measure_calldata_gas(calldata_size: usize) -> u64 {
 
     // Send direct EVM TX with zero-byte calldata (worst case: 4 gas/byte)
     let calldata = Bytes::from(vec![0x00; calldata_size]);
-    let call = ctx.call_evm_tx(deployer, callee, calldata, Some(500_000_000), None);
+    let call = ctx.call_evm_tx(deployer, callee, calldata, Some(TX_GAS_LIMIT_CAP), None);
 
     assert!(
         call.is_success(),
@@ -284,18 +290,39 @@ fn test_calldata_below_threshold() {
     );
 }
 
+/// 14 blobs of zero calldata cost more than `TX_GAS_LIMIT_CAP` (100M) in intrinsic gas alone:
+/// DIVISOR=30 is chosen so that such a transaction cannot exist. It cannot be executed to measure
+/// it, because the cap rejects any transaction that declares that much gas, so the bound is
+/// checked on the intrinsic cost and on the rejection itself.
 #[test]
 fn test_calldata_max_block() {
     const BLOB_SIZE: usize = 128 * 1024;
-    const MAX_BLOCK_GAS: u64 = 100_000_000;
 
-    // 14 blobs must exceed max block gas — transaction cannot fit in a single block.
-    // This is the goal: DIVISOR=30 is chosen specifically to enforce this bound.
-    let gas_14_blobs = measure_calldata_gas(14 * BLOB_SIZE);
+    let calldata = vec![0u8; 14 * BLOB_SIZE];
+    let intrinsic = calculate_initial_tx_gas(SpecId::PRAGUE, &calldata, false, 0, 0, 0)
+        .initial_total_gas
+        + calldata_quadratic_surcharge(calldata.len() as u64);
     assert!(
-        gas_14_blobs > MAX_BLOCK_GAS,
-        "14 blobs should exceed 100M gas, got {} ({:.1}M)",
-        gas_14_blobs,
-        gas_14_blobs as f64 / 1e6,
+        intrinsic > TX_GAS_LIMIT_CAP,
+        "14 blobs should cost more than the {}M cap, got {:.1}M",
+        TX_GAS_LIMIT_CAP / 1_000_000,
+        intrinsic as f64 / 1e6,
+    );
+
+    let mut ctx = EvmTestingContext::default().with_full_genesis();
+    let deployer = Address::ZERO;
+    let callee = deploy_contract(&mut ctx, deployer, 0, &callee_contract_wat());
+    let err = TxBuilder::call(&mut ctx, callee)
+        .caller(deployer)
+        .input(Bytes::from(calldata))
+        .gas_limit(TX_GAS_LIMIT_CAP)
+        .try_exec()
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            EVMError::Transaction(InvalidTransaction::CallGasCostMoreThanGasLimit { .. })
+        ),
+        "a transaction whose intrinsic gas exceeds the cap must be rejected: {err:?}"
     );
 }
