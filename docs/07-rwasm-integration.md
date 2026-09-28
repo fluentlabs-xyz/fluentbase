@@ -54,7 +54,8 @@ bump that introduces them is verified by replaying every historical runtime-upgr
 `ContractRuntime` resolves; a module compiled with `CompilationConfig::entrypoint_name` would reject
 any other name with `UnknownExternalFunction` on both backends.
 
-rWasm 0.7.1 (the pinned version) adds `entrypoint_type` to `StrategyDefinition::Rwasm`, the Wasm
+rWasm 0.7.2 (the pinned version; 0.7.1 plus a Wasmtime fix for the stack counters a tail call
+made after a plain call reads) adds `entrypoint_type` to `StrategyDefinition::Rwasm`, the Wasm
 signature a named entrypoint is checked against before it runs; state-routed contracts pass `None`,
 so nothing changes for them. Two execution rules moved for existing bytecode: the interpreter's
 value-stack window is `N_MAX_STACK_SIZE` plus 13 trampoline slots (4 before 0.7.0), and the

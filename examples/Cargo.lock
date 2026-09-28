@@ -4067,9 +4067,9 @@ dependencies = [
 
 [[package]]
 name = "rwasm"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c541887aa66c121b3641b43c7f2562406a50739f22f6916f25118559512cadbd"
+checksum = "f77d82f7f1e198233f2e9f9d844aab30b7d3957d2a52228fb2db3137ef13681e"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -5254,9 +5254,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-environ-rwasm"
-version = "45.0.0-rwasm.3"
+version = "45.0.0-rwasm.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "935829759adcb2266ae863bb804437d35f304b9ec5700d13694bad1fd3f06bb5"
+checksum = "549991fc7b5b96bb90945b73cec9abeb5873409225316e6c2f9d42b046349de2"
 dependencies = [
  "anyhow",
  "cpp_demangle",
@@ -5365,9 +5365,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-cranelift-rwasm"
-version = "45.0.0-rwasm.3"
+version = "45.0.0-rwasm.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4e3659b7469a44bd5fca0d07d6311037d3e7186c58994217ac1dad8bbfad62d"
+checksum = "d9a92658cb7b7c54a868be9791fbfe13f11f5415c4563daa701f5aaaf98c2863"
 dependencies = [
  "cfg-if",
  "cranelift-codegen",
@@ -5486,9 +5486,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-rwasm"
-version = "45.0.0-rwasm.3"
+version = "45.0.0-rwasm.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47ee852dd84158a4186cf09b8c44bf076944d5d786c8f17ef1f0c07447a8be70"
+checksum = "6b4fc51a71980975510d7b37c4863da88be810e6a2d98a081d43c62e17b2cb8b"
 dependencies = [
  "addr2line",
  "async-trait",
