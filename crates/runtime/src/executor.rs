@@ -420,6 +420,7 @@ impl RuntimeExecutor for RuntimeFactoryExecutor {
                 engine,
                 module,
                 entrypoint_name: None,
+                entrypoint_type: None,
             };
             let runtime =
                 ContractRuntime::new(strategy, self.import_linker.clone(), ctx, fuel_limit);
@@ -676,6 +677,7 @@ mod tests {
                 module,
                 engine,
                 entrypoint_name: None,
+                entrypoint_type: None,
             },
             executor.import_linker.clone(),
             ctx,
@@ -867,6 +869,7 @@ mod tests {
                 module,
                 engine: ExecutionEngine::acquire_shared(),
                 entrypoint_name: None,
+                entrypoint_type: None,
             },
             executor.import_linker.clone(),
             RuntimeContext::default(),
