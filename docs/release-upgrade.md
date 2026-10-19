@@ -4,6 +4,53 @@ The existing tag-triggered workflows remain active. Genesis generation waits for
 `fluentbase-build` image and then verifies its provenance. The `release` environment controls
 approval of the builder job.
 
+## Reth 2.7 and revm 43 migration
+
+The node uses upstream Reth `v2.7.0` and its revm dependency `43.0.3` (upstream monorepo tag
+`v120`). The Fluent forks retain the upstream tag's complete history followed by one signed
+Conventional Commit containing the Fluent changes:
+
+| Repository | Patched branch | Upstream base |
+| --- | --- | --- |
+| `fluentlabs-xyz/reth-rwasm` | `v2.7.0-patched` | Reth `v2.7.0` |
+| `fluentlabs-xyz/revm-rwasm` | `v120-patched` | revm `v120` / crate `43.0.3` |
+| `fluentlabs-xyz/reth-core-rwasm` | `v0.8.1-patched` | reth-core `v0.8.1` |
+
+Builds require Rust `1.95.0`, including the `wasm32-unknown-unknown` target for contracts. The
+builder image, publishing workflows, and local build scripts use the same toolchain. Use the
+checked-in lockfiles: the patched Reth/core versions must not be replaced by a newer registry
+patch release during dependency resolution.
+
+The upgrade preserves Fluent's 100,000,000 total transaction gas limit, quadratic calldata
+surcharge, initially cold precompiles, Osaka precompile pricing floor, beneficiary validation,
+historical Testnet fee boundaries, and 65-byte extra-data allowance. The default RPC gas cap is
+also 100,000,000 because Reth 2.7 applies it to `eth_estimateGas`; an explicit `--rpc.gascap`
+continues to override that default.
+Estimation and txpool initialization/head refresh retain Fluent's total gas cap when EIP-8037
+is configured; Ethereum's regular-gas-only cap bypass remains specific to Ethereum execution.
+
+Engine RPC, block import, and Flashbots validation share Fluent's 65-byte extra-data validator;
+the original header bytes are retained for block-hash and fork validation. The new SSZ Engine
+transport remains disabled because Ethereum's SSZ schema limits extra data to 32 bytes. Use
+the JSON-RPC Engine API on Fluent.
+
+Amsterdam is absent from the built-in Fluent fork schedules. Local mode now uses an explicit
+Fluent schedule rather than inheriting Reth's evolving development schedule. The delegated EVM
+interpreter remains pinned to Osaka. BAL parallel execution and BAL parallel state-root
+processing are disabled by default, and the Fluent EVM factory does not expose a JIT backend.
+The new upstream execution paths require separate Fluent validation before activation.
+In particular, Amsterdam's EIP-8037 reservoir and refundable state-gas settlement are not
+supported by Fluent's interrupted execution path and must remain disabled.
+
+Custom ownable-account and rWasm database bytecode tags retain their existing encoding. Legacy
+EVM bytecode restored from serialized metadata is analyzed before execution rather than trusting
+stored padding or jump destinations; the metadata wire format is unchanged. Optional reth-core
+account extensions remain disabled in normal Fluent builds.
+
+Rebuilding the node does not replace deployed runtime contracts. Publishing or activating rebuilt
+system runtimes remains a separate privileged upgrade. The historical replay limits below still
+apply; passing the supported fixture corpus does not prove complete canonical Testnet replay.
+
 ## GitHub environment configuration
 
 In **Settings → Environments**, create or edit the environment named exactly `release`:

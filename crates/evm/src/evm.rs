@@ -28,11 +28,10 @@
 use crate::{
     bytecode::AnalyzedBytecode,
     host::HostWrapperImpl,
-    opcodes::interruptable_instruction_table,
+    opcodes::{interruptable_gas_table, interruptable_instruction_table},
     types::{ExecutionResult, InterruptingInterpreter, InterruptionExtension},
 };
 use fluentbase_sdk::{Bytes, ContextReader, SystemAPI, FUEL_DENOM_RATE};
-use revm_bytecode::Bytecode;
 use revm_interpreter::{
     interpreter::{ExtBytecode, RuntimeFlags},
     CallInput, Gas, InputsImpl, InstructionTable, Interpreter, InterpreterAction, SharedMemory,
@@ -64,22 +63,16 @@ impl EthVM {
             input: CallInput::Bytes(input),
             call_value: context_input.contract_value(),
             account_owner: None,
+            // Call depth is enforced by the interruption host; delegated Osaka
+            // opcodes do not create native interpreter frames.
+            depth: 0,
         };
         let is_static = context_input.contract_is_static();
         let gas_limit = context_input.contract_gas_limit();
-        // Initialize EVM bytecode and interpreter
-        // Older metadata may contain unpadded empty code. Empty EVM code is a
-        // successful STOP, including self-calls while a constructor is running.
-        let bytecode = if analyzed_bytecode.len == 0 {
-            Bytecode::default()
-        } else {
-            Bytecode::new_analyzed(
-                analyzed_bytecode.bytecode,
-                analyzed_bytecode.len as usize,
-                analyzed_bytecode.jump_table,
-            )
-        };
-        let bytecode = ExtBytecode::new_with_hash(bytecode, analyzed_bytecode.hash);
+        // Canonical analysis is established by AnalyzedBytecode's constructors.
+        let code_hash = analyzed_bytecode.hash();
+        let bytecode = analyzed_bytecode.into_bytecode();
+        let bytecode = ExtBytecode::new_with_hash(bytecode, code_hash);
         let gas = Gas::new(gas_limit);
         let interpreter = Interpreter {
             bytecode,
@@ -108,9 +101,13 @@ impl EthVM {
     #[allow(clippy::never_loop)]
     pub fn run_the_loop<SDK: SystemAPI>(mut self, sdk: &mut SDK) -> ExecutionResult {
         let instruction_table = interruptable_instruction_table();
+        let gas_table = interruptable_gas_table();
         let mut sdk = HostWrapperImpl::wrap(sdk);
         loop {
-            match self.interpreter.run_plain(&instruction_table, &mut sdk) {
+            match self
+                .interpreter
+                .run_plain(&instruction_table, &gas_table, &mut sdk)
+            {
                 InterpreterAction::Return(result) => {
                     let committed_gas = self.interpreter.extend.committed_gas;
                     break ExecutionResult {
@@ -170,7 +167,8 @@ impl EthVM {
         SDK: SystemAPI,
     {
         let mut sdk = HostWrapperImpl::wrap(sdk);
-        self.interpreter.run_plain(instruction_table, &mut sdk)
+        self.interpreter
+            .run_plain(instruction_table, &interruptable_gas_table(), &mut sdk)
     }
 
     /// Commit interpreter gas deltas to the host (fuel) and snapshot the state.

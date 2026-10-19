@@ -60,6 +60,8 @@ pub enum TestErrorKind {
     StateRootMismatch { got: B256, expected: B256 },
     #[error("unknown private key: {0:?}")]
     UnknownPrivateKey(B256),
+    #[error("fixture has neither a sender nor a private key")]
+    MissingSender,
     #[error("unexpected exception: got {got_exception:?}, expected {expected_exception:?}")]
     UnexpectedException {
         expected_exception: Option<String>,
@@ -845,7 +847,7 @@ fn check_fluent_execution(
     if let (Ok(result), Some(expectation)) = (exec_result, coinbase) {
         if !test.state.contains_key(&expectation.coinbase) {
             let expected = expectation.pre_balance
-                + U256::from(result.gas_used()) * U256::from(expectation.effective_gas_price);
+                + U256::from(result.tx_gas_used()) * U256::from(expectation.effective_gas_price);
             let got = db
                 .load_cache_account(expectation.coinbase)
                 .ok()
@@ -888,23 +890,7 @@ pub fn execute_evm_test_suite(
     }
 
     let s = std::fs::read_to_string(path).unwrap();
-    let mut raw_suite: Value = serde_json::from_str(&s).map_err(|e| TestError {
-        name: path.to_string_lossy().into_owned(),
-        kind: e.into(),
-    })?;
-    // Modern signature-validation fixtures provide a sender and txbytes without
-    // a private key. The pinned TestUnit schema still requires secretKey; its
-    // value is unused when sender is present, and txbytes are validated below.
-    if let Some(units) = raw_suite.as_object_mut() {
-        for unit in units.values_mut() {
-            if let Some(transaction) = unit.get_mut("transaction").and_then(Value::as_object_mut) {
-                if transaction.contains_key("sender") && !transaction.contains_key("secretKey") {
-                    transaction.insert("secretKey".to_owned(), json!(B256::ZERO));
-                }
-            }
-        }
-    }
-    let suite: TestSuite = serde_json::from_value(raw_suite.clone()).map_err(|e| TestError {
+    let suite: TestSuite = serde_json::from_str(&s).map_err(|e| TestError {
         name: path.to_string_lossy().into_owned(),
         kind: e.into(),
     })?;
@@ -952,16 +938,6 @@ pub fn execute_evm_test_suite(
         }
 
         let (mut cfg_env, _, mut tx_env) = prepare_env(&unit, &name)?;
-        // The pinned upstream TransactionParts omits chainId. Preserve it from
-        // the fixture so invalid-chain transactions reach both engines intact.
-        if let Some(chain_id) = raw_suite[&name]["transaction"].get("chainId") {
-            let chain_id: U256 =
-                serde_json::from_value(chain_id.clone()).map_err(|e| TestError {
-                    name: name.clone(),
-                    kind: e.into(),
-                })?;
-            tx_env.chain_id = Some(chain_id.to());
-        }
 
         for (spec_name, tests) in &unit.post {
             // The delegated EVM and built-in precompiles execute Osaka semantics,
@@ -1227,7 +1203,7 @@ pub fn resolve_externalized_bytecodes(v: &mut Value, base_dir: &Path) {
 /// instead, which under-charges such a call by 2500 gas against canonical receipts. Fixtures
 /// replay real transactions, so they must use the node's semantics.
 fn node_precompiles(spec_id: SpecId) -> ColdPrecompiles<EthPrecompiles> {
-    ColdPrecompiles(EthPrecompiles {
+    ColdPrecompiles::new(EthPrecompiles {
         precompiles: RwasmPrecompiles::new_with_spec(spec_id).precompiles(),
         spec: spec_id,
     })

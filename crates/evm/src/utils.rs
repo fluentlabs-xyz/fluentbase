@@ -6,7 +6,8 @@ use once_cell::race::OnceBox;
 use revm_context_interface::cfg::GasParams;
 use revm_interpreter::{
     interpreter_types::{Jumps, LoopControl, MemoryTr},
-    Host, InstructionContext, InterpreterAction, InterpreterTypes,
+    Host, InstructionContext, InstructionExecResult, InstructionResult, InterpreterAction,
+    InterpreterTypes,
 };
 use revm_primitives::hardfork::SpecId;
 
@@ -28,7 +29,7 @@ pub(crate) fn interrupt_into_action<
     H: HostWrapper + ?Sized,
 >(
     context: InstructionContext<'_, H, WIRE>,
-) {
+) -> InstructionExecResult {
     // We should repeat the previous instruction once we have enough data.
     // To achieve this, we jump back to this opcode PC.
     context.interpreter.bytecode.relative_jump(-1);
@@ -36,6 +37,7 @@ pub(crate) fn interrupt_into_action<
         .interpreter
         .bytecode
         .set_action(InterpreterAction::SystemInterruption);
+    Err(InstructionResult::Suspend)
 }
 
 /// View a range of the interpreter’s shared memory as a global slice.
@@ -67,7 +69,7 @@ macro_rules! as_u64_or_fail {
                 if (x[1] == 0) & (x[2] == 0) & (x[3] == 0) {
                     x[0]
                 } else {
-                    return $interpreter.halt(InstructionResult::InvalidOperandOOG);
+                    return Err(revm_interpreter::InstructionResult::InvalidOperandOOG);
                 }
             }
         }

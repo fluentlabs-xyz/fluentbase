@@ -14,7 +14,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  RUST_TOOLCHAIN: "1.93.1"
+  RUST_TOOLCHAIN: "1.95.0"
   CROSS_REV: "64b5bb4d3d34de062552b9a2093affe77b4ad16a"
   REPO_NAME: ${{ github.repository_owner }}/fluent
   IMAGE_NAME: ${{ github.repository_owner }}/fluent

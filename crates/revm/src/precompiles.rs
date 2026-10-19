@@ -6,9 +6,9 @@ use revm::{
     handler::{EthPrecompiles, PrecompileProvider},
     interpreter::{CallInputs, InterpreterResult},
     precompile::{PrecompileSpecId, Precompiles},
-    primitives::Address,
+    primitives::{Address, AddressSet},
 };
-use std::{boxed::Box, string::String};
+use std::string::String;
 
 /// Rwasm precompile provider: the native `revm` implementations of the Ethereum precompiles.
 ///
@@ -86,9 +86,9 @@ where
     /// Anything that mirrors the chain wraps the provider in [`ColdPrecompiles`] instead: no
     /// network has ever pre-warmed precompile addresses.
     #[inline]
-    fn warm_addresses(&self) -> Box<impl Iterator<Item = Address>> {
+    fn warm_addresses(&self) -> &AddressSet {
         let precompiles = Precompiles::new(PrecompileSpecId::from_spec_id(self.spec));
-        Box::new(precompiles.addresses().cloned())
+        precompiles.addresses_set()
     }
 
     #[inline]
@@ -112,7 +112,14 @@ impl Default for RwasmPrecompiles {
 /// natively must keep reporting an empty warm set. The node and the fixture replay wrap their
 /// provider in this type; every other call is delegated to the wrapped provider.
 #[derive(Debug, Clone, Default)]
-pub struct ColdPrecompiles<P>(pub P);
+pub struct ColdPrecompiles<P>(pub P, AddressSet);
+
+impl<P> ColdPrecompiles<P> {
+    /// Wraps a provider while keeping every precompile address initially cold.
+    pub fn new(inner: P) -> Self {
+        Self(inner, AddressSet::default())
+    }
+}
 
 impl<CTX, P> PrecompileProvider<CTX> for ColdPrecompiles<P>
 where
@@ -136,8 +143,8 @@ where
     }
 
     #[inline]
-    fn warm_addresses(&self) -> Box<impl Iterator<Item = Address>> {
-        Box::new(core::iter::empty())
+    fn warm_addresses(&self) -> &AddressSet {
+        &self.1
     }
 
     #[inline]

@@ -1,10 +1,10 @@
-use crate::utils::naming::solidity_function_name;
 use crate::{
     abi::{
         constructor::ConstructorABI, error::ABIError, function::FunctionABI,
         structs::StructResolver,
     },
     method::CONSTRUCTOR_METHOD,
+    utils::naming::solidity_function_name,
 };
 use quote::ToTokens;
 use std::ops::Deref;

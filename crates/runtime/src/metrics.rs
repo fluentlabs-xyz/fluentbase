@@ -16,10 +16,9 @@ use fluentbase_types::{
     CompilationBackend, CompilationConfigFingerprint, ExitCode,
     COMPILATION_CONFIG_FINGERPRINT_VERSION, STATE_DEPLOY, STATE_MAIN,
 };
-use rwasm::TrapCode;
-
 #[cfg(feature = "std")]
 use metrics::{Counter, Gauge, Histogram};
+use rwasm::TrapCode;
 #[cfg(feature = "std")]
 use std::{sync::OnceLock, time::Instant};
 

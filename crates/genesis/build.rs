@@ -76,6 +76,7 @@ fn default_chain_config(chain_id: u64) -> ChainConfig {
         prague_time: Some(0u64),
         osaka_time: Some(0u64),
         amsterdam_time: None,
+        bogota_time: None,
         bpo1_time: None,
         bpo2_time: None,
         bpo3_time: None,
@@ -289,6 +290,7 @@ fn main() {
             blob_gas_used: None,
             number: Some(0),
             parent_hash: None,
+            slot_number: None,
         };
         let genesis_path =
             PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("genesis-devnet.json");
@@ -314,6 +316,7 @@ fn main() {
             blob_gas_used: None,
             number: Some(0),
             parent_hash: None,
+            slot_number: None,
         };
         let genesis_path =
             PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("genesis-mainnet.json");

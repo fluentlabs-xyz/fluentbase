@@ -17,16 +17,16 @@ use fluentbase_sdk::{
     STATE_MAIN, U256,
 };
 use revm_interpreter::{
-    as_u64_saturated, as_usize_or_fail, as_usize_or_fail_ret, as_usize_saturated, gas,
-    instruction_table,
+    as_u64_saturated, as_usize_or_fail, as_usize_saturated, gas, instruction_table,
     instructions::{
         contract::resize_memory,
         system::copy_cost_and_memory_resize,
         utility::{IntoAddress, IntoU256},
     },
     interpreter_types::{LoopControl, MemoryTr, ReturnData, RuntimeFlag, StackTr},
-    peekn, popn, popn_top, push, require_non_staticcall, resize_memory, Host, Instruction,
-    InstructionContext, InstructionResult, Interpreter, InterpreterAction, InterpreterTypes, Stack,
+    peekn, popn, popn_top, push, require_non_staticcall, Host, Instruction, InstructionContext,
+    InstructionExecResult, InstructionResult, Interpreter, InterpreterAction, InterpreterTypes,
+    Stack,
 };
 use revm_primitives::{wasm::wasm_max_code_size, BLOCK_HASH_HISTORY};
 
@@ -50,7 +50,7 @@ macro_rules! unpack_interruption {
                     .interpreter
                     .bytecode
                     .set_action(InterpreterAction::Return(result));
-                return;
+                return Err(InstructionResult::Suspend);
             }
             Some(interruption_outcome)
         } else {
@@ -67,7 +67,7 @@ macro_rules! unpack_interruption {
                     .interpreter
                     .bytecode
                     .set_action(InterpreterAction::Return(result));
-                return;
+                return Err(InstructionResult::Suspend);
             }
             Some(interruption_outcome)
         } else {
@@ -78,11 +78,11 @@ macro_rules! unpack_interruption {
 
 fn balance<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrapper + ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
-) {
+) -> InstructionExecResult {
     popn_top!([], top, context.interpreter);
     if let Some(interruption_outcome) = unpack_interruption!(context) {
         *top = interruption_outcome.into_u256();
-        return;
+        return Ok(());
     }
     let address = top.into_address();
     let mut buffer = [0u8; encode::balance_size_hint()];
@@ -93,15 +93,15 @@ fn balance<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrappe
         None,
         STATE_MAIN,
     );
-    interrupt_into_action(context);
+    interrupt_into_action(context)
 }
 
 fn selfbalance<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrapper + ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
-) {
+) -> InstructionExecResult {
     if let Some(interruption_outcome) = unpack_interruption!(context) {
         push!(context.interpreter, interruption_outcome.into_u256());
-        return;
+        return Ok(());
     }
     let mut buffer = [0u8; encode::self_balance_size_hint()];
     encode::self_balance_into(&mut &mut buffer[..]);
@@ -111,16 +111,16 @@ fn selfbalance<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWr
         None,
         STATE_MAIN,
     );
-    interrupt_into_action(context);
+    interrupt_into_action(context)
 }
 
 fn extcodesize<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrapper + ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
-) {
+) -> InstructionExecResult {
     popn_top!([], top, context.interpreter);
     if let Some(interruption_outcome) = unpack_interruption!(context) {
         *top = interruption_outcome.into_u256();
-        return;
+        return Ok(());
     }
     let address = top.into_address();
     let mut buffer = [0u8; encode::code_size_size_hint()];
@@ -131,7 +131,7 @@ fn extcodesize<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWr
         None,
         STATE_MAIN,
     );
-    interrupt_into_action(context);
+    interrupt_into_action(context)
 }
 
 fn extcodecopy<
@@ -139,7 +139,7 @@ fn extcodecopy<
     H: Host + HostWrapper + ?Sized,
 >(
     context: InstructionContext<'_, H, WIRE>,
-) {
+) -> InstructionExecResult {
     if let Some(interruption_outcome) = unpack_interruption!(context) {
         popn!(
             [_address, memory_offset, _code_offset, len_u256],
@@ -150,7 +150,7 @@ fn extcodecopy<
         // A zero length ignores the memory offset, so it must not be narrowed here
         // either, otherwise we'd reject an offset the pre-interruption phase accepted.
         if len == 0 {
-            return;
+            return Ok(());
         }
         // Non-zero length means the offset was already validated before the interruption.
         let memory_offset_usize = as_usize_or_fail!(context.interpreter, memory_offset);
@@ -158,7 +158,7 @@ fn extcodecopy<
             .interpreter
             .memory
             .set_data(memory_offset_usize, 0, len, &code);
-        return;
+        return Ok(());
     }
     peekn!(
         [address, memory_offset, code_offset, len_u256],
@@ -173,12 +173,9 @@ fn extcodecopy<
         // Fail on casting of memory_offset only if len is not zero.
         let memory_offset_usize = as_usize_or_fail!(context.interpreter, memory_offset);
         // Resize memory to fit the code
-        resize_memory!(
-            context.interpreter,
-            context.host.gas_params(),
-            memory_offset_usize,
-            len
-        );
+        context
+            .interpreter
+            .resize_memory(context.host.gas_params(), memory_offset_usize, len)?;
     }
 
     let mut buffer = [0u8; encode::code_copy_size_hint()];
@@ -189,16 +186,16 @@ fn extcodecopy<
         None,
         STATE_MAIN,
     );
-    interrupt_into_action(context);
+    interrupt_into_action(context)
 }
 
 fn extcodehash<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrapper + ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
-) {
+) -> InstructionExecResult {
     popn_top!([], top, context.interpreter);
     if let Some(interruption_outcome) = unpack_interruption!(context) {
         *top = interruption_outcome.into_b256().into();
-        return;
+        return Ok(());
     }
     let address = top.into_address();
     let mut buffer = [0u8; encode::code_hash_size_hint()];
@@ -209,30 +206,30 @@ fn extcodehash<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWr
         None,
         STATE_MAIN,
     );
-    interrupt_into_action(context);
+    interrupt_into_action(context)
 }
 
 fn blockhash<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrapper + ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
-) {
+) -> InstructionExecResult {
     popn_top!([], number, context.interpreter);
     if let Some(interruption_outcome) = unpack_interruption!(context) {
         *number = interruption_outcome.into_b256().into();
-        return;
+        return Ok(());
     }
     let requested_number = *number;
     let block_number = context.host.block_number();
     let Some(diff) = block_number.checked_sub(requested_number) else {
         *number = U256::ZERO;
         gas!(context.interpreter, gas::BLOCKHASH);
-        return;
+        return Ok(());
     };
     let diff = as_u64_saturated!(diff);
     // blockhash should push zero if the number is the same as the current block number.
     if diff == 0 || diff > BLOCK_HASH_HISTORY {
         *number = U256::ZERO;
         gas!(context.interpreter, gas::BLOCKHASH);
-        return;
+        return Ok(());
     }
     let requested_number = as_u64_saturated!(requested_number);
     let mut buffer = [0u8; encode::block_hash_size_hint()];
@@ -243,16 +240,16 @@ fn blockhash<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrap
         None,
         STATE_MAIN,
     );
-    interrupt_into_action(context);
+    interrupt_into_action(context)
 }
 
 fn sload<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrapper + ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
-) {
+) -> InstructionExecResult {
     popn_top!([], index, context.interpreter);
     if let Some(interruption_outcome) = unpack_interruption!(context) {
         *index = interruption_outcome.into_u256();
-        return;
+        return Ok(());
     }
     let index = *index;
     let mut buffer = [0u8; encode::storage_read_size_hint()];
@@ -263,7 +260,7 @@ fn sload<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrapper 
         None,
         STATE_MAIN,
     );
-    interrupt_into_action(context);
+    interrupt_into_action(context)
 }
 
 fn sstore<
@@ -271,9 +268,9 @@ fn sstore<
     H: Host + HostWrapper + ?Sized,
 >(
     context: InstructionContext<'_, H, WIRE>,
-) {
+) -> InstructionExecResult {
     if let Some(_interruption_outcome) = unpack_interruption!(context) {
-        return;
+        return Ok(());
     }
     require_non_staticcall!(context.interpreter);
     popn!([index, value], context.interpreter);
@@ -285,16 +282,16 @@ fn sstore<
         None,
         STATE_MAIN,
     );
-    interrupt_into_action(context);
+    interrupt_into_action(context)
 }
 
 fn tload<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrapper + ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
-) {
+) -> InstructionExecResult {
     popn_top!([], index, context.interpreter);
     if let Some(interruption_outcome) = unpack_interruption!(context) {
         *index = interruption_outcome.into_u256();
-        return;
+        return Ok(());
     }
     let index = *index;
     let mut buffer = [0u8; encode::transient_read_size_hint()];
@@ -305,14 +302,14 @@ fn tload<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrapper 
         None,
         STATE_MAIN,
     );
-    interrupt_into_action(context);
+    interrupt_into_action(context)
 }
 
 fn tstore<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrapper + ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
-) {
+) -> InstructionExecResult {
     if let Some(_interruption_outcome) = unpack_interruption!(context) {
-        return;
+        return Ok(());
     }
     require_non_staticcall!(context.interpreter);
     popn!([index, value], context.interpreter);
@@ -324,14 +321,14 @@ fn tstore<WIRE: InterpreterTypes<Extend = InterruptionExtension>, H: HostWrapper
         None,
         STATE_MAIN,
     );
-    interrupt_into_action(context);
+    interrupt_into_action(context)
 }
 
 fn log<const N: usize, H: HostWrapper + ?Sized>(
     context: InstructionContext<'_, H, impl InterpreterTypes<Extend = InterruptionExtension>>,
-) {
+) -> InstructionExecResult {
     if let Some(_interruption_outcome) = unpack_interruption!(context) {
-        return;
+        return Ok(());
     }
     require_non_staticcall!(context.interpreter);
 
@@ -341,16 +338,16 @@ fn log<const N: usize, H: HostWrapper + ?Sized>(
         Bytes::new()
     } else {
         let offset = as_usize_or_fail!(context.interpreter, offset);
-        resize_memory!(context.interpreter, context.host.gas_params(), offset, len);
+        context
+            .interpreter
+            .resize_memory(context.host.gas_params(), offset, len)?;
         Bytes::copy_from_slice(context.interpreter.memory.slice_len(offset, len).as_ref())
     };
     if context.interpreter.stack.len() < N {
-        context.interpreter.halt(InstructionResult::StackUnderflow);
-        return;
+        return Err(InstructionResult::StackUnderflow);
     }
     let Some(topics) = context.interpreter.stack.popn::<N>() else {
-        context.interpreter.halt(InstructionResult::StackUnderflow);
-        return;
+        return Err(InstructionResult::StackUnderflow);
     };
     let topics: Vec<B256> = topics.into_iter().map(B256::from).collect();
     let mut buffer = vec![0u8; encode::emit_log_size_hint(topics.len(), data.len())];
@@ -361,7 +358,7 @@ fn log<const N: usize, H: HostWrapper + ?Sized>(
         None,
         STATE_MAIN,
     );
-    interrupt_into_action(context);
+    interrupt_into_action(context)
 }
 
 fn create<
@@ -370,7 +367,7 @@ fn create<
     H: Host + HostWrapper + ?Sized,
 >(
     context: InstructionContext<'_, H, WIRE>,
-) {
+) -> InstructionExecResult {
     if let Some(interruption_outcome) = unpack_interruption!(@frame context) {
         context.interpreter.return_data.clear();
         match interruption_outcome.exit_code {
@@ -390,7 +387,7 @@ fn create<
                 push!(context.interpreter, U256::ZERO);
             }
         }
-        return;
+        return Ok(());
     }
     require_non_staticcall!(context.interpreter);
     popn!([value, code_offset, len], context.interpreter);
@@ -409,22 +406,17 @@ fn create<
         };
         // The limit is set as double of max contract bytecode size
         if code_len > max_initcode_size as u64 {
-            context
-                .interpreter
-                .halt(InstructionResult::CreateInitCodeSizeLimit);
-            return;
+            return Err(InstructionResult::CreateInitCodeSizeLimit);
         }
         let init_gas_cost = context.host.gas_params().initcode_cost(code_len as usize);
         if init_gas_cost > context.interpreter.gas.remaining() {
-            context.interpreter.halt(InstructionResult::OutOfGas);
-            return;
+            return Err(InstructionResult::OutOfGas);
         }
-        resize_memory!(
-            context.interpreter,
+        context.interpreter.resize_memory(
             context.host.gas_params(),
             code_offset,
-            code_len as usize
-        );
+            code_len as usize,
+        )?;
         init_code = Bytes::copy_from_slice(
             context
                 .interpreter
@@ -443,8 +435,7 @@ fn create<
     };
     // EIP-3860: Check we have enough gas before doing CREATE
     if init_gas_cost + create_gas_cost > context.interpreter.gas.remaining() {
-        context.interpreter.halt(InstructionResult::OutOfGas);
-        return;
+        return Err(InstructionResult::OutOfGas);
     }
     let salt: Option<U256> = if IS_CREATE2 {
         popn!([salt], context.interpreter);
@@ -469,7 +460,7 @@ fn create<
         None,
         STATE_MAIN,
     );
-    interrupt_into_action(context);
+    interrupt_into_action(context)
 }
 
 fn insert_call_outcome<
@@ -478,10 +469,8 @@ fn insert_call_outcome<
 >(
     context: InstructionContext<'_, H, WIRE>,
     interruption_outcome: InterruptionOutcome,
-) {
-    let Some(return_memory_offset) = get_memory_output_range(context.interpreter) else {
-        return;
-    };
+) -> InstructionExecResult {
+    let return_memory_offset = get_memory_output_range(context.interpreter)?;
     let out_offset = return_memory_offset.start;
     let out_len = return_memory_offset.len();
     context
@@ -508,6 +497,7 @@ fn insert_call_outcome<
             push!(context.interpreter, U256::ZERO);
         }
     }
+    Ok(())
 }
 
 #[inline]
@@ -516,12 +506,11 @@ fn get_memory_input_range<
     H: Host + HostWrapper + ?Sized,
 >(
     context: &mut InstructionContext<'_, H, WIRE>,
-) -> Option<Range<usize>> {
+) -> Result<Range<usize>, InstructionResult> {
     // We peek here because we pop in [get_memory_output_range] function call
     peekn!(
         [in_offset, in_len, out_offset, out_len],
-        context.interpreter,
-        None
+        context.interpreter
     );
     let mut in_range = resize_memory(
         context.interpreter,
@@ -539,7 +528,7 @@ fn get_memory_input_range<
         out_offset,
         out_len,
     )?;
-    Some(in_range)
+    Ok(in_range)
 }
 
 #[inline]
@@ -547,22 +536,18 @@ fn get_memory_output_range<
     WIRE: InterpreterTypes<Extend = InterruptionExtension, Stack = Stack>,
 >(
     interpreter: &mut Interpreter<WIRE>,
-) -> Option<Range<usize>> {
+) -> Result<Range<usize>, InstructionResult> {
     // We pop here because we peeked in [get_memory_input_range] function call
-    popn!(
-        [_in_offset, _in_len, out_offset, out_len],
-        interpreter,
-        None
-    );
-    let out_len = as_usize_or_fail_ret!(interpreter, out_len, None);
+    popn!([_in_offset, _in_len, out_offset, out_len], interpreter);
+    let out_len = as_usize_or_fail!(interpreter, out_len);
     if out_len == 0 {
         // Same sentinel `resize_memory` returns for an empty range: the offset is
         // ignored, so narrowing it here would reject an otherwise valid output range.
-        return Some(usize::MAX..usize::MAX);
+        return Ok(usize::MAX..usize::MAX);
     }
     // Non-zero length means [get_memory_input_range] already validated and resized this range.
-    let out_offset = as_usize_or_fail_ret!(interpreter, out_offset, None);
-    Some(out_offset..out_offset.saturating_add(out_len))
+    let out_offset = as_usize_or_fail!(interpreter, out_offset);
+    Ok(out_offset..out_offset.saturating_add(out_len))
 }
 
 fn call<
@@ -570,10 +555,9 @@ fn call<
     H: Host + HostWrapper + ?Sized,
 >(
     mut context: InstructionContext<'_, H, WIRE>,
-) {
+) -> InstructionExecResult {
     if let Some(interruption_outcome) = unpack_interruption!(@frame context) {
-        insert_call_outcome(context, interruption_outcome);
-        return;
+        return insert_call_outcome(context, interruption_outcome);
     }
     popn!([local_gas_limit, to, value], context.interpreter);
     let to = to.into_address();
@@ -581,14 +565,9 @@ fn call<
     let local_gas_limit = u64::try_from(local_gas_limit).unwrap_or(u64::MAX);
     let has_transfer = !value.is_zero();
     if context.interpreter.runtime_flag.is_static() && has_transfer {
-        context
-            .interpreter
-            .halt(InstructionResult::CallNotAllowedInsideStatic);
-        return;
+        return Err(InstructionResult::CallNotAllowedInsideStatic);
     }
-    let Some(in_range) = get_memory_input_range(&mut context) else {
-        return;
-    };
+    let in_range = get_memory_input_range(&mut context)?;
     let input = global_memory_from_shared_buffer(&context, in_range);
     let mut buffer = vec![0u8; encode::call_size_hint(input.len(), true)];
     encode::call_into(&mut &mut buffer[..], to, Some(value), input.as_ref());
@@ -599,7 +578,7 @@ fn call<
         Some(local_gas_limit.saturating_mul(FUEL_DENOM_RATE)),
         STATE_MAIN,
     );
-    interrupt_into_action(context);
+    interrupt_into_action(context)
 }
 
 fn call_code<
@@ -607,18 +586,15 @@ fn call_code<
     H: Host + HostWrapper + ?Sized,
 >(
     mut context: InstructionContext<'_, H, WIRE>,
-) {
+) -> InstructionExecResult {
     if let Some(interruption_outcome) = unpack_interruption!(@frame context) {
-        insert_call_outcome(context, interruption_outcome);
-        return;
+        return insert_call_outcome(context, interruption_outcome);
     }
     popn!([local_gas_limit, to, value], context.interpreter);
     let to = to.into_address();
     // Max gas limit is not possible in a real ethereum situation.
     let local_gas_limit = u64::try_from(local_gas_limit).unwrap_or(u64::MAX);
-    let Some(in_range) = get_memory_input_range(&mut context) else {
-        return;
-    };
+    let in_range = get_memory_input_range(&mut context)?;
     let input = global_memory_from_shared_buffer(&context, in_range);
     let mut buffer = vec![0u8; encode::call_size_hint(input.len(), true)];
     encode::call_into(&mut &mut buffer[..], to, Some(value), input.as_ref());
@@ -629,7 +605,7 @@ fn call_code<
         Some(local_gas_limit.saturating_mul(FUEL_DENOM_RATE)),
         STATE_MAIN,
     );
-    interrupt_into_action(context);
+    interrupt_into_action(context)
 }
 
 fn delegate_call<
@@ -637,18 +613,15 @@ fn delegate_call<
     H: Host + HostWrapper + ?Sized,
 >(
     mut context: InstructionContext<'_, H, WIRE>,
-) {
+) -> InstructionExecResult {
     if let Some(interruption_outcome) = unpack_interruption!(@frame context) {
-        insert_call_outcome(context, interruption_outcome);
-        return;
+        return insert_call_outcome(context, interruption_outcome);
     }
     popn!([local_gas_limit, to], context.interpreter);
     let to = to.into_address();
     // Max gas limit is not possible in a real ethereum situation.
     let local_gas_limit = u64::try_from(local_gas_limit).unwrap_or(u64::MAX);
-    let Some(in_range) = get_memory_input_range(&mut context) else {
-        return;
-    };
+    let in_range = get_memory_input_range(&mut context)?;
     let input = global_memory_from_shared_buffer(&context, in_range);
     let mut buffer = vec![0u8; encode::call_size_hint(input.len(), false)];
     encode::call_into(&mut &mut buffer[..], to, None, input.as_ref());
@@ -659,7 +632,7 @@ fn delegate_call<
         Some(local_gas_limit.saturating_mul(FUEL_DENOM_RATE)),
         STATE_MAIN,
     );
-    interrupt_into_action(context);
+    interrupt_into_action(context)
 }
 
 fn static_call<
@@ -667,18 +640,15 @@ fn static_call<
     H: Host + HostWrapper + ?Sized,
 >(
     mut context: InstructionContext<'_, H, WIRE>,
-) {
+) -> InstructionExecResult {
     if let Some(interruption_outcome) = unpack_interruption!(@frame context) {
-        insert_call_outcome(context, interruption_outcome);
-        return;
+        return insert_call_outcome(context, interruption_outcome);
     }
     popn!([local_gas_limit, to], context.interpreter);
     let to = to.into_address();
     // Max gas limit is not possible in a real ethereum situation.
     let local_gas_limit = u64::try_from(local_gas_limit).unwrap_or(u64::MAX);
-    let Some(in_range) = get_memory_input_range(&mut context) else {
-        return;
-    };
+    let in_range = get_memory_input_range(&mut context)?;
     let input = global_memory_from_shared_buffer(&context, in_range);
     let mut buffer = vec![0u8; encode::call_size_hint(input.len(), false)];
     encode::call_into(&mut &mut buffer[..], to, None, input.as_ref());
@@ -689,7 +659,7 @@ fn static_call<
         Some(local_gas_limit.saturating_mul(FUEL_DENOM_RATE)),
         STATE_MAIN,
     );
-    interrupt_into_action(context);
+    interrupt_into_action(context)
 }
 
 fn selfdestruct<
@@ -697,10 +667,9 @@ fn selfdestruct<
     H: HostWrapper + ?Sized,
 >(
     context: InstructionContext<'_, H, WIRE>,
-) {
+) -> InstructionExecResult {
     if let Some(_interruption_outcome) = unpack_interruption!(context) {
-        context.interpreter.halt(InstructionResult::SelfDestruct);
-        return;
+        return Err(InstructionResult::SelfDestruct);
     }
     require_non_staticcall!(context.interpreter);
     popn!([target], context.interpreter);
@@ -713,13 +682,13 @@ fn selfdestruct<
         None,
         STATE_MAIN,
     );
-    interrupt_into_action(context);
+    interrupt_into_action(context)
 }
 
 /// EIP-211: New opcodes: RETURNDATASIZE and RETURNDATACOPY
 fn returndatacopy<WIRE: InterpreterTypes, H: HostWrapper + ?Sized>(
     context: InstructionContext<'_, H, WIRE>,
-) {
+) -> InstructionExecResult {
     popn!([memory_offset, offset, len], context.interpreter);
 
     let len = as_u64_or_fail!(context.interpreter, len);
@@ -728,8 +697,7 @@ fn returndatacopy<WIRE: InterpreterTypes, H: HostWrapper + ?Sized>(
     // Old legacy behavior is to panic if data_end is out of the scope of the return buffer.
     let data_end = data_offset.saturating_add(len);
     if data_end > context.interpreter.return_data.buffer().len() as u64 {
-        context.interpreter.halt(InstructionResult::OutOfOffset);
-        return;
+        return Err(InstructionResult::OutOfOffset);
     }
 
     let Some(memory_offset) = copy_cost_and_memory_resize(
@@ -737,8 +705,9 @@ fn returndatacopy<WIRE: InterpreterTypes, H: HostWrapper + ?Sized>(
         context.host.gas_params(),
         memory_offset,
         len as usize,
-    ) else {
-        return;
+    )?
+    else {
+        return Ok(());
     };
 
     // Note: This can't panic because we resized memory to fit.
@@ -748,6 +717,7 @@ fn returndatacopy<WIRE: InterpreterTypes, H: HostWrapper + ?Sized>(
         len as usize,
         context.interpreter.return_data.buffer(),
     );
+    Ok(())
 }
 
 /// Build an instruction table matching EVM semantics with interruption-aware handlers.
@@ -755,28 +725,106 @@ pub const fn interruptable_instruction_table<'a, SDK: SystemAPI>(
 ) -> [Instruction<InterruptingInterpreter, HostWrapperImpl<'a, SDK>>; 256] {
     let mut table = instruction_table::<InterruptingInterpreter, HostWrapperImpl<'a, SDK>>();
     use revm_bytecode::opcode::*;
-    table[BALANCE as usize] = Instruction::new(balance, 0);
-    table[EXTCODESIZE as usize] = Instruction::new(extcodesize, 0);
-    table[EXTCODECOPY as usize] = Instruction::new(extcodecopy, 0);
-    table[RETURNDATACOPY as usize] = Instruction::new(returndatacopy, 3);
-    table[EXTCODEHASH as usize] = Instruction::new(extcodehash, 0);
-    table[BLOCKHASH as usize] = Instruction::new(blockhash, 0);
-    table[SELFBALANCE as usize] = Instruction::new(selfbalance, 0);
-    table[SLOAD as usize] = Instruction::new(sload, 0);
-    table[SSTORE as usize] = Instruction::new(sstore, 0);
-    table[TLOAD as usize] = Instruction::new(tload, 0);
-    table[TSTORE as usize] = Instruction::new(tstore, 0);
-    table[LOG0 as usize] = Instruction::new(log::<0, _>, 0);
-    table[LOG1 as usize] = Instruction::new(log::<1, _>, 0);
-    table[LOG2 as usize] = Instruction::new(log::<2, _>, 0);
-    table[LOG3 as usize] = Instruction::new(log::<3, _>, 0);
-    table[LOG4 as usize] = Instruction::new(log::<4, _>, 0);
-    table[CREATE as usize] = Instruction::new(create::<_, false, _>, 0);
-    table[CALL as usize] = Instruction::new(call, 0);
-    table[CALLCODE as usize] = Instruction::new(call_code, 0);
-    table[DELEGATECALL as usize] = Instruction::new(delegate_call, 0);
-    table[CREATE2 as usize] = Instruction::new(create::<_, true, _>, 0);
-    table[STATICCALL as usize] = Instruction::new(static_call, 0);
-    table[SELFDESTRUCT as usize] = Instruction::new(selfdestruct, 0);
+    table[BALANCE as usize] = Instruction::new(balance);
+    table[EXTCODESIZE as usize] = Instruction::new(extcodesize);
+    table[EXTCODECOPY as usize] = Instruction::new(extcodecopy);
+    table[RETURNDATACOPY as usize] = Instruction::new(returndatacopy);
+    table[EXTCODEHASH as usize] = Instruction::new(extcodehash);
+    table[BLOCKHASH as usize] = Instruction::new(blockhash);
+    table[SELFBALANCE as usize] = Instruction::new(selfbalance);
+    table[SLOAD as usize] = Instruction::new(sload);
+    table[SSTORE as usize] = Instruction::new(sstore);
+    table[TLOAD as usize] = Instruction::new(tload);
+    table[TSTORE as usize] = Instruction::new(tstore);
+    table[LOG0 as usize] = Instruction::new(log::<0, _>);
+    table[LOG1 as usize] = Instruction::new(log::<1, _>);
+    table[LOG2 as usize] = Instruction::new(log::<2, _>);
+    table[LOG3 as usize] = Instruction::new(log::<3, _>);
+    table[LOG4 as usize] = Instruction::new(log::<4, _>);
+    table[CREATE as usize] = Instruction::new(create::<_, false, _>);
+    table[CALL as usize] = Instruction::new(call);
+    table[CALLCODE as usize] = Instruction::new(call_code);
+    table[DELEGATECALL as usize] = Instruction::new(delegate_call);
+    table[CREATE2 as usize] = Instruction::new(create::<_, true, _>);
+    table[STATICCALL as usize] = Instruction::new(static_call);
+    table[SELFDESTRUCT as usize] = Instruction::new(selfdestruct);
     table
+}
+
+/// Static charges for delegated execution at Osaka. Host syscalls charge the
+/// complete cost of intercepted opcodes, including their resumed dispatch.
+pub const fn interruptable_gas_table() -> revm_interpreter::GasTable {
+    use revm_bytecode::opcode::*;
+    let mut table =
+        revm_interpreter::instructions::gas_table_spec(revm_primitives::hardfork::SpecId::OSAKA);
+    let intercepted = [
+        BALANCE,
+        EXTCODESIZE,
+        EXTCODECOPY,
+        EXTCODEHASH,
+        BLOCKHASH,
+        SELFBALANCE,
+        SLOAD,
+        SSTORE,
+        TLOAD,
+        TSTORE,
+        LOG0,
+        LOG1,
+        LOG2,
+        LOG3,
+        LOG4,
+        CREATE,
+        CALL,
+        CALLCODE,
+        DELEGATECALL,
+        CREATE2,
+        STATICCALL,
+        SELFDESTRUCT,
+    ];
+    let mut i = 0;
+    while i < intercepted.len() {
+        table[intercepted[i] as usize] = 0;
+        i += 1;
+    }
+    table
+}
+
+#[cfg(test)]
+mod tests {
+    use super::interruptable_gas_table;
+    use revm_bytecode::opcode;
+
+    #[test]
+    fn delegated_gas_table_avoids_recharging_interrupted_opcodes() {
+        let table = interruptable_gas_table();
+        for opcode in [
+            opcode::BALANCE,
+            opcode::EXTCODESIZE,
+            opcode::EXTCODECOPY,
+            opcode::EXTCODEHASH,
+            opcode::BLOCKHASH,
+            opcode::SELFBALANCE,
+            opcode::SLOAD,
+            opcode::SSTORE,
+            opcode::TLOAD,
+            opcode::TSTORE,
+            opcode::LOG0,
+            opcode::LOG1,
+            opcode::LOG2,
+            opcode::LOG3,
+            opcode::LOG4,
+            opcode::CREATE,
+            opcode::CALL,
+            opcode::CALLCODE,
+            opcode::DELEGATECALL,
+            opcode::CREATE2,
+            opcode::STATICCALL,
+            opcode::SELFDESTRUCT,
+        ] {
+            assert_eq!(table[opcode as usize], 0);
+        }
+        assert_eq!(table[opcode::RETURNDATACOPY as usize], 3);
+        assert_eq!(table[opcode::ADD as usize], 3);
+        assert_eq!(table[opcode::CLZ as usize], 5);
+    }
 }

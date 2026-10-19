@@ -477,8 +477,9 @@ impl<CTX, INSP, I, P> RwasmEvm<CTX, INSP, I, P> {
         // Call how much gas we consumed.
         // For the final gas calculation, we must know that amount of gas we had before the call.
         // It's important because we must have all call-related spending to be included.
-        let mut total_gas_consumed = Gas::new_spent(
+        let mut total_gas_consumed = Gas::new_spent_with_reservoir(
             interrupted_outcome.inputs.gas.remaining() - frame.interpreter.gas.remaining(),
+            0,
         );
         total_gas_consumed.record_refund(
             interrupted_outcome.inputs.gas.refunded() - frame.interpreter.gas.refunded(),

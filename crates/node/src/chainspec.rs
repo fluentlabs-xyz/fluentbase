@@ -4,7 +4,7 @@ use fluentbase_genesis::local_genesis_from_file;
 use fluentbase_release_verify::ReleaseAsset;
 use reth_chainspec::{
     make_genesis_header, BaseFeeParams, BaseFeeParamsKind, Chain, ChainHardforks, ChainSpec,
-    EthereumHardfork, EthereumHardforks, ForkCondition, Hardfork, DEV_HARDFORKS,
+    EthereumHardfork, EthereumHardforks, ForkCondition, Hardfork,
 };
 use reth_cli::chainspec::{parse_genesis, ChainSpecParser};
 use reth_primitives_traits::SealedHeader;
@@ -67,7 +67,9 @@ pub const FLUENT_MAINNET_CHAIN_ID: u64 = 25363;
 /// Local Node (1337)
 pub static FLUENT_LOCAL: LazyLock<Arc<ChainSpec>> = LazyLock::new(|| {
     let genesis = local_genesis_from_file();
-    let hardforks = DEV_HARDFORKS.clone();
+    // Upstream's development schedule can enable future Ethereum forks. Local Fluent execution
+    // must retain the same explicitly selected protocol rules as the other Fluent networks.
+    let hardforks = fluent_default_chain_hardforks(ForkCondition::Timestamp(0));
     ChainSpec {
         chain: Chain::from(FLUENT_LOCALNET_CHAIN_ID),
         genesis_header: SealedHeader::new_unhashed(make_genesis_header(&genesis, &hardforks)),
@@ -255,9 +257,9 @@ pub(crate) fn chain_value_parser(s: &str) -> eyre::Result<Arc<ChainSpec>, eyre::
 
 #[cfg(test)]
 mod tests {
-    use super::chain_value_parser;
+    use super::{chain_value_parser, fluent_default_chain_hardforks, FLUENT_LOCAL};
     use alloy_genesis::{ChainConfig, Genesis};
-    use reth_chainspec::EthereumHardforks;
+    use reth_chainspec::{EthereumHardfork, EthereumHardforks, ForkCondition};
     use reth_revm::primitives::U256;
 
     /// A genesis file in the shape `crates/genesis/build.rs` writes, with the merge field under test
@@ -277,6 +279,36 @@ mod tests {
             ..Default::default()
         };
         serde_json::to_string(&genesis).unwrap()
+    }
+
+    #[test]
+    fn fluent_schedule_does_not_activate_future_ethereum_forks() {
+        for osaka in [
+            ForkCondition::Timestamp(0),
+            ForkCondition::Block(21_300_000),
+        ] {
+            let forks = fluent_default_chain_hardforks(osaka);
+            assert_eq!(forks.fork(EthereumHardfork::Osaka), osaka);
+            assert_eq!(
+                forks.fork(EthereumHardfork::Amsterdam),
+                ForkCondition::Never
+            );
+            assert!(!forks
+                .fork(EthereumHardfork::Amsterdam)
+                .active_at_timestamp(u64::MAX));
+            assert_eq!(forks.last().unwrap().0.name(), "Osaka");
+        }
+    }
+
+    #[test]
+    fn local_chain_retains_osaka_without_future_fork_header_fields() {
+        assert!(FLUENT_LOCAL.is_osaka_active_at_timestamp(0));
+        assert!(!FLUENT_LOCAL.is_amsterdam_active_at_timestamp(u64::MAX));
+        assert_eq!(FLUENT_LOCAL.genesis_header.block_access_list_hash, None);
+        assert_eq!(FLUENT_LOCAL.genesis_header.slot_number, None);
+        assert_eq!(FLUENT_LOCAL.genesis.config.amsterdam_time, None);
+        assert_eq!(FLUENT_LOCAL.genesis.config.bogota_time, None);
+        assert_eq!(FLUENT_LOCAL.genesis.slot_number, None);
     }
 
     #[test]

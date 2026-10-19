@@ -75,8 +75,10 @@ fn run_case(ctx: &mut EvmTestingContext, case: &Case) {
                 "{}: output differs",
                 case.name
             );
-            let initial = calculate_initial_tx_gas(SpecId::PRAGUE, &case.input, false, 0, 0, 0);
-            let expected_gas = (initial.initial_total_gas + out.gas_used).max(initial.floor_gas);
+            let initial =
+                calculate_initial_tx_gas(SpecId::PRAGUE, &case.input, false, 0, 0, 0, None);
+            let expected_gas =
+                (initial.initial_total_gas() + out.gas_used).max(initial.floor_gas());
             assert_eq!(
                 result.tx_gas_used(),
                 expected_gas,

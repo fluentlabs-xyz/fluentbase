@@ -21,7 +21,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/fluentbase-build
-  RUST_TOOLCHAIN: 1.93.1
+  RUST_TOOLCHAIN: 1.95.0
 
 jobs:
   build:

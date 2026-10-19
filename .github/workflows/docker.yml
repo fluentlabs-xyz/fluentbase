@@ -12,7 +12,7 @@ env:
   CARGO_TERM_COLOR: always
   DOCKER_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/fluent
   DOCKER_USERNAME: ${{ github.actor }}
-  RUST_TOOLCHAIN: "1.93.1"
+  RUST_TOOLCHAIN: "1.95.0"
   CROSS_REV: "64b5bb4d3d34de062552b9a2093affe77b4ad16a"
   BINFMT_IMAGE: "tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
   CARGO_NET_GIT_FETCH_WITH_CLI: true

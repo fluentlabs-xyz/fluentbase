@@ -4,16 +4,16 @@ use alloy_network::Ethereum;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::ForkchoiceState;
 use eyre::{OptionExt, WrapErr};
-use reth_consensus_debug_client::{BlockProvider, RpcBlockProvider};
+use reth_consensus_debug_client::{PayloadProvider, RpcBlockProvider};
 use reth_engine_primitives::ConsensusEngineHandle;
 use reth_node_api::FullNodeComponents;
 use reth_node_builder::{rpc::RethRpcAddOns, DebugNode, NodeHandle};
-use reth_node_types::PayloadAttrTy;
+use reth_node_types::{NodeTypes, PayloadAttrTy};
 use reth_payload_builder::PayloadBuilderHandle;
 use reth_payload_primitives::{
     BuiltPayload, ExecutionPayload, PayloadAttributesBuilder, PayloadKind, PayloadTypes,
 };
-use reth_primitives_traits::{HeaderTy, NodePrimitives, SealedBlock, SealedHeaderFor};
+use reth_primitives_traits::{HeaderTy, SealedBlock, SealedHeaderFor};
 use reth_storage_api::BlockReader;
 use reth_tasks::{shutdown::GracefulShutdown, TaskExecutor};
 use std::{future::Future, time::Duration};
@@ -148,7 +148,7 @@ where
         };
 
         let header = payload.block().sealed_header().clone();
-        let payload = T::block_to_payload(payload.block().clone());
+        let payload = T::block_to_payload(payload.block().clone(), None);
         let res = self.to_engine.new_payload(payload).await?;
 
         if !res.is_valid() {
@@ -183,11 +183,17 @@ where
     // Decode directly into the supported RPC block type. Unsupported transaction types now
     // become provider errors, which the subscription logs before continuing, not panics in
     // an infallible AnyNetwork-to-Ethereum conversion callback.
-    let block_provider = RpcBlockProvider::<Ethereum, _>::new(
-        consensus_url.as_str(),
-        Node::Types::rpc_to_primitive_block,
-    )
-    .await?;
+    let block_provider =
+        RpcBlockProvider::<Ethereum, _>::new(consensus_url.as_str(), |block, _extras| {
+            let block = Node::Types::rpc_to_primitive_block(block);
+            <Node::Types as NodeTypes>::Payload::block_to_payload(
+                SealedBlock::new_unhashed(block),
+                None,
+            )
+        })
+        .await?
+        // Fluent has not activated block access lists or Amsterdam execution policies.
+        .without_block_access_lists();
 
     let beacon_engine_handle = handle.node.add_ons_handle.beacon_engine_handle.clone();
     spawn_consensus_follower(
@@ -199,8 +205,8 @@ where
 }
 
 fn spawn_consensus_follower<
-    P: BlockProvider,
-    T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives: NodePrimitives<Block = P::Block>>>,
+    P: PayloadProvider<ExecutionData = T::ExecutionData>,
+    T: PayloadTypes,
 >(
     task_executor: &TaskExecutor,
     engine_handle: ConsensusEngineHandle<T>,
@@ -223,17 +229,17 @@ fn spawn_consensus_follower<
 }
 
 async fn new_block_fetcher<
-    P: BlockProvider,
-    T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives: NodePrimitives<Block = P::Block>>>,
+    P: PayloadProvider<ExecutionData = T::ExecutionData>,
+    T: PayloadTypes,
 >(
     engine_handle: ConsensusEngineHandle<T>,
     block_provider: P,
     shutdown: impl Future<Output = ()>,
 ) -> eyre::Result<()> {
-    let (tx, mut block_stream) = mpsc::channel::<P::Block>(64);
+    let (tx, mut payload_stream) = mpsc::channel::<P::ExecutionData>(64);
     // Poll the subscription in this critical worker so a panic cannot be swallowed by a
     // detached task. Dropping the worker also cancels the subscription.
-    let subscription = block_provider.subscribe_blocks(tx);
+    let subscription = block_provider.subscribe_payloads(tx);
     tokio::pin!(subscription, shutdown);
 
     loop {
@@ -247,9 +253,8 @@ async fn new_block_fetcher<
             _ = &mut subscription => {
                 eyre::bail!("Consensus block subscription ended unexpectedly");
             }
-            block = block_stream.recv() => {
-                let block = block.ok_or_eyre("Consensus block stream closed unexpectedly")?;
-                let payload = T::block_to_payload(SealedBlock::new_unhashed(block));
+            payload = payload_stream.recv() => {
+                let payload = payload.ok_or_eyre("Consensus block stream closed unexpectedly")?;
                 let block_hash = payload.block_hash();
                 // Once processing starts, finish the payload/FCU pair before observing shutdown.
                 // SYNCING/ACCEPTED are allowed: the engine may need to fetch missing ancestors.

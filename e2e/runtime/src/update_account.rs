@@ -316,10 +316,11 @@ fn test_native_precompiles_shadow_runtimes_installed_at_their_addresses() {
         0,
         0,
         0,
+        None,
     );
     assert_eq!(
         result.tx_gas_used(),
-        (initial.initial_total_gas + 15 + 3 * words).max(initial.floor_gas),
+        (initial.initial_total_gas() + 15 + 3 * words).max(initial.floor_gas()),
         "direct call: gas is not the identity schedule"
     );
 

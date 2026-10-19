@@ -1,5 +1,4 @@
-use crate::encoder::Encoder;
-use crate::error::CodecError;
+use crate::{encoder::Encoder, error::CodecError};
 use byteorder::ByteOrder;
 use bytes::{Buf, BytesMut};
 

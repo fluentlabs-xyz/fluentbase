@@ -299,8 +299,8 @@ fn test_calldata_max_block() {
     const BLOB_SIZE: usize = 128 * 1024;
 
     let calldata = vec![0u8; 14 * BLOB_SIZE];
-    let intrinsic = calculate_initial_tx_gas(SpecId::PRAGUE, &calldata, false, 0, 0, 0)
-        .initial_total_gas
+    let intrinsic = calculate_initial_tx_gas(SpecId::PRAGUE, &calldata, false, 0, 0, 0, None)
+        .initial_total_gas()
         + calldata_quadratic_surcharge(calldata.len() as u64);
     assert!(
         intrinsic > TX_GAS_LIMIT_CAP,

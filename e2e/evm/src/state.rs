@@ -141,11 +141,18 @@ pub(crate) fn prepare_env(
     tx_env.caller = if let Some(address) = unit.transaction.sender {
         address
     } else {
-        recover_address(unit.transaction.secret_key.as_slice()).ok_or_else(|| TestError {
+        let key = unit.transaction.secret_key.ok_or_else(|| TestError {
             name: name.to_owned(),
-            kind: TestErrorKind::UnknownPrivateKey(unit.transaction.secret_key),
+            kind: TestErrorKind::MissingSender,
+        })?;
+        recover_address(key.as_slice()).ok_or_else(|| TestError {
+            name: name.to_owned(),
+            kind: TestErrorKind::UnknownPrivateKey(key),
         })?
     };
+    if let Some(chain_id) = unit.transaction.chain_id {
+        tx_env.chain_id = Some(chain_id.to());
+    }
     // Handle gas price overflow - if the gas price is too large for u128,
     // this should result in a GASLIMIT_PRICE_PRODUCT_OVERFLOW exception
     let gas_price_value = unit
@@ -238,6 +245,32 @@ mod tests {
         let start = zero_s.len() - 32;
         zero_s[start..].fill(0);
         assert!(signed_transaction_sender_and_chain_id(&zero_s).is_err());
+    }
+
+    #[test]
+    fn fixture_sender_and_chain_id_do_not_require_a_private_key() {
+        let sender = Address::with_last_byte(1);
+        let fixture = json!({
+            "env": {
+                "currentCoinbase": Address::ZERO, "currentGasLimit": "0x100000",
+                "currentNumber": "0x01", "currentTimestamp": "0x01"
+            },
+            "pre": {}, "post": {},
+            "transaction": {
+                "data": ["0x"], "gasLimit": ["0x5208"], "gasPrice": "0x01",
+                "nonce": "0x00", "value": ["0x00"], "sender": sender,
+                "chainId": "0x05"
+            }
+        });
+        let mut unit: TestUnit = serde_json::from_value(fixture).unwrap();
+        let (_, _, tx) = prepare_env(&unit, "optional-key").unwrap();
+        assert_eq!(tx.caller, sender);
+        assert_eq!(tx.chain_id, Some(5));
+        unit.transaction.sender = None;
+        assert!(matches!(
+            prepare_env(&unit, "missing-sender").unwrap_err().kind,
+            TestErrorKind::MissingSender
+        ));
     }
 
     #[test]

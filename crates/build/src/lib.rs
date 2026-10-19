@@ -29,7 +29,7 @@ pub const ENV_ALLOW_UNVERIFIED_IMAGE: &str = "FLUENTBASE_BUILD_ALLOW_UNVERIFIED_
 pub const DEFAULT_STACK_SIZE: u32 = 128 * 1024; // 128 KB
 pub const BUILD_TARGET: &str = "wasm32-unknown-unknown";
 pub const HELPER_TARGET_SUBDIR: &str = "wasm-compilation";
-pub const DEFAULT_RUST_TOOLCHAIN: &str = "1.93.1";
+pub const DEFAULT_RUST_TOOLCHAIN: &str = "1.95.0";
 
 /// Build contract at specified path
 ///
