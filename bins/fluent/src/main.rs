@@ -4,6 +4,7 @@ use clap::{Args, Parser};
 use fluentbase_node::{
     chainspec::FluentChainSpecParser,
     consensus::FluentConsensus,
+    engine::fluent_add_ons,
     evm::{FluentEvmConfig, FluentExecutorBuilder, FluentNode},
     launcher::{launch_consensus_node, launch_consensus_validator},
     payload::FluentPayloadAttributesBuilder,
@@ -14,8 +15,10 @@ use reth_chainspec::ChainSpec;
 use reth_cli_commands::download::DownloadDefaults;
 use reth_ethereum_cli::{Cli, Commands};
 use reth_node_builder::{DebugNodeLauncherFuture, Node};
-use reth_node_core::version::{default_reth_version_metadata, try_init_version_metadata};
-use reth_node_ethereum::EthereumAddOns;
+use reth_node_core::{
+    args::{DefaultEngineValues, DefaultRpcServerArgs},
+    version::{default_reth_version_metadata, try_init_version_metadata},
+};
 use std::{borrow::Cow, sync::Arc, time::Duration};
 use tracing::info;
 
@@ -98,6 +101,22 @@ fn init_downloads_defaults() {
         .expect("failed to initialize download URLs");
 }
 
+fn init_execution_defaults() {
+    // Reth 2.7 also applies this cap to eth_estimateGas. Keep the default high enough for
+    // every transaction Fluent permits; an explicit --rpc.gascap still takes precedence.
+    DefaultRpcServerArgs::default()
+        .with_rpc_gas_cap(fluentbase_types::TX_GAS_LIMIT_CAP)
+        .try_init()
+        .expect("failed to initialize Fluent RPC defaults");
+    // Fluent's interrupted runtimes share execution state within a transaction. The new
+    // BAL worker path must remain opt-in until it is validated for those runtimes.
+    DefaultEngineValues::default()
+        .with_bal_parallel_execution_disabled(true)
+        .with_bal_parallel_state_root_disabled(true)
+        .try_init()
+        .expect("failed to initialize Fluent engine defaults");
+}
+
 fn main() {
     reth_cli_util::sigsegv_handler::install();
 
@@ -111,6 +130,7 @@ fn main() {
 
     // Override default reth version metadata with fluentbase-specific build metadata.
     init_fluent_version_metadata();
+    init_execution_defaults();
 
     let mut consensus_url: Option<String> = None;
     let mut block_producer: Option<Duration> = None;
@@ -151,7 +171,7 @@ fn main() {
         let components_builder = FluentNode::default()
             .components_builder()
             .executor(FluentExecutorBuilder::default());
-        let add_ons = EthereumAddOns::default();
+        let add_ons = fluent_add_ons();
 
         let handle: DebugNodeLauncherFuture<_, _, _> = builder
             .with_types::<FluentNode>()
@@ -171,5 +191,31 @@ fn main() {
     }) {
         eprintln!("Error: {err:?}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reth_node_core::args::{EngineArgs, RpcServerArgs};
+
+    #[derive(Parser)]
+    struct ExecutionArgs {
+        #[command(flatten)]
+        rpc: RpcServerArgs,
+        #[command(flatten)]
+        engine: EngineArgs,
+    }
+
+    #[test]
+    fn cli_defaults_preserve_fluent_gas_capacity_and_serial_execution() {
+        init_execution_defaults();
+        let args = ExecutionArgs::try_parse_from(["fluent"]).unwrap();
+        assert_eq!(args.rpc.rpc_gas_cap, fluentbase_types::TX_GAS_LIMIT_CAP);
+        assert!(args.engine.bal_parallel_execution_disabled);
+        assert!(args.engine.bal_parallel_state_root_disabled);
+        let explicit =
+            ExecutionArgs::try_parse_from(["fluent", "--rpc.gascap", "60000000"]).unwrap();
+        assert_eq!(explicit.rpc.rpc_gas_cap, 60_000_000);
     }
 }

@@ -66,14 +66,14 @@ impl EthereumMetadata {
     pub fn code_hash(&self) -> B256 {
         match self {
             EthereumMetadata::Legacy(bytecode) => bytecode.hash,
-            EthereumMetadata::Analyzed(bytecode) => bytecode.hash,
+            EthereumMetadata::Analyzed(bytecode) => bytecode.hash(),
         }
     }
 
     pub fn code_copy(&self) -> Bytes {
         match self {
             EthereumMetadata::Legacy(bytecode) => bytecode.bytecode.clone(),
-            EthereumMetadata::Analyzed(bytecode) => bytecode.bytecode.slice(0..bytecode.len()),
+            EthereumMetadata::Analyzed(bytecode) => bytecode.original_bytes(),
         }
     }
 }

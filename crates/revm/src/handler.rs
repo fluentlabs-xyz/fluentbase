@@ -8,7 +8,7 @@ use revm::{
         journaled_state::account::JournaledAccountTr, result::InvalidTransaction, Block, ContextTr,
         JournalTr,
     },
-    context_interface::{Cfg, Transaction},
+    context_interface::{cfg::gas_params::Eip2780TxInfo, Cfg, Transaction},
     handler::{validation, EvmTr, EvmTrError, FrameTr, Handler},
     inspector::{InspectorEvmTr, InspectorHandler},
     interpreter::{interpreter::EthInterpreter, InitialAndFloorGas},
@@ -55,12 +55,22 @@ where
         evm: &mut Self::Evm,
     ) -> Result<InitialAndFloorGas, Self::Error> {
         let ctx = evm.ctx_ref();
-        let mut gas = validation::validate_initial_tx_gas(
+        let tx = ctx.tx();
+        let eip2780 = ctx
+            .cfg()
+            .is_amsterdam_eip2780_enabled()
+            .then(|| Eip2780TxInfo {
+                value: tx.value(),
+                is_self_transfer: tx.kind().to() == Some(&tx.caller()),
+            });
+        let mut gas = validation::validate_initial_tx_gas_with_gas_params(
             ctx.tx(),
             ctx.cfg().spec().into(),
+            ctx.cfg().gas_params(),
             ctx.cfg().is_eip7623_disabled(),
             ctx.cfg().is_amsterdam_eip8037_enabled(),
             ctx.cfg().tx_gas_limit_cap(),
+            eip2780,
             ctx.cfg().is_legacy_bytecode_enabled(),
         )?;
 
@@ -69,16 +79,23 @@ where
         // REVM has already verified the pre-surcharge intrinsic gas. Re-check the total so the
         // execution-gas calculation cannot subtract a larger intrinsic cost from the tx limit.
         let surcharge = calldata_quadratic_surcharge(ctx.tx().input().len() as u64);
-        gas.initial_total_gas = gas.initial_total_gas.checked_add(surcharge).ok_or(
+        let initial_regular_gas = gas.initial_regular_gas().checked_add(surcharge).ok_or(
             InvalidTransaction::CallGasCostMoreThanGasLimit {
                 gas_limit: ctx.tx().gas_limit(),
                 initial_gas: u64::MAX,
             },
         )?;
-        if gas.initial_total_gas > ctx.tx().gas_limit() {
+        gas.set_initial_regular_gas(initial_regular_gas);
+        let initial_total_gas = initial_regular_gas
+            .checked_add(gas.initial_state_gas_final())
+            .ok_or(InvalidTransaction::CallGasCostMoreThanGasLimit {
+                gas_limit: ctx.tx().gas_limit(),
+                initial_gas: u64::MAX,
+            })?;
+        if initial_total_gas > ctx.tx().gas_limit() {
             return Err(InvalidTransaction::CallGasCostMoreThanGasLimit {
                 gas_limit: ctx.tx().gas_limit(),
-                initial_gas: gas.initial_total_gas,
+                initial_gas: initial_total_gas,
             }
             .into());
         }
@@ -180,7 +197,7 @@ mod tests {
                 .unwrap();
             let mut evm = ctx.build_rwasm();
             let mut result =
-                revm::handler::FrameResult::new_call_oog(parse(&receipt["gasUsed"]).to(), 0..0);
+                revm::handler::FrameResult::new_call_oog(parse(&receipt["gasUsed"]).to(), 0..0, 0);
             RwasmHandler::<_, EVMError<core::convert::Infallible>>::default()
                 .reward_beneficiary(&mut evm, &mut result)
                 .unwrap();
@@ -217,7 +234,7 @@ mod tests {
                 [(21_781_416, 100u64), (21_781_417, 107), (21_781_414, 100)]
             {
                 evm.0.ctx.block.number = U256::from(number);
-                let mut result = revm::handler::FrameResult::new_call_oog(1, 0..0);
+                let mut result = revm::handler::FrameResult::new_call_oog(1, 0..0, 0);
                 handler.reward_beneficiary(&mut evm, &mut result).unwrap();
                 expected += U256::from(if force_burn {
                     100
@@ -246,7 +263,8 @@ mod tests {
         let target = Address::repeat_byte(0x22);
         let input = Bytes::from(vec![0; CALLDATA_QUADRATIC_THRESHOLD as usize + 32]);
         let intrinsic_gas =
-            calculate_initial_tx_gas(RwasmSpecId::CANCUN, &input, false, 0, 0, 0).initial_total_gas;
+            calculate_initial_tx_gas(RwasmSpecId::CANCUN, &input, false, 0, 0, 0, None)
+                .initial_total_gas();
         let surcharge = calldata_quadratic_surcharge(input.len() as u64);
         assert!(surcharge > 0);
 
@@ -288,5 +306,31 @@ mod tests {
             evm.0.ctx.db_mut().basic(caller).unwrap().unwrap().balance,
             initial_balance
         );
+    }
+
+    #[test]
+    fn calldata_surcharge_preserves_configured_intrinsic_gas_parameters() {
+        use revm::context_interface::cfg::gas_params::GasId;
+
+        let len = CALLDATA_QUADRATIC_THRESHOLD as usize + 32;
+        let mut ctx = RwasmContext::new(InMemoryDB::default(), RwasmSpecId::CANCUN);
+        ctx.cfg
+            .gas_params
+            .override_gas([(GasId::tx_base_stipend(), 30_000)]);
+        ctx.tx = TxEnv::builder()
+            .data(Bytes::from(vec![0; len]))
+            .gas_limit(100_000_000)
+            .build()
+            .unwrap();
+        let mut evm = ctx.build_rwasm();
+        let gas = RwasmHandler::<_, EVMError<core::convert::Infallible>>::default()
+            .validate_initial_tx_gas(&mut evm)
+            .unwrap();
+        assert_eq!(
+            gas.initial_total_gas(),
+            30_000 + 4 * len as u64 + calldata_quadratic_surcharge(len as u64)
+        );
+        assert_eq!(gas.initial_state_gas_final(), 0);
+        assert_eq!(gas.floor_gas(), 0);
     }
 }

@@ -70,6 +70,7 @@ pub fn exit_code_from_instruction_result(result: InstructionResult) -> ExitCode 
             ExitCode::Ok
         }
         InstructionResult::Revert => ExitCode::Panic,
+        InstructionResult::Suspend => ExitCode::InterruptionCalled,
         InstructionResult::CallTooDeep => ExitCode::CallDepthOverflow,
         InstructionResult::OutOfFunds => ExitCode::OutOfFuel,
         InstructionResult::CreateInitCodeStartingEF00 => ExitCode::CreateContractStartingWithEF,

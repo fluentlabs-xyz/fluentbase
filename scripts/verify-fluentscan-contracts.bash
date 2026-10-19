@@ -3,7 +3,7 @@ set -euo pipefail
 
 FLUENTSCAN_API_BASE_URL="${FLUENTSCAN_API_BASE_URL:-https://api.fluentscan.xyz}"
 GENESIS_VERSION="${GENESIS_VERSION:-v1.4.0}"
-RUST_TOOLCHAIN="${RUST_TOOLCHAIN:-1.93.1}"
+RUST_TOOLCHAIN="${RUST_TOOLCHAIN:-1.95.0}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DRY_RUN="${DRY_RUN:-false}"
 

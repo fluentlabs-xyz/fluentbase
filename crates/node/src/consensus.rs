@@ -1,5 +1,6 @@
 use crate::types::FLUENT_MAXIMUM_EXTRA_DATA_SIZE;
 use alloy_evm::block::BlockExecutionResult;
+use alloy_primitives::B256;
 use fluentbase_types::{
     FLUENT_TESTNET_CHAIN_ID, PRECOMPILE_FEE_MANAGER, TESTNET_FEE_MANAGER_BLOCK,
 };
@@ -75,12 +76,14 @@ where
         block: &RecoveredBlock<N::Block>,
         result: &BlockExecutionResult<N::Receipt>,
         receipt_root_bloom: Option<ReceiptRootBloom>,
+        block_access_list_hash: Option<B256>,
     ) -> Result<(), ConsensusError> {
         <EthBeaconConsensus<ChainSpec> as FullConsensus<N>>::validate_block_post_execution(
             &self.inner,
             block,
             result,
             receipt_root_bloom,
+            block_access_list_hash,
         )
     }
 }

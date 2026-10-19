@@ -187,16 +187,9 @@ mod metadata_storage_gas_tests {
         ctx.block = BlockEnv::default();
         ctx.tx = TxEnv::default();
         let transaction_id = ctx.journaled_state.inner.transaction_id;
-        ctx.journaled_state.inner.state.insert(
-            owner,
-            Account {
-                info: AccountInfo::default(),
-                original_info: Box::<AccountInfo>::default(),
-                transaction_id,
-                storage: Default::default(),
-                status: Default::default(),
-            },
-        );
+        let mut account = Account::from(AccountInfo::default());
+        account.transaction_id = transaction_id;
+        ctx.journaled_state.inner.state.insert(owner, account);
         ctx
     }
 
@@ -1221,13 +1214,8 @@ mod storage_inspector_tests {
         ctx.block = BlockEnv::default();
         ctx.tx = TxEnv::default();
         let transaction_id = ctx.journaled_state.inner.transaction_id;
-        let mut account = Account {
-            info: AccountInfo::default(),
-            original_info: Box::<AccountInfo>::default(),
-            transaction_id,
-            storage: Default::default(),
-            status: Default::default(),
-        };
+        let mut account = Account::from(AccountInfo::default());
+        account.transaction_id = transaction_id;
         account
             .storage
             .insert(slot, EvmStorageSlot::new(old_value, transaction_id));
@@ -1600,7 +1588,8 @@ mod eip8037_state_gas_tests {
         )
         .unwrap();
 
-        let state_gas_spent = frame.interpreter.gas.state_gas_spent();
+        let state_gas_spent = u64::try_from(frame.interpreter.gas.state_gas_spent())
+            .expect("these vectors only charge state gas");
         match frame.interrupted_outcome {
             Some(outcome) => {
                 let result = outcome.result.expect("syscall returns an outcome");

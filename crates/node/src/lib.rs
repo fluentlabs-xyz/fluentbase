@@ -1,5 +1,6 @@
 pub mod chainspec;
 pub mod consensus;
+pub mod engine;
 pub mod evm;
 pub mod launcher;
 pub mod payload;

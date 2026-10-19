@@ -99,8 +99,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             let result = ExecutionResult {
                 result: instruction_result_from_exit_code(ExitCode::$result, output.is_empty()),
                 output,
-                gas: Gas::new_spent(
+                gas: Gas::new_spent_with_reservoir(
                     frame.interpreter.gas.total_gas_spent() - inputs.gas.total_gas_spent(),
+                    0,
                 ),
             };
             frame.insert_interrupted_outcome(SystemInterruptionOutcome {
@@ -125,8 +126,9 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 let result = ExecutionResult {
                     result: instruction_result_from_exit_code(ExitCode::$result, true),
                     output: Bytes::new(),
-                    gas: Gas::new_spent(
+                    gas: Gas::new_spent_with_reservoir(
                         frame.interpreter.gas.total_gas_spent() - inputs.gas.total_gas_spent(),
+                        0,
                     ),
                 };
                 frame.insert_interrupted_outcome(SystemInterruptionOutcome {
@@ -440,6 +442,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 return_memory_offset: Default::default(),
                 gas_limit,
                 reservoir: frame.interpreter.gas.reservoir(),
+                charged_new_account_state_gas: state_gas_cost != 0,
                 bytecode_address,
                 known_bytecode: (code_hash, bytecode),
                 target_address,
@@ -496,6 +499,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 return_memory_offset: Default::default(),
                 gas_limit,
                 reservoir: frame.interpreter.gas.reservoir(),
+                charged_new_account_state_gas: state_gas_cost != 0,
                 bytecode_address,
                 known_bytecode: (code_hash, bytecode),
                 target_address,
@@ -561,6 +565,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 input: CallInput::Bytes(contract_input.into()),
                 gas_limit,
                 reservoir: frame.interpreter.gas.reservoir(),
+                charged_new_account_state_gas: state_gas_cost != 0,
                 target_address: current_target_address,
                 caller: current_target_address,
                 bytecode_address,
@@ -617,6 +622,7 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
                 input: CallInput::Bytes(contract_input.into()),
                 gas_limit,
                 reservoir: frame.interpreter.gas.reservoir(),
+                charged_new_account_state_gas: state_gas_cost != 0,
                 target_address: current_target_address,
                 caller: frame.interpreter.input.caller_address(),
                 bytecode_address,
@@ -1019,13 +1025,10 @@ pub(crate) fn execute_rwasm_interruption<CTX: ContextTr, INSP: Inspector<CTX>>(
             // To make sure this account is ownable and owner by the same runtime, that allows.
             // A runtime to modify any account it owns.
             let (metadata_size, is_same_runtime) = match account.info.code.as_ref() {
-                Some(Bytecode::OwnableAccount(ownable_account_bytecode)) => {
-                    // If an account is not the same - it's not a malformed building param, runtime might not know it's account.
-                    if ownable_account_bytecode.owner_address == account_owner_address {
-                        (ownable_account_bytecode.metadata.len() as u32, true)
-                    } else {
-                        (0, false)
-                    }
+                Some(Bytecode::OwnableAccount(ownable_account_bytecode))
+                    if ownable_account_bytecode.owner_address == account_owner_address =>
+                {
+                    (ownable_account_bytecode.metadata.len() as u32, true)
                 }
                 _ => (0, false),
             };

@@ -21,10 +21,10 @@ fluentbase-sdk = { path = "../crates/sdk", default-features = false }
 fluentbase-evm = { path = "../crates/evm", default-features = false }
 fluentbase-testing = { path = "../crates/testing", default-features = false }
 # revm
-revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v107-patched", default-features = false }
+revm-precompile = { git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "v120-patched", default-features = false }
 # misc
-alloy-json-abi = { version = "1.5.0", features = ["serde_json"] }
-alloy-sol-types = { version = "1.5.0" }
+alloy-json-abi = { version = "1.6.1", features = ["serde_json"] }
+alloy-sol-types = { version = "1.6.1" }
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 ecdsa = { git = "https://github.com/rwasm-patches/signatures.git", default-features = false, features = ["hazmat", "verifying"] }
 k256 = { version = "0.13.4", default-features = false }

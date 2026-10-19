@@ -67,9 +67,16 @@ fn fuel_to_gas(fuel: u32) -> u64 {
 fn run_twice_and_find_gas_difference(wat: &str, call_data_size: usize) -> u64 {
     let result1 = run_main(wat, call_data_size);
     assert!(result1.is_success());
-    let init_gas =
-        calculate_initial_tx_gas(SpecId::PRAGUE, &vec![0u8; call_data_size], false, 0, 0, 0);
-    result1.tx_gas_used() - init_gas.initial_total_gas
+    let init_gas = calculate_initial_tx_gas(
+        SpecId::PRAGUE,
+        &vec![0u8; call_data_size],
+        false,
+        0,
+        0,
+        0,
+        None,
+    );
+    result1.tx_gas_used() - init_gas.initial_total_gas()
 }
 
 #[test]

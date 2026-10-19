@@ -49,17 +49,22 @@ impl MockProvider {
     }
 }
 
-impl BlockProvider for MockProvider {
-    type Block = Block;
+impl PayloadProvider for MockProvider {
+    type ExecutionData = <EthEngineTypes as PayloadTypes>::ExecutionData;
 
-    async fn subscribe_blocks(&self, tx: mpsc::Sender<Block>) {
+    async fn subscribe_payloads(&self, tx: mpsc::Sender<Self::ExecutionData>) {
         let _guard = DropGuard(self.dropped.clone());
         match self.subscription {
             Subscription::End => return,
             Subscription::CloseChannel => drop(tx),
             Subscription::Panic => panic!("mock subscription panic"),
             Subscription::Block => {
-                tx.send(Block::default()).await.unwrap();
+                tx.send(<EthEngineTypes as PayloadTypes>::block_to_payload(
+                    SealedBlock::new_unhashed(Block::default()),
+                    None,
+                ))
+                .await
+                .unwrap();
                 pending::<()>().await;
             }
             Subscription::Pending => {
@@ -69,7 +74,7 @@ impl BlockProvider for MockProvider {
         pending::<()>().await;
     }
 
-    async fn get_block(&self, _: u64) -> eyre::Result<Block> {
+    async fn get_payload(&self, _: u64) -> eyre::Result<Self::ExecutionData> {
         eyre::bail!("not used by the follower")
     }
 }
@@ -99,34 +104,50 @@ async fn unknown_rpc_transaction_returns_error_and_next_block_is_decodable() {
 
     let server = ServerBuilder::default().build("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", server.local_addr().unwrap());
-    let mut module = RpcModule::new(block);
+    let mut next_block = <alloy_rpc_types_eth::Block>::default();
+    next_block.header.inner.block_access_list_hash = Some(B256::ZERO);
+    let mut module = RpcModule::new((block, serde_json::to_value(next_block).unwrap()));
     module
-        .register_method("eth_getBlockByNumber", |params, bad_block, _| {
+        .register_method("eth_getBlockByNumber", |params, blocks, _| {
             let (number, full): (String, bool) = params.parse().unwrap();
             assert!(full);
             if number == "0x1" {
-                bad_block.clone()
+                blocks.0.clone()
             } else {
-                serde_json::to_value(<alloy_rpc_types_eth::Block>::default()).unwrap()
+                blocks.1.clone()
             }
         })
         .unwrap();
+    let bal_requested = Arc::new(AtomicBool::new(false));
+    let bal_requested_by_rpc = bal_requested.clone();
+    module
+        .register_method("eth_getBlockAccessListByHash", move |_, _, _| {
+            bal_requested_by_rpc.store(true, Ordering::SeqCst);
+            serde_json::Value::Null
+        })
+        .unwrap();
     let server = server.start(module);
-    let provider = RpcBlockProvider::<Ethereum, _>::new(&url, |block| -> Block {
-        block.into_consensus().convert_transactions()
+    let provider = RpcBlockProvider::<Ethereum, _>::new(&url, |block, _extras| {
+        let block: Block = block.into_consensus().convert_transactions();
+        <EthEngineTypes as PayloadTypes>::block_to_payload(SealedBlock::new_unhashed(block), None)
     })
     .await
-    .unwrap();
+    .unwrap()
+    .without_block_access_lists();
 
-    let result = timeout(TIMEOUT, provider.get_block(1)).await.unwrap();
+    let result = timeout(TIMEOUT, provider.get_payload(1)).await.unwrap();
     assert!(
         result.is_err(),
         "unknown transaction type must be a provider error"
     );
-    assert!(timeout(TIMEOUT, provider.get_block(2))
+    assert!(timeout(TIMEOUT, provider.get_payload(2))
         .await
         .unwrap()
         .is_ok());
+    assert!(
+        !bal_requested.load(Ordering::SeqCst),
+        "Fluent must not request unsupported block access lists"
+    );
     server.stop().unwrap();
     server.stopped().await;
 }

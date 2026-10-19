@@ -111,7 +111,7 @@ lints this workspace with `-D warnings`; CI does both.
 - **Fluentbase crates** — `fluentbase-build`, `fluentbase-sdk`, `fluentbase-evm` and `fluentbase-testing`, all as
   path dependencies into `../crates`, with `[patch.crates-io]` entries so that transitive dependencies resolve to
   the same local copies.
-- **revm** — `revm-precompile` from the `fluentlabs-xyz/revm-rwasm` fork (`v107-patched` branch).
+- **revm** — `revm-precompile` from the `fluentlabs-xyz/revm-rwasm` fork (`v120-patched` branch, revm 43.0.3).
 - **Misc** — `alloy-sol-types`, `hex`, `k256`, `hashbrown`, `spin`, and `ecdsa` from the `rwasm-patches/signatures`
   fork. `tiny-keccak` is patched to its `rwasm` branch.
 - **Features** — each crate exposes `default = ["std"]` for host tests and `debug-print` for runtime tracing. `evm`

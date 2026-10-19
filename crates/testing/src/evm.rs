@@ -17,8 +17,7 @@ use fluentbase_sdk::{
 };
 use revm::{
     context::{
-        result::EVMError,
-        result::{ExecutionResult, ExecutionResult::Success, Output},
+        result::{EVMError, ExecutionResult, ExecutionResult::Success, Output},
         transaction::SignedAuthorization,
         BlockEnv, CfgEnv, TransactTo, TxEnv,
     },
@@ -275,7 +274,7 @@ impl EvmTestingContext {
             try_print_utf8_error(result.output().cloned().unwrap_or_default().as_ref())
         }
         #[cfg(feature = "debug-print")]
-        println!("deployment gas used: {}", result.gas_used());
+        println!("deployment gas used: {}", result.tx_gas_used());
         assert!(result.is_success());
         let contract_address = calc_create_address(&deployer, nonce);
         assert_eq!(contract_address, deployer.create(nonce));

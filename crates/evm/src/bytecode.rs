@@ -5,7 +5,6 @@
 use bincode::{
     de::read::SliceReader, decode_from_reader, enc::write::SliceWriter, encode_into_writer, error,
 };
-use bitvec::vec::BitVec;
 use fluentbase_sdk::{Bytes, B256};
 use revm_bytecode::{Bytecode, JumpTable};
 
@@ -20,13 +19,13 @@ pub struct LegacyBytecode {
 /// Bytecode plus metadata required by the interpreter.
 pub struct AnalyzedBytecode {
     /// A padded bytecode (length might be different)
-    pub bytecode: Bytes,
+    bytecode: Bytes,
     /// An original bytecode len (w/o padding)
-    pub len: u64,
+    len: u64,
     /// Jump table for JUMPDEST checks
-    pub jump_table: JumpTable,
+    jump_table: JumpTable,
     /// Code hash of bytecode (non-padded version)
-    pub hash: B256,
+    hash: B256,
 }
 
 impl Default for AnalyzedBytecode {
@@ -79,19 +78,37 @@ impl AnalyzedBytecode {
         let hash: [u8; 32] = decode_from_reader(&mut reader, config)?;
         let len: u64 = decode_from_reader(&mut reader, config)?;
         let bytecode: Vec<u8> = decode_from_reader(&mut reader, config)?;
-        let jump_table: Vec<u8> = decode_from_reader(&mut reader, config)?;
+        let _jump_table: Vec<u8> = decode_from_reader(&mut reader, config)?;
         if len > bytecode.len() as u64 {
             return Err(error::DecodeError::ArrayLengthMismatch {
                 required: len as usize,
                 found: bytecode.len(),
             });
         }
-        Ok(Self {
-            bytecode: bytecode.into(),
-            len,
-            jump_table: JumpTable::new(BitVec::from_vec(jump_table)),
-            hash: B256::from(hash),
-        })
+        // Stored padding and jump tables are untrusted. Canonical analysis
+        // guarantees the safety invariants required by Bytecode::new_analyzed.
+        Ok(Self::new(
+            Bytes::from(bytecode).slice(..len as usize),
+            B256::from(hash),
+        ))
+    }
+
+    /// Restore executable bytecode from components produced by canonical analysis.
+    pub(crate) fn into_bytecode(self) -> Bytecode {
+        // SAFETY: The fields are private, and both constructors (new and
+        // deserialize) obtain padding and jump tables from Bytecode::new_legacy.
+        // This preserves the trailing STOP and complete immediate-read padding.
+        unsafe { Bytecode::new_analyzed(self.bytecode, self.len as usize, self.jump_table) }
+    }
+
+    /// Hash of the original bytecode.
+    pub const fn hash(&self) -> B256 {
+        self.hash
+    }
+
+    /// Return a shared view of the original bytecode bytes.
+    pub fn original_bytes(&self) -> Bytes {
+        self.bytecode.slice(..self.len())
     }
 
     /// Return the original (unpadded) bytecode slice.
@@ -126,12 +143,40 @@ mod tests {
 
     #[test]
     fn historical_unpadded_empty_metadata_can_initialize_the_interpreter() {
-        let analyzed = AnalyzedBytecode {
-            bytecode: Bytes::new(),
-            ..Default::default()
-        };
+        let analyzed = AnalyzedBytecode::default();
+        let mut encoded = vec![0; analyzed.hint_size()];
+        analyzed.serialize(&mut encoded).unwrap();
+        // Legacy wire format can encode empty original code and empty padding.
+        // Keep the hash and original length, then encode empty bytecode/jump table.
+        encoded.truncate(40);
+        encoded.extend_from_slice(&0u64.to_le_bytes());
+        encoded.extend_from_slice(&0u64.to_le_bytes());
+        let analyzed = AnalyzedBytecode::deserialize(&encoded).unwrap();
         let vm = crate::evm::EthVM::new(SharedContextInputV1::default(), Bytes::new(), analyzed);
         assert!(vm.interpreter.bytecode.original_byte_slice().is_empty());
+    }
+
+    #[test]
+    fn deserialization_rebuilds_untrusted_padding_and_jump_table() {
+        use revm_bytecode::JumpTable;
+        let untrusted = AnalyzedBytecode {
+            bytecode: Bytes::from_static(&[0x7f]), // truncated PUSH32, no STOP padding
+            len: 1,
+            jump_table: JumpTable::default(),
+            hash: B256::ZERO,
+        };
+        let mut encoded = vec![0; untrusted.hint_size()];
+        untrusted.serialize(&mut encoded).unwrap();
+        let decoded = AnalyzedBytecode::deserialize(&encoded).unwrap();
+        let expected = AnalyzedBytecode::new(untrusted.bytecode, B256::ZERO);
+        assert_eq!(decoded.bytecode, expected.bytecode);
+        assert_eq!(
+            decoded.jump_table.as_slice(),
+            expected.jump_table.as_slice()
+        );
+        assert!(decoded.bytecode.len() > 32);
+        let vm = crate::evm::EthVM::new(SharedContextInputV1::default(), Bytes::new(), decoded);
+        assert_eq!(vm.interpreter.bytecode.original_byte_slice(), &[0x7f]);
     }
 
     #[test]

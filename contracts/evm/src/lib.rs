@@ -74,7 +74,8 @@ fn try_restore_interrupted_evm_context<'a, SDK: SystemAPI>(
     let Some(eth_vm) = context.get_mut(&sdk.unique_key()) else {
         unreachable!("evm: missing cached evm state, can't resume execution")
     };
-    let mut gas = Gas::new_spent(fuel_consumed / FUEL_DENOM_RATE);
+    // The delegated runtime is pinned to Osaka, which has no state-gas reservoir.
+    let mut gas = Gas::new_spent_with_reservoir(fuel_consumed / FUEL_DENOM_RATE, 0);
     gas.record_refund(fuel_refunded / FUEL_DENOM_RATE as i64);
     {
         let dirty_gas = &mut eth_vm.interpreter.gas;

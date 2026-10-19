@@ -1,11 +1,15 @@
 //! Ethereum EVM implementation.
 
-use crate::{consensus::FluentConsensusBuilder, payload::FluentPayloadAttributesBuilder};
+use crate::{
+    consensus::FluentConsensusBuilder,
+    engine::{fluent_add_ons, FluentEngineValidatorBuilder},
+    payload::FluentPayloadAttributesBuilder,
+};
 use alloy_consensus::{Header, TxType};
 use alloy_evm::{
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockExecutorFactory, GasOutput,
-        OnStateHook, StateDB,
+        StateDB,
     },
     env::EvmEnv,
     eth::{EthBlockExecutionCtx, EthBlockExecutor, EthTxResult},
@@ -21,7 +25,7 @@ use core::{
 };
 use fluentbase_revm::{
     revm::{
-        context::{BlockEnv, CfgEnv, Evm as RevmEvm, TxEnv},
+        context::{BlockEnv, CfgEnv, DBErrorMarker, Evm as RevmEvm, TxEnv},
         context_interface::result::{EVMError, HaltReason, ResultAndState},
         handler::{instructions::EthInstructions, EthPrecompiles, PrecompileProvider},
         inspector::NoOpInspector,
@@ -46,8 +50,8 @@ use reth_node_builder::{
     BuilderContext, DebugNode, Node, NodeAdapter,
 };
 use reth_node_ethereum::{
-    EthereumAddOns, EthereumEngineValidatorBuilder, EthereumEthApiBuilder, EthereumNetworkBuilder,
-    EthereumPayloadBuilder, EthereumPoolBuilder,
+    EthereumAddOns, EthereumEthApiBuilder, EthereumNetworkBuilder, EthereumPayloadBuilder,
+    EthereumPoolBuilder,
 };
 use reth_node_types::NodeTypes;
 use reth_payload_primitives::{PayloadAttributesBuilder, PayloadTypes};
@@ -102,7 +106,7 @@ impl<DB: Database, I, PRECOMPILE> FluentEvmExecutor<DB, I, PRECOMPILE> {
             ctx: evm.ctx,
             inspector: evm.inspector,
             instruction: evm.instruction,
-            precompiles: ColdPrecompiles(evm.precompiles),
+            precompiles: ColdPrecompiles::new(evm.precompiles),
             frame_stack: evm.frame_stack,
         };
         Self {
@@ -257,7 +261,7 @@ impl EvmFactory for FluentEvmFactory {
         FluentEvmExecutor<DB, I, Self::Precompiles>;
     type Context<DB: Database> = Context<BlockEnv, TxEnv, CfgEnv, DB>;
     type Tx = TxEnv;
-    type Error<DBError: core::error::Error + Send + Sync + 'static> = EVMError<DBError>;
+    type Error<DBError: DBErrorMarker> = EVMError<DBError>;
     type HaltReason = HaltReason;
     type Spec = SpecId;
     type BlockEnv = BlockEnv;
@@ -272,7 +276,7 @@ impl EvmFactory for FluentEvmFactory {
                 .with_cfg(input.cfg_env)
                 .with_db(db)
                 .build_rwasm_with_inspector(NoOpInspector {})
-                .with_precompiles(ColdPrecompiles(PrecompilesMap::from_static(
+                .with_precompiles(ColdPrecompiles::new(PrecompilesMap::from_static(
                     RwasmPrecompiles::new_with_spec(spec_id).precompiles(),
                 ))),
             inspect: false,
@@ -293,7 +297,7 @@ impl EvmFactory for FluentEvmFactory {
                 .with_cfg(input.cfg_env)
                 .with_db(db)
                 .build_rwasm_with_inspector(inspector)
-                .with_precompiles(ColdPrecompiles(PrecompilesMap::from_static(
+                .with_precompiles(ColdPrecompiles::new(PrecompilesMap::from_static(
                     RwasmPrecompiles::new_with_spec(spec_id).precompiles(),
                 ))),
             inspect: true,
@@ -500,14 +504,14 @@ where
     >;
 
     type AddOns =
-        EthereumAddOns<NodeAdapter<N>, EthereumEthApiBuilder, EthereumEngineValidatorBuilder>;
+        EthereumAddOns<NodeAdapter<N>, EthereumEthApiBuilder, FluentEngineValidatorBuilder>;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
         Self::components()
     }
 
     fn add_ons(&self) -> Self::AddOns {
-        EthereumAddOns::default()
+        fluent_add_ons()
     }
 }
 
@@ -570,10 +574,6 @@ where
         self.inner.finish()
     }
 
-    fn set_state_hook(&mut self, _hook: Option<Box<dyn OnStateHook>>) {
-        self.inner.set_state_hook(_hook)
-    }
-
     fn evm_mut(&mut self) -> &mut Self::Evm {
         self.inner.evm_mut()
     }
@@ -603,6 +603,7 @@ mod tests {
             .prague_activated()
             .build();
         let config = FluentEvmConfig::new(Arc::new(chain), FluentEvmFactory::default());
+        assert!(config.jit_backend().is_none());
         let header = Header {
             gas_limit: 50_000_000,
             base_fee_per_gas: Some(7),
@@ -611,6 +612,8 @@ mod tests {
         let env = config.evm_env(&header).unwrap();
         assert_eq!(env.cfg_env.tx_gas_limit_cap, Some(TX_GAS_LIMIT_CAP));
         assert_eq!(env.cfg_env.tx_gas_limit_cap(), TX_GAS_LIMIT_CAP);
+        assert!(!env.cfg_env.is_amsterdam_eip8037_enabled());
+        assert!(!env.cfg_env.is_amsterdam_eip2780_enabled());
         let next = config
             .next_evm_env(
                 &header,
@@ -627,5 +630,46 @@ mod tests {
             )
             .unwrap();
         assert_eq!(next.cfg_env.tx_gas_limit_cap(), TX_GAS_LIMIT_CAP);
+        assert!(!next.cfg_env.is_amsterdam_eip8037_enabled());
+        assert!(!next.cfg_env.is_amsterdam_eip2780_enabled());
+        let payload = ExecutionData::from_block_unchecked(
+            Default::default(),
+            &reth_ethereum_primitives::Block {
+                header,
+                body: Default::default(),
+            },
+        );
+        let payload_env = config.evm_env_for_payload(&payload).unwrap();
+        assert_eq!(payload_env.cfg_env.tx_gas_limit_cap(), TX_GAS_LIMIT_CAP);
+        assert!(!payload_env.cfg_env.is_amsterdam_eip8037_enabled());
+        assert!(!payload_env.cfg_env.is_amsterdam_eip2780_enabled());
+    }
+
+    #[test]
+    fn factories_preserve_fluent_limits_and_cold_precompiles_with_and_without_inspection() {
+        use fluentbase_revm::revm::database::EmptyDB;
+
+        for spec in [SpecId::PRAGUE, SpecId::OSAKA] {
+            let input = EvmEnv::new(CfgEnv::new_with_spec(spec), BlockEnv::default());
+            let factory = FluentEvmFactory::default();
+            let plain = factory.create_evm(EmptyDB::default(), input.clone());
+            let inspected =
+                factory.create_evm_with_inspector(EmptyDB::default(), input, NoOpInspector {});
+            for evm in [plain, inspected] {
+                assert_eq!(evm.cfg_env().tx_gas_limit_cap(), TX_GAS_LIMIT_CAP);
+                assert!(!evm.cfg_env().is_amsterdam_eip8037_enabled());
+                assert!(!evm.cfg_env().is_amsterdam_eip2780_enabled());
+                let provider = &evm.inner.0.precompiles;
+                assert!(<ColdPrecompiles<PrecompilesMap> as PrecompileProvider<
+                    EthRwasmContext<EmptyDB>,
+                >>::warm_addresses(provider)
+                .is_empty());
+                assert!(<ColdPrecompiles<PrecompilesMap> as PrecompileProvider<
+                    EthRwasmContext<EmptyDB>,
+                >>::contains(
+                    provider, &Address::with_last_byte(1)
+                ));
+            }
+        }
     }
 }

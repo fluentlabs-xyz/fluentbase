@@ -1,6 +1,5 @@
-use alloc::vec::Vec;
-
 use crate::EvmTestingContextWithGenesis;
+use alloc::vec::Vec;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{sol, SolCall};

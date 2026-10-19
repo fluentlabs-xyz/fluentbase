@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RUST_TOOLCHAIN="${RUST_TOOLCHAIN:-1.93.1}"
+RUST_TOOLCHAIN="${RUST_TOOLCHAIN:-1.95.0}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${REPO_ROOT}/target/contracts}"
 
