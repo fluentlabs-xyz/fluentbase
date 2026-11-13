@@ -2013,7 +2013,7 @@ checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
 
 [[package]]
 name = "fluentbase-build"
-version = "1.5.1"
+version = "1.5.2"
 dependencies = [
  "anyhow",
  "cargo_metadata",
@@ -2035,7 +2035,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec"
-version = "1.5.1"
+version = "1.5.2"
 dependencies = [
  "alloy-primitives",
  "byteorder",
@@ -2047,7 +2047,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-codec-derive"
-version = "1.5.1"
+version = "1.5.2"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -2141,7 +2141,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-crypto"
-version = "1.5.1"
+version = "1.5.2"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -2153,7 +2153,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-evm"
-version = "1.5.1"
+version = "1.5.2"
 dependencies = [
  "bincode 2.0.1",
  "bitvec",
@@ -2169,7 +2169,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-revm"
-version = "1.5.1"
+version = "1.5.2"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -2184,7 +2184,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-runtime"
-version = "1.5.1"
+version = "1.5.2"
 dependencies = [
  "blake3",
  "bytemuck",
@@ -2204,7 +2204,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk"
-version = "1.5.1"
+version = "1.5.2"
 dependencies = [
  "alloy-rlp",
  "alloy-sol-types",
@@ -2221,7 +2221,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive"
-version = "1.5.1"
+version = "1.5.2"
 dependencies = [
  "alloy-sol-macro-input",
  "crypto-hashes",
@@ -2234,7 +2234,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-sdk-derive-core"
-version = "1.5.1"
+version = "1.5.2"
 dependencies = [
  "alloy-sol-macro-input",
  "anyhow",
@@ -2256,7 +2256,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-testing"
-version = "1.5.1"
+version = "1.5.2"
 dependencies = [
  "bytes",
  "fluentbase-codec",
@@ -2272,7 +2272,7 @@ dependencies = [
 
 [[package]]
 name = "fluentbase-types"
-version = "1.5.1"
+version = "1.5.2"
 dependencies = [
  "alloy-primitives",
  "bincode 2.0.1",
