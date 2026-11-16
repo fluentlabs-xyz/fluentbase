@@ -267,77 +267,77 @@ jobs:
 
       - name: Upload devnet genesis
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
           path: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz
 
       - name: Upload mainnet genesis
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz
           path: genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz
 
       - name: Upload permissive EVM runtime
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: evm-runtime-permissive-${{ needs.extract-version.outputs.VERSION }}.rwasm.gz
           path: evm-runtime-permissive-${{ needs.extract-version.outputs.VERSION }}.rwasm.gz
 
       - name: Upload genesis manifest
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: genesis-manifest-${{ needs.extract-version.outputs.VERSION }}.txt
           path: genesis-manifest-${{ needs.extract-version.outputs.VERSION }}.txt
 
       - name: Upload genesis provenance
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: genesis-provenance-${{ needs.extract-version.outputs.VERSION }}.json
           path: genesis-provenance-${{ needs.extract-version.outputs.VERSION }}.json
 
       - name: Upload genesis SBOM
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: genesis-sbom-${{ needs.extract-version.outputs.VERSION }}.json
           path: genesis-sbom-${{ needs.extract-version.outputs.VERSION }}.json
 
       - name: Upload devnet genesis signature
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
           path: genesis-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
 
       - name: Upload mainnet genesis signature
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
           path: genesis-mainnet-${{ needs.extract-version.outputs.VERSION }}.json.gz.asc
 
       - name: Upload genesis manifest signature
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: genesis-manifest-${{ needs.extract-version.outputs.VERSION }}.txt.asc
           path: genesis-manifest-${{ needs.extract-version.outputs.VERSION }}.txt.asc
 
       - name: Upload genesis provenance signature
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: genesis-provenance-${{ needs.extract-version.outputs.VERSION }}.json.asc
           path: genesis-provenance-${{ needs.extract-version.outputs.VERSION }}.json.asc
 
       - name: Upload genesis SBOM signature
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: genesis-sbom-${{ needs.extract-version.outputs.VERSION }}.json.asc
           path: genesis-sbom-${{ needs.extract-version.outputs.VERSION }}.json.asc
@@ -449,42 +449,42 @@ jobs:
 
       - name: Upload fluent
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ matrix.build.artifact_binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}.tar.gz
           path: ${{ matrix.build.artifact_binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}.tar.gz
 
       - name: Upload fluent signature
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ matrix.build.artifact_binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}.tar.gz.asc
           path: ${{ matrix.build.artifact_binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}.tar.gz.asc
 
       - name: Upload fluent provenance
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ matrix.build.artifact_binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}-provenance.json
           path: ${{ matrix.build.artifact_binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}-provenance.json
 
       - name: Upload fluent provenance signature
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ matrix.build.artifact_binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}-provenance.json.asc
           path: ${{ matrix.build.artifact_binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}-provenance.json.asc
 
       - name: Upload fluent SBOM
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ matrix.build.artifact_binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}-sbom.json
           path: ${{ matrix.build.artifact_binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}-sbom.json
 
       - name: Upload fluent SBOM signature
         if: ${{ github.event.inputs.dry_run != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ matrix.build.artifact_binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}-sbom.json.asc
           path: ${{ matrix.build.artifact_binary }}-${{ needs.extract-version.outputs.VERSION }}-${{ matrix.configs.target }}-sbom.json.asc
