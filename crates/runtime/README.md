@@ -69,7 +69,8 @@ Module caching and warmup
 - ModuleFactory::get_module_or_init caches rWASM modules by code hash: supplied bytecode is inserted on first use, and
   a hash-only lookup resolves only while that module is resident. RuntimeExecutor::warmup pre-populates the cache.
 - System runtimes are compiled once per thread and reused across calls (SystemRuntime::COMPILED_RUNTIMES), keyed by
-  code hash and compilation-config fingerprint.
+  code hash and compilation-config fingerprint. An abnormal exit drops the cached instance and keeps its compiled
+  definition, so the next call instantiates without compiling; SystemRuntime::reset_cached_runtimes drops both.
 
 Feature flags
 
