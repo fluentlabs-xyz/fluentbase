@@ -63,7 +63,10 @@ An unexpected trap means that the current system-runtime invocation cannot conti
    value transfers and effects committed by nested frames.
 
 Halting the frame or transaction does not continue from corrupted guest state. The runtime instance
-is discarded, and journal rollback protects user storage and balances. Normal failed-transaction
+is discarded, and journal rollback protects user storage and balances. Only the instance is
+discarded: its compiled definition stays cached, so the replacement is instantiated without
+compiling the runtime again. The failing call pays nothing for the replacement, so it has to stay
+that cheap. Normal failed-transaction
 effects, such as gas payment and nonce consumption, still follow the transaction rules.
 
 A sandboxed guest trap alone is not evidence that host memory or persistent state was corrupted, so

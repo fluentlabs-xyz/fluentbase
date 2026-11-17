@@ -24,10 +24,16 @@
 //!
 //! ## Caching model
 //! - `COMPILED_MODULES` caches compiled `wasmtime::Module` by code hash + config fingerprint.
-//! - `COMPILED_RUNTIMES` caches instantiated `CompiledRuntime` per thread (thread-local) by
-//!   code hash + config fingerprint.
+//! - `COMPILED_RUNTIMES` caches, per thread (thread-local) and by code hash + config fingerprint,
+//!   the compiled definition of a system runtime together with its instantiated
+//!   `CompiledRuntime`.
 //!
 //! The store is reused, so the `RuntimeContext` is swapped in/out on every call.
+//!
+//! An abnormal exit (trap, out of fuel, non-`Ok` exit code) drops the instance, because its stack
+//! and linear memory can no longer be trusted, but keeps the compiled definition. The next call
+//! then only instantiates: nothing charges the caller for a reload, so a reload must not repeat
+//! the compilation of the hint.
 
 use crate::{syscall_handler::runtime_syscall_handler, RuntimeContext};
 use alloc::sync::Arc;
@@ -89,17 +95,34 @@ pub struct SystemRuntime {
 /// - cached exported entry functions.
 type CompiledRuntime = StrategyExecutor<RuntimeContext>;
 
+/// A system runtime compiled by the backend this build executes it with, not yet instantiated.
+///
+/// Instantiating from it yields the same fresh instance a full load does, without compiling.
+#[cfg(feature = "wasmtime")]
+type CompiledDefinition = WasmtimeModule;
+#[cfg(not(feature = "wasmtime"))]
+type CompiledDefinition = StrategyDefinition;
+
+/// A cache entry: the compiled definition and the instance currently serving calls, if any.
+struct CachedSystemRuntime {
+    /// Outlives the instance, so that replacing an evicted instance does not compile again.
+    definition: CompiledDefinition,
+    /// `None` after an abnormal exit evicted the instance; the next call instantiates a new one.
+    instance: Option<Arc<RefCell<CompiledRuntime>>>,
+}
+
 thread_local! {
-    /// Thread-local cache of fully instantiated runtimes keyed by code hash and config fingerprint.
+    /// Thread-local cache of compiled and instantiated runtimes keyed by code hash and config
+    /// fingerprint.
     ///
     /// We keep this thread-local because Wasmtime components are not generally inexpensive to share across
     /// threads without careful synchronization, and because per-thread reuse is often enough.
-    pub static COMPILED_RUNTIMES: RefCell<HashMap<CompiledModuleCacheKey, Arc<RefCell<CompiledRuntime>>>> =
+    static COMPILED_RUNTIMES: RefCell<HashMap<CompiledModuleCacheKey, CachedSystemRuntime>> =
         RefCell::new(HashMap::new());
 }
 
 impl SystemRuntime {
-    /// Clears the per-thread cache of instantiated runtimes.
+    /// Clears the per-thread cache of compiled and instantiated runtimes.
     ///
     /// Useful in tests or when a process needs to drop cached instances (e.g. after an upgrade).
     pub fn reset_cached_runtimes() {
@@ -108,9 +131,15 @@ impl SystemRuntime {
         });
     }
 
+    /// Drops the cached instance after an abnormal exit and keeps its compiled definition.
+    ///
+    /// The instance is selected by cache key, exactly as before the definition was retained, so
+    /// which calls run on a fresh instance is unchanged.
     fn evict_cached_runtime(&self, reason: &'static str) {
         COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
-            compiled_runtimes.remove(&self.cache_key);
+            if let Some(cached) = compiled_runtimes.get_mut(&self.cache_key) {
+                cached.instance = None;
+            }
         });
         crate::metrics::record_system_runtime_cache_invalidation(
             self.cache_key.config_fingerprint,
@@ -120,9 +149,10 @@ impl SystemRuntime {
 
     /// Creates a new `SystemRuntime`.
     ///
-    /// If a compatible compiled runtime is present in the thread-local cache, it will be reused.
-    /// Otherwise, this function compiles/loads the module and instantiates it with imports wired via
-    /// `import_linker`.
+    /// If a compatible instance is present in the thread-local cache, it will be reused. If only
+    /// its compiled definition is (the instance was evicted after an abnormal exit), a new
+    /// instance is created from that definition. Otherwise, this function compiles/loads the
+    /// module and instantiates it with imports wired via `import_linker`.
     /// Compilation and instantiation failures return an error without caching an instance.
     /// Loading uses only the backend selected by the `wasmtime` feature; admission
     /// ([`validate_system_runtime`]) is where the hint must pass every backend the crate links.
@@ -145,23 +175,43 @@ impl SystemRuntime {
             system_runtime_fingerprint(address, consume_fuel),
         );
         let compiled_runtime = COMPILED_RUNTIMES.with_borrow_mut(|compiled_runtimes| {
-            if let Some(compiled_runtime) = compiled_runtimes.get(&cache_key).cloned() {
+            if let Some(cached) = compiled_runtimes.get_mut(&cache_key) {
+                if let Some(compiled_runtime) = cached.instance.clone() {
+                    crate::metrics::record_system_runtime_cache_lookup(
+                        cache_key.config_fingerprint,
+                        true,
+                    );
+                    return Ok(compiled_runtime);
+                }
                 crate::metrics::record_system_runtime_cache_lookup(
                     cache_key.config_fingerprint,
-                    true,
+                    false,
                 );
+                // The instance was evicted after an abnormal exit. Its definition is still
+                // valid, so replace the instance without compiling the hint again.
+                let executor = instantiate_system_runtime(&cached.definition, import_linker)?;
+                #[allow(clippy::arc_with_non_send_sync)]
+                let compiled_runtime = Arc::new(RefCell::new(executor));
+                cached.instance = Some(compiled_runtime.clone());
                 return Ok(compiled_runtime);
             }
             crate::metrics::record_system_runtime_cache_lookup(cache_key.config_fingerprint, false);
 
             // The full config (with the import linker and the state router) is only needed to
-            // load the module, so it is built on the miss path alone.
+            // compile the module, so it is built on the miss path alone.
             let config = system_runtime_compilation_config(import_linker.clone(), consume_fuel);
-            let executor = load_system_runtime(&rwasm_module.hint_section, config, import_linker)?;
+            let definition = compile_system_runtime(&rwasm_module.hint_section, config)?;
+            let executor = instantiate_system_runtime(&definition, import_linker)?;
 
             #[allow(clippy::arc_with_non_send_sync)]
             let compiled_runtime = Arc::new(RefCell::new(executor));
-            compiled_runtimes.insert(cache_key, compiled_runtime.clone());
+            compiled_runtimes.insert(
+                cache_key,
+                CachedSystemRuntime {
+                    definition,
+                    instance: Some(compiled_runtime.clone()),
+                },
+            );
             Ok(compiled_runtime)
         })?;
 
@@ -261,8 +311,9 @@ impl SystemRuntime {
             if *trap_code == TrapCode::OutOfFuel {
                 // This case is tricky, because if it happens, then we might have corrupted stack and
                 // uncleaned memory. Since we can't handle it gracefully, then we can only reset the existing
-                // runtime to make sure memory and stack are clean. There is no ddos attack here because,
-                // to achieve this, the user must pay a penalty.
+                // runtime to make sure memory and stack are clean. The caller loses only the gas it
+                // forwarded, which can be next to nothing, so the reset has to stay cheap: the
+                // eviction drops the instance and keeps the compiled definition.
                 self.evict_cached_runtime("out_of_fuel");
                 // Forward the `OutOfFuel` trap to the outer executor, so it can handle it gracefully.
                 return Err(*trap_code);
@@ -393,31 +444,56 @@ pub fn validate_system_runtime(wasm: &[u8], address: Address) -> Result<(), Trap
     Ok(())
 }
 
-/// Loads an admitted hint with Wasmtime, the backend this build executes system runtimes with.
+#[cfg(test)]
+thread_local! {
+    /// Number of hint compilations on this thread, so tests can tell a reload that only
+    /// instantiates from one that compiles.
+    static HINT_COMPILATIONS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
+/// Compiles an admitted hint with Wasmtime, the backend this build executes system runtimes with.
 ///
 /// The rWasm compiler always runs first as the canonical validator, so no start function can
 /// execute while loading on either flavour.
 #[cfg(feature = "wasmtime")]
-fn load_system_runtime(
+fn compile_system_runtime(
     wasm: &[u8],
     config: CompilationConfig,
+) -> Result<CompiledDefinition, TrapCode> {
+    #[cfg(test)]
+    HINT_COMPILATIONS.set(HINT_COMPILATIONS.get() + 1);
+    compile_rwasm(config.clone(), wasm)?;
+    compile_wasmtime(config, wasm)
+}
+
+/// Compiles an admitted hint with rWasm, the only backend this build links.
+#[cfg(not(feature = "wasmtime"))]
+fn compile_system_runtime(
+    wasm: &[u8],
+    config: CompilationConfig,
+) -> Result<CompiledDefinition, TrapCode> {
+    #[cfg(test)]
+    HINT_COMPILATIONS.set(HINT_COMPILATIONS.get() + 1);
+    compile_rwasm(config, wasm)
+}
+
+/// Creates a fresh instance of a compiled system runtime.
+#[cfg(feature = "wasmtime")]
+fn instantiate_system_runtime(
+    definition: &CompiledDefinition,
     import_linker: Arc<ImportLinker>,
 ) -> Result<CompiledRuntime, TrapCode> {
-    compile_rwasm(config.clone(), wasm)?;
-    let module = compile_wasmtime(config, wasm)?;
-    let executor = instantiate_wasmtime(&module, import_linker)?;
+    let executor = instantiate_wasmtime(definition, import_linker)?;
     Ok(StrategyExecutor::Wasmtime { executor })
 }
 
-/// Loads an admitted hint with rWasm, the only backend this build links.
+/// Creates a fresh instance of a compiled system runtime.
 #[cfg(not(feature = "wasmtime"))]
-fn load_system_runtime(
-    wasm: &[u8],
-    config: CompilationConfig,
+fn instantiate_system_runtime(
+    definition: &CompiledDefinition,
     import_linker: Arc<ImportLinker>,
 ) -> Result<CompiledRuntime, TrapCode> {
-    let definition = compile_rwasm(config, wasm)?;
-    instantiate_rwasm(&definition, import_linker)
+    instantiate_rwasm(definition, import_linker)
 }
 
 /// Compiles the hint with the rWasm validator. In particular this rejects start functions,
@@ -632,10 +708,52 @@ mod tests {
         B256::from([0x39; 32])
     }
 
+    /// Whether an instance is cached under `cache_key`.
     fn cache_contains(cache_key: CompiledModuleCacheKey) -> bool {
+        COMPILED_RUNTIMES.with_borrow(|compiled_runtimes| {
+            compiled_runtimes
+                .get(&cache_key)
+                .is_some_and(|cached| cached.instance.is_some())
+        })
+    }
+
+    /// Whether a compiled definition is cached under `cache_key`, with or without an instance.
+    fn definition_cached(cache_key: CompiledModuleCacheKey) -> bool {
         COMPILED_RUNTIMES
             .with_borrow(|compiled_runtimes| compiled_runtimes.contains_key(&cache_key))
     }
+
+    fn hint_compilations() -> usize {
+        HINT_COMPILATIONS.get()
+    }
+
+    /// Loads `wat_source` as an engine-metered system runtime under the shared test code hash.
+    fn metered_runtime(wat_source: &str, fuel_limit: u64) -> SystemRuntime {
+        SystemRuntime::new(
+            system_module(wat_source),
+            import_linker_v1_preview(),
+            test_code_hash(),
+            Address::ZERO,
+            RuntimeContext::default().with_fuel_limit(fuel_limit),
+            true,
+        )
+        .expect("test system runtime must load")
+    }
+
+    /// Returns what the first word of memory held on entry, marks it, then burns fuel in a loop.
+    /// A fresh instance therefore returns 0 and a reused one returns the marker.
+    const MARK_AND_SPIN: &str = r#"
+        (module
+          (memory (export "memory") 1)
+          (func (export "main") (param i32 i32) (result i32)
+            (local $i i32) (local $seen i32)
+            (local.set $seen (i32.load (i32.const 0)))
+            (i32.store (i32.const 0) (i32.const 7))
+            (loop $spin
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br_if $spin (i32.lt_u (local.get $i) (i32.const 10000))))
+            (local.get $seen)))
+    "#;
 
     #[test]
     fn system_runtime_config_disables_rwasm_bulk_op_metering() {
@@ -910,7 +1028,102 @@ mod tests {
             ExitCode::UnexpectedFatalExecutionFailure.into_i32()
         );
         assert!(!cache_contains(cache_key));
+        // Only the instance is dropped: the definition stays for the next call to instantiate.
+        assert!(definition_cached(cache_key));
 
+        SystemRuntime::reset_cached_runtimes();
+    }
+
+    #[test]
+    fn out_of_fuel_reload_instantiates_without_compiling() {
+        SystemRuntime::reset_cached_runtimes();
+        let compilations = hint_compilations();
+
+        let mut starved = metered_runtime(MARK_AND_SPIN, 100);
+        let cache_key = starved.cache_key;
+        assert_eq!(starved.execute(), Err(TrapCode::OutOfFuel));
+        assert!(!cache_contains(cache_key));
+        assert!(definition_cached(cache_key));
+
+        // The reload gets a fresh instance (memory does not carry the marker the starved call
+        // wrote) and does not compile the hint again.
+        let mut reloaded = metered_runtime(MARK_AND_SPIN, 10_000_000);
+        assert!(!Arc::ptr_eq(
+            &starved.compiled_runtime,
+            &reloaded.compiled_runtime
+        ));
+        assert_eq!(reloaded.execute(), Ok(()));
+        assert_eq!(reloaded.context().execution_result.exit_code, 0);
+        assert!(cache_contains(cache_key));
+
+        // A normal exit keeps the instance, so the next call still reuses it.
+        let mut reused = metered_runtime(MARK_AND_SPIN, 10_000_000);
+        assert!(Arc::ptr_eq(
+            &reloaded.compiled_runtime,
+            &reused.compiled_runtime
+        ));
+        assert_eq!(reused.execute(), Ok(()));
+        assert_eq!(reused.context().execution_result.exit_code, 7);
+
+        assert_eq!(hint_compilations(), compilations + 1);
+        SystemRuntime::reset_cached_runtimes();
+    }
+
+    #[test]
+    fn repeated_abnormal_exits_compile_the_hint_once() {
+        let exit_code = ExitCode::MalformedBuiltinParams.into_i32();
+        let exits_with_code = format!(
+            r#"(module
+              (import "fluentbase_v1preview" "_exit" (func $_exit (param i32)))
+              (memory (export "memory") 1)
+              (func (export "main") (param i32 i32) (result i32)
+                (call $_exit (i32.const {exit_code}))
+                i32.const 0))"#
+        );
+        let traps = r#"(module
+          (memory (export "memory") 1)
+          (func (export "main") (param i32 i32) (result i32) unreachable))"#;
+        // One module per eviction reason: out of fuel, a non-`Ok` exit code, an unexpected trap.
+        for (source, expected_result, expected_exit_code) in [
+            (MARK_AND_SPIN, Err(TrapCode::OutOfFuel), None),
+            (exits_with_code.as_str(), Ok(()), Some(exit_code)),
+            (
+                traps,
+                Ok(()),
+                Some(ExitCode::UnexpectedFatalExecutionFailure.into_i32()),
+            ),
+        ] {
+            SystemRuntime::reset_cached_runtimes();
+            let compilations = hint_compilations();
+            for _ in 0..8 {
+                let mut runtime = metered_runtime(source, 100);
+                assert_eq!(runtime.execute(), expected_result, "{source}");
+                if let Some(expected_exit_code) = expected_exit_code {
+                    assert_eq!(
+                        runtime.context().execution_result.exit_code,
+                        expected_exit_code,
+                        "{source}"
+                    );
+                }
+                assert!(!cache_contains(runtime.cache_key), "{source}");
+            }
+            assert_eq!(hint_compilations(), compilations + 1, "{source}");
+        }
+        SystemRuntime::reset_cached_runtimes();
+    }
+
+    #[test]
+    fn reset_drops_compiled_definitions() {
+        SystemRuntime::reset_cached_runtimes();
+        let compilations = hint_compilations();
+
+        let runtime = metered_runtime(MARK_AND_SPIN, 100);
+        assert!(definition_cached(runtime.cache_key));
+        SystemRuntime::reset_cached_runtimes();
+        assert!(!definition_cached(runtime.cache_key));
+
+        metered_runtime(MARK_AND_SPIN, 100);
+        assert_eq!(hint_compilations(), compilations + 2);
         SystemRuntime::reset_cached_runtimes();
     }
 }
