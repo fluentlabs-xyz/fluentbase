@@ -160,6 +160,12 @@ Runtime / syscalls (`crates/runtime`):
 - Fuel/gas charged AFTER an expensive operation instead of before it.
 - Fixed-size buffer reads in the crypto/hashing/curve syscall handlers without validating the
   guest-provided length first.
+- **Host recovery work the failing call does not pay for.** A frame that exits abnormally loses only
+  the gas it was given, which can be next to nothing. Whatever the host does to recover (dropping a
+  cached system-runtime instance, creating its replacement) must therefore be cheap by construction:
+  `SystemRuntime` keeps the compiled definition when it evicts an instance, so the replacement is
+  instantiated and never recompiled. For every eviction or reset path, check who pays for what
+  follows it.
 
 Precompiles (`contracts/*`, `crates/crypto`):
 
@@ -270,3 +276,4 @@ AI coding agents working in this repository must:
 | 2026-05-28 | Initial repository-specific security policy. |
 | 2026-06-10 | Added Auditor's Checklist (known vulnerability classes); paired with AGENTS.md Security Audit Mode. |
 | 2026-09-11 | Checklist: per-transaction conditions escaping as fatal EVM errors (bridge pre-hook overflow). |
+| 2026-11-17 | Checklist: host recovery work after abnormal exits (system-runtime reload). |
