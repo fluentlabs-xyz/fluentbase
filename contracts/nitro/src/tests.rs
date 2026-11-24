@@ -1,6 +1,5 @@
 use super::*;
 use crate::attestation::AttestationDoc;
-use coset::CborSerializable;
 use der::{Decode, DecodePem, Encode};
 use fluentbase_sdk::SharedContextInputV1;
 use fluentbase_testing::TestingContextImpl;
@@ -18,9 +17,8 @@ const TEST_GAS_LIMIT: u64 = 1_250_000;
 fn test_nitro_attestation_verification() {
     let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
 
-    use coset::CoseSign1;
-    let sign1 = CoseSign1::from_slice(&data).unwrap();
-    let payload = sign1.payload.as_ref().unwrap();
+    let sign1 = attestation::parse_cose_sign1(&data).unwrap();
+    let payload = sign1.payload;
     let doc0 = AttestationDoc::from_slice(payload).unwrap();
 
     // Nitro attestation timestamp is in milliseconds.
@@ -55,9 +53,8 @@ fn test_nitro_attestation_verification() {
 fn test_nitro_attestation_stf_keygen() {
     let data: Vec<u8> = include_bytes!("../testdata/stf-keygen.bin").to_vec();
 
-    use coset::CoseSign1;
-    let sign1 = CoseSign1::from_slice(&data).unwrap();
-    let payload = sign1.payload.as_ref().unwrap();
+    let sign1 = attestation::parse_cose_sign1(&data).unwrap();
+    let payload = sign1.payload;
     let doc0 = AttestationDoc::from_slice(payload).unwrap();
 
     // Nitro attestation timestamp is in milliseconds.
@@ -101,8 +98,8 @@ fn bench_nitro_fuel_estimate() {
             include_bytes!("../testdata/stf-keygen.bin").as_slice(),
         ),
     ] {
-        let sign1 = coset::CoseSign1::from_slice(data).unwrap();
-        let payload = sign1.payload.as_ref().unwrap();
+        let sign1 = attestation::parse_cose_sign1(data).unwrap();
+        let payload = sign1.payload;
         let doc = AttestationDoc::from_slice(payload).unwrap();
         let current_timestamp = if doc.timestamp >= 1_000_000_000_000 {
             doc.timestamp / 1000
@@ -132,6 +129,13 @@ fn bench_nitro_fuel_estimate() {
     }
 }
 
+/// The first sample document and the creation time it carries, in seconds.
+const SAMPLE: &[u8] = include_bytes!("../testdata/sample.bin");
+const SAMPLE_TIMESTAMP: u64 = 1_695_049_410;
+
+/// Protected header of a Nitro envelope: `{1: -35}`.
+const ES384_PROTECTED: [u8; 4] = [0xa1, 0x01, 0x38, 0x22];
+
 /// Runs the entrypoint on `input` at block time `timestamp` and returns its result and output.
 fn run_entrypoint(input: Vec<u8>, timestamp: u64) -> (Result<(), ExitCode>, Vec<u8>) {
     let mut shared_ctx = SharedContextInputV1::default();
@@ -158,6 +162,56 @@ fn revert_reason(output: &[u8]) -> &str {
     core::str::from_utf8(&output[68..68 + len]).unwrap()
 }
 
+/// A CBOR byte string: the shortest head for `data`, then `data`.
+fn cbor_bstr(data: &[u8]) -> Vec<u8> {
+    let mut out = match data.len() {
+        len @ 0..=23 => vec![0x40 | len as u8],
+        len @ 24..=0xff => vec![0x58, len as u8],
+        len => {
+            let mut head = vec![0x59];
+            head.extend_from_slice(&u16::try_from(len).unwrap().to_be_bytes());
+            head
+        }
+    };
+    out.extend_from_slice(data);
+    out
+}
+
+/// A COSE_Sign1 envelope; `unprotected` is already encoded CBOR.
+fn cose_envelope(
+    protected: &[u8],
+    unprotected: &[u8],
+    payload: &[u8],
+    signature: &[u8],
+) -> Vec<u8> {
+    let mut out = vec![0x84];
+    out.extend(cbor_bstr(protected));
+    out.extend_from_slice(unprotected);
+    out.extend(cbor_bstr(payload));
+    out.extend(cbor_bstr(signature));
+    out
+}
+
+/// `depth` arrays of one item, each inside the previous one, around the integer 0.
+fn nested_arrays(depth: usize) -> Vec<u8> {
+    let mut out = vec![0x81; depth];
+    out.push(0x00);
+    out
+}
+
+/// A COSE header that carries a counter signature whose own protected header carries one, and
+/// so on, `depth` times: `{7: [h'<header>', {}, h'']}`.
+fn nested_counter_signatures(depth: usize) -> Vec<u8> {
+    let mut header = vec![0xa0];
+    for _ in 0..depth {
+        let mut outer = vec![0xa1, 0x07, 0x83];
+        outer.extend(cbor_bstr(&header));
+        outer.extend_from_slice(&[0xa0, 0x40]);
+        header = outer;
+    }
+    header
+}
+
 #[test]
 fn oversized_input_reverts_with_reason() {
     let (result, output) = run_entrypoint(vec![0u8; NITRO_MAX_INPUT_SIZE as usize + 1], 0);
@@ -168,6 +222,144 @@ fn oversized_input_reverts_with_reason() {
     let (result, output) = run_entrypoint(vec![0u8; NITRO_MAX_INPUT_SIZE as usize], 0);
     assert_eq!(result, Err(ExitCode::Panic));
     assert_eq!(revert_reason(&output), "nitro: not a CoseSign1");
+}
+
+/// A signature that is not 96 bytes long used to panic in the conversion to a fixed-size array,
+/// after the whole certificate chain had been verified.
+#[test]
+fn signature_of_wrong_length_is_rejected() {
+    let sign1 = attestation::parse_cose_sign1(SAMPLE).unwrap();
+
+    for len in [0, 95, 97] {
+        let mut signature = sign1.signature.to_vec();
+        signature.resize(len, 0);
+        let input = cose_envelope(&ES384_PROTECTED, &[0xa0], sign1.payload, &signature);
+
+        assert_eq!(
+            parse_attestation_and_verify(&input, SAMPLE_TIMESTAMP).unwrap_err(),
+            "nitro: invalid signature length",
+            "signature of {len} bytes"
+        );
+
+        let (result, output) = run_entrypoint(input, SAMPLE_TIMESTAMP);
+        assert_eq!(result, Err(ExitCode::Panic));
+        assert_eq!(revert_reason(&output), "nitro: invalid signature length");
+    }
+}
+
+/// Only the envelope Nitro emits is accepted. The cases that nest are the ones that overflowed
+/// the guest stack while a general COSE parser followed them.
+#[test]
+fn envelope_other_than_the_nitro_shape_is_rejected() {
+    const NOT_COSE_SIGN1: &str = "nitro: not a CoseSign1";
+    const BAD_PROTECTED: &str = "nitro: unsupported COSE protected header";
+    const BAD_UNPROTECTED: &str = "nitro: unsupported COSE unprotected header";
+
+    let sign1 = attestation::parse_cose_sign1(SAMPLE).unwrap();
+    let envelope = |protected: &[u8], unprotected: &[u8]| {
+        cose_envelope(protected, unprotected, sign1.payload, sign1.signature)
+    };
+    // The helper rebuilds the sample byte for byte, so each case below differs from a valid
+    // document in one thing only.
+    assert_eq!(envelope(&ES384_PROTECTED, &[0xa0]), SAMPLE);
+
+    let mut tagged = vec![0xd2];
+    tagged.extend_from_slice(SAMPLE);
+    let mut trailing_byte = SAMPLE.to_vec();
+    trailing_byte.push(0);
+    let mut nil_payload = vec![0x84];
+    nil_payload.extend(cbor_bstr(&ES384_PROTECTED));
+    nil_payload.extend_from_slice(&[0xa0, 0xf6]);
+    nil_payload.extend(cbor_bstr(sign1.signature));
+    let mut nested_maps = [0xa1, 0x00].repeat(2000);
+    nested_maps.push(0x00);
+
+    let cases: [(&str, Vec<u8>, &str); 11] = [
+        ("empty input", vec![], NOT_COSE_SIGN1),
+        (
+            "truncated",
+            SAMPLE[..SAMPLE.len() - 1].to_vec(),
+            NOT_COSE_SIGN1,
+        ),
+        ("trailing byte", trailing_byte, NOT_COSE_SIGN1),
+        ("tagged COSE_Sign1", tagged, NOT_COSE_SIGN1),
+        ("nil payload", nil_payload, NOT_COSE_SIGN1),
+        ("nested arrays", nested_arrays(2000), NOT_COSE_SIGN1),
+        (
+            "ES256 protected header",
+            envelope(&[0xa1, 0x01, 0x26], &[0xa0]),
+            BAD_PROTECTED,
+        ),
+        (
+            "empty protected header",
+            envelope(&[], &[0xa0]),
+            BAD_PROTECTED,
+        ),
+        (
+            "counter signatures nested in the protected header",
+            envelope(&nested_counter_signatures(1900), &[0xa0]),
+            BAD_PROTECTED,
+        ),
+        (
+            "unprotected header with a key id",
+            envelope(&ES384_PROTECTED, &[0xa1, 0x04, 0x41, 0x00]),
+            BAD_UNPROTECTED,
+        ),
+        (
+            "maps nested in the unprotected header",
+            envelope(&ES384_PROTECTED, &nested_maps),
+            BAD_UNPROTECTED,
+        ),
+    ];
+
+    for (name, input, expected) in cases {
+        assert_eq!(
+            parse_attestation_and_verify(&input, SAMPLE_TIMESTAMP).unwrap_err(),
+            expected,
+            "{name}"
+        );
+    }
+}
+
+/// The payload is parsed before its signature can be checked, so its nesting is bounded.
+#[test]
+fn nested_payload_is_rejected() {
+    let sign1 = attestation::parse_cose_sign1(SAMPLE).unwrap();
+
+    for depth in [3, 200, 2000] {
+        let input = cose_envelope(
+            &ES384_PROTECTED,
+            &[0xa0],
+            &nested_arrays(depth),
+            sign1.signature,
+        );
+        assert_eq!(
+            parse_attestation_and_verify(&input, SAMPLE_TIMESTAMP).unwrap_err(),
+            "nitro: malformed attestation document",
+            "payload nested {depth} deep"
+        );
+    }
+}
+
+/// The signature covers the payload: changing one bit of either is rejected.
+#[test]
+fn tampered_document_is_rejected() {
+    // COSE_Sign1 ends with the payload followed by `58 60` and the 96-byte signature.
+    let last_payload_byte = SAMPLE.len() - (2 + 96) - 1;
+    let last_signature_byte = SAMPLE.len() - 1;
+
+    for (name, position) in [
+        ("payload", last_payload_byte),
+        ("signature", last_signature_byte),
+    ] {
+        let mut input = SAMPLE.to_vec();
+        input[position] ^= 1;
+        assert_eq!(
+            parse_attestation_and_verify(&input, SAMPLE_TIMESTAMP).unwrap_err(),
+            "nitro: invalid ECDSA signature",
+            "{name} changed"
+        );
+    }
 }
 
 /// Test that validates attestation document field requirements.
@@ -187,9 +379,8 @@ fn oversized_input_reverts_with_reason() {
 fn test_attestation_document_validation() {
     // Load a valid attestation document to use as a base
     let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
-    use coset::CoseSign1;
-    let sign1 = CoseSign1::from_slice(&data).unwrap();
-    let valid_doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
+    let sign1 = attestation::parse_cose_sign1(&data).unwrap();
+    let valid_doc = AttestationDoc::from_slice(sign1.payload).unwrap();
 
     // Test that a valid document passes validation
     // This is implicitly tested through parse_and_verify, but we verify the structure
@@ -233,9 +424,8 @@ fn test_attestation_document_validation() {
 #[should_panic(expected = "nitro: missing module id")]
 fn test_attestation_validation_empty_module_id() {
     let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
-    use coset::CoseSign1;
-    let sign1 = CoseSign1::from_slice(&data).unwrap();
-    let mut doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
+    let sign1 = attestation::parse_cose_sign1(&data).unwrap();
+    let mut doc = AttestationDoc::from_slice(sign1.payload).unwrap();
     doc.module_id = String::new(); // Empty module_id
     attestation::validate_attestation_document(&doc).unwrap();
 }
@@ -245,9 +435,8 @@ fn test_attestation_validation_empty_module_id() {
 #[should_panic(expected = "nitro: incorrect timestamp")]
 fn test_attestation_validation_zero_timestamp() {
     let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
-    use coset::CoseSign1;
-    let sign1 = CoseSign1::from_slice(&data).unwrap();
-    let mut doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
+    let sign1 = attestation::parse_cose_sign1(&data).unwrap();
+    let mut doc = AttestationDoc::from_slice(sign1.payload).unwrap();
     doc.timestamp = 0; // Zero timestamp
     attestation::validate_attestation_document(&doc).unwrap();
 }
@@ -257,9 +446,8 @@ fn test_attestation_validation_zero_timestamp() {
 #[should_panic(expected = "nitro: incorrect digest")]
 fn test_attestation_validation_invalid_digest() {
     let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
-    use coset::CoseSign1;
-    let sign1 = CoseSign1::from_slice(&data).unwrap();
-    let mut doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
+    let sign1 = attestation::parse_cose_sign1(&data).unwrap();
+    let mut doc = AttestationDoc::from_slice(sign1.payload).unwrap();
     doc.digest = "SHA256".to_string(); // Invalid digest (should be SHA384)
     attestation::validate_attestation_document(&doc).unwrap();
 }
@@ -269,9 +457,8 @@ fn test_attestation_validation_invalid_digest() {
 #[should_panic(expected = "nitro: missing cabundle")]
 fn test_attestation_validation_empty_cabundle() {
     let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
-    use coset::CoseSign1;
-    let sign1 = CoseSign1::from_slice(&data).unwrap();
-    let mut doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
+    let sign1 = attestation::parse_cose_sign1(&data).unwrap();
+    let mut doc = AttestationDoc::from_slice(sign1.payload).unwrap();
     doc.cabundle = Vec::new(); // Empty cabundle
     attestation::validate_attestation_document(&doc).unwrap();
 }
@@ -281,9 +468,8 @@ fn test_attestation_validation_empty_cabundle() {
 #[should_panic(expected = "invalid pcrs")]
 fn test_attestation_validation_invalid_pcr_count() {
     let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
-    use coset::CoseSign1;
-    let sign1 = CoseSign1::from_slice(&data).unwrap();
-    let mut doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
+    let sign1 = attestation::parse_cose_sign1(&data).unwrap();
+    let mut doc = AttestationDoc::from_slice(sign1.payload).unwrap();
     doc.pcrs = Vec::new(); // Empty pcrs (should be 1-32)
     attestation::validate_attestation_document(&doc).unwrap();
 }
@@ -293,9 +479,8 @@ fn test_attestation_validation_invalid_pcr_count() {
 #[should_panic(expected = "invalid pcr")]
 fn test_attestation_validation_invalid_pcr_length() {
     let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
-    use coset::CoseSign1;
-    let sign1 = CoseSign1::from_slice(&data).unwrap();
-    let mut doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
+    let sign1 = attestation::parse_cose_sign1(&data).unwrap();
+    let mut doc = AttestationDoc::from_slice(sign1.payload).unwrap();
     // Replace first PCR with invalid length (16 bytes instead of 32/48/64)
     if !doc.pcrs.is_empty() {
         doc.pcrs[0].1 = vec![0u8; 16]; // Invalid PCR length
@@ -308,9 +493,8 @@ fn test_attestation_validation_invalid_pcr_length() {
 #[should_panic(expected = "invalid pub key")]
 fn test_attestation_validation_invalid_public_key_length() {
     let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
-    use coset::CoseSign1;
-    let sign1 = CoseSign1::from_slice(&data).unwrap();
-    let mut doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
+    let sign1 = attestation::parse_cose_sign1(&data).unwrap();
+    let mut doc = AttestationDoc::from_slice(sign1.payload).unwrap();
     // Set public_key to invalid length (> 1024)
     doc.public_key = Some(vec![0u8; 1025]); // Too long
     attestation::validate_attestation_document(&doc).unwrap();
@@ -321,9 +505,8 @@ fn test_attestation_validation_invalid_public_key_length() {
 #[should_panic(expected = "invalid user data")]
 fn test_attestation_validation_invalid_user_data_length() {
     let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
-    use coset::CoseSign1;
-    let sign1 = CoseSign1::from_slice(&data).unwrap();
-    let mut doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
+    let sign1 = attestation::parse_cose_sign1(&data).unwrap();
+    let mut doc = AttestationDoc::from_slice(sign1.payload).unwrap();
     // Set user_data to invalid length (> 512)
     doc.user_data = Some(vec![0u8; 513]); // Too long
     attestation::validate_attestation_document(&doc).unwrap();
@@ -334,9 +517,8 @@ fn test_attestation_validation_invalid_user_data_length() {
 #[should_panic(expected = "invalid nonce")]
 fn test_attestation_validation_invalid_nonce_length() {
     let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
-    use coset::CoseSign1;
-    let sign1 = CoseSign1::from_slice(&data).unwrap();
-    let mut doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
+    let sign1 = attestation::parse_cose_sign1(&data).unwrap();
+    let mut doc = AttestationDoc::from_slice(sign1.payload).unwrap();
     // Set nonce to invalid length (> 512)
     doc.nonce = Some(vec![0u8; 513]); // Too long
     attestation::validate_attestation_document(&doc).unwrap();
@@ -347,9 +529,8 @@ fn test_attestation_validation_invalid_nonce_length() {
 #[should_panic(expected = "invalid cabundle cert")]
 fn test_attestation_validation_invalid_cabundle_cert_length() {
     let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
-    use coset::CoseSign1;
-    let sign1 = CoseSign1::from_slice(&data).unwrap();
-    let mut doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
+    let sign1 = attestation::parse_cose_sign1(&data).unwrap();
+    let mut doc = AttestationDoc::from_slice(sign1.payload).unwrap();
     // Replace first cabundle cert with invalid length (> 1024)
     if !doc.cabundle.is_empty() {
         doc.cabundle[0] = vec![0u8; 1025]; // Too long
@@ -411,9 +592,8 @@ fn test_certificate_chain_extension_validation() {
     let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
 
     // Parse the attestation document
-    use coset::CoseSign1;
-    let sign1 = CoseSign1::from_slice(&data).unwrap();
-    let doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
+    let sign1 = attestation::parse_cose_sign1(&data).unwrap();
+    let doc = AttestationDoc::from_slice(sign1.payload).unwrap();
 
     // Verify that cabundle is not empty (required for chain validation)
     assert!(!doc.cabundle.is_empty(), "cabundle must not be empty");
@@ -523,9 +703,8 @@ fn test_certificate_chain_structure() {
     let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
 
     // Parse the attestation document
-    use coset::CoseSign1;
-    let sign1 = CoseSign1::from_slice(&data).unwrap();
-    let doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
+    let sign1 = attestation::parse_cose_sign1(&data).unwrap();
+    let doc = AttestationDoc::from_slice(sign1.payload).unwrap();
 
     // Verify cabundle is not empty
     assert!(!doc.cabundle.is_empty(), "cabundle must not be empty");
@@ -742,9 +921,8 @@ fn test_all_certificates_have_required_extensions() {
     let data: Vec<u8> = include_bytes!("../testdata/sample.bin").to_vec();
 
     // Parse the attestation document
-    use coset::CoseSign1;
-    let sign1 = CoseSign1::from_slice(&data).unwrap();
-    let doc = AttestationDoc::from_slice(sign1.payload.as_ref().unwrap()).unwrap();
+    let sign1 = attestation::parse_cose_sign1(&data).unwrap();
+    let doc = AttestationDoc::from_slice(sign1.payload).unwrap();
 
     // Build the certificate chain
     let mut chain = Vec::new();
