@@ -23,6 +23,21 @@ The implementation follows the AWS Nitro Enclaves attestation validation flow:
 - Certificates parse as DER, are valid at the block timestamp, carry required extensions, and form a valid chain.
 - The COSE_Sign1 signature verifies with the attestation leaf certificate.
 
+## Output
+
+A verified document returns the fields a caller checks against its policy, ABI-encoded as the
+arguments `(string moduleId, uint64 timestamp, bytes[] pcrs, bytes publicKey, bytes userData, bytes nonce)`,
+so a Solidity caller reads them with `abi.decode(returndata, (string, uint64, bytes[], bytes, bytes, bytes))`:
+
+- `timestamp` is the document's, in milliseconds since the Unix epoch.
+- `pcrs[i]` is PCR `i`; an index below the highest one that the document lacks is empty, which a real PCR (32, 48
+  or 64 bytes) never is.
+  The array ends at the highest PCR the document carries, so a caller checks `pcrs.length` before reading an index.
+- An absent or null `public_key`, `user_data` or `nonce` is empty bytes, the same as a present empty value.
+
+The fields come from the same parse of the signed payload that the signature covers, so a caller needs no CBOR
+parser of its own.
+
 ## Caller Policy
 
 This contract verifies that an attestation document is genuinely signed by the AWS Nitro attestation PKI. That is necessary, but not sufficient, for application-level trust.

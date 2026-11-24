@@ -9,9 +9,12 @@ mod attestation;
 #[cfg(test)]
 mod tests;
 
-use crate::attestation::parse_attestation_and_verify;
+use crate::attestation::{parse_attestation_and_verify, AttestationDoc, MAX_PCR_INDEX};
+use alloc::{string::String, vec, vec::Vec};
 use fluentbase_sdk::{
-    evm::write_evm_panic_message, system_entrypoint, ContextReader, ExitCode, SystemAPI,
+    codec::{bytes::BytesMut, SolidityABI},
+    evm::write_evm_panic_message,
+    system_entrypoint, Bytes, ContextReader, ExitCode, SystemAPI,
 };
 
 // Nitro attestation documents are bounded by their schema: this verifier caps
@@ -22,7 +25,16 @@ use fluentbase_sdk::{
 // has already copied the input by the time this cap is checked.
 const NITRO_MAX_INPUT_SIZE: u32 = 16 * 1024;
 
-/// Verifies an AWS Nitro attestation document.
+/// The fields of a verified document a caller checks against its policy, returned as
+/// `abi.encode(string moduleId, uint64 timestamp, bytes[] pcrs, bytes publicKey, bytes userData,
+/// bytes nonce)`.
+type VerifiedFields = (String, u64, Vec<Bytes>, Bytes, Bytes, Bytes);
+
+/// Verifies an AWS Nitro attestation document and returns its [`VerifiedFields`].
+///
+/// `timestamp` is the document's, in milliseconds. `pcrs[i]` is PCR `i`, and empty where the
+/// document has no PCR `i`, which a real PCR never is (32, 48 or 64 bytes). An absent or null
+/// `public_key`, `user_data` or `nonce` is returned as empty bytes.
 ///
 /// This runtime is engine-metered (`ENGINE_METERED_PRECOMPILES`): the execution engine charges
 /// every instruction of the verification, so no static fee is charged on top of that.
@@ -36,16 +48,45 @@ pub fn main_entry<SDK: SystemAPI>(sdk: &mut SDK) -> Result<(), ExitCode> {
     } else {
         let input = sdk.bytes_input();
         let current_timestamp = sdk.context().block_timestamp();
-        parse_attestation_and_verify(input.as_ref(), current_timestamp).map(|_| ())
+        parse_attestation_and_verify(input.as_ref(), current_timestamp).and_then(encode_fields)
     };
 
-    if let Err(err) = result {
-        write_evm_panic_message(err, |slice| {
-            sdk.write(slice);
-        });
-        return Err(ExitCode::Panic);
+    match result {
+        Ok(output) => {
+            sdk.write(&output);
+            Ok(())
+        }
+        Err(err) => {
+            write_evm_panic_message(err, |slice| {
+                sdk.write(slice);
+            });
+            Err(ExitCode::Panic)
+        }
     }
-    Ok(())
+}
+
+fn encode_fields(doc: AttestationDoc) -> Result<BytesMut, &'static str> {
+    let mut pcrs = vec![Bytes::new(); MAX_PCR_INDEX as usize + 1];
+    let mut len = 0;
+    for (index, value) in doc.pcrs {
+        let index = usize::try_from(index).map_err(|_| "nitro: invalid pcr index")?;
+        let slot = pcrs.get_mut(index).ok_or("nitro: invalid pcr index")?;
+        *slot = value.into();
+        len = len.max(index + 1);
+    }
+    pcrs.truncate(len);
+    let fields: VerifiedFields = (
+        doc.module_id,
+        doc.timestamp,
+        pcrs,
+        doc.public_key.unwrap_or_default().into(),
+        doc.user_data.unwrap_or_default().into(),
+        doc.nonce.unwrap_or_default().into(),
+    );
+    let mut output = BytesMut::new();
+    SolidityABI::encode_function_args(&fields, &mut output)
+        .map_err(|_| "nitro: output encoding failed")?;
+    Ok(output)
 }
 
 system_entrypoint!(main_entry);

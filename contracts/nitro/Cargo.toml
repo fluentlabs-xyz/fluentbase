@@ -14,6 +14,7 @@ p384 = { version = "0.13.0", default-features = false, features = [
 ] }
 
 [dev-dependencies]
+alloy-sol-types = { workspace = true }
 fluentbase-testing = { workspace = true }
 hex = { workspace = true }
 

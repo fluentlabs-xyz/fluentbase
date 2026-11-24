@@ -60,7 +60,7 @@ const COSE_SIGNATURE_LEN: usize = 96;
 const ATTESTATION_DOC_MAX_DEPTH: usize = 2;
 
 /// Maximum PCR index supported by Nitro.
-const MAX_PCR_INDEX: u64 = 31;
+pub(crate) const MAX_PCR_INDEX: u64 = 31;
 
 /// Max allowed size for `public_key`.
 const MAX_PUBLIC_KEY_LEN: usize = 1024;
