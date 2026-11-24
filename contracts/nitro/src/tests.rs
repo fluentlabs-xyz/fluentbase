@@ -2,7 +2,7 @@ use super::*;
 use crate::attestation::AttestationDoc;
 use coset::CborSerializable;
 use der::{Decode, DecodePem, Encode};
-use fluentbase_sdk::{Bytes, SharedContextInputV1};
+use fluentbase_sdk::SharedContextInputV1;
 use fluentbase_testing::TestingContextImpl;
 use x509_cert::certificate::Certificate;
 
@@ -132,20 +132,42 @@ fn bench_nitro_fuel_estimate() {
     }
 }
 
-#[test]
-fn oversized_input_is_rejected_before_copying_full_payload() {
+/// Runs the entrypoint on `input` at block time `timestamp` and returns its result and output.
+fn run_entrypoint(input: Vec<u8>, timestamp: u64) -> (Result<(), ExitCode>, Vec<u8>) {
+    let mut shared_ctx = SharedContextInputV1::default();
+    shared_ctx.block.timestamp = timestamp;
+
     let mut sdk = TestingContextImpl::default()
-        .with_input(Bytes::from(vec![0u8; NITRO_MAX_INPUT_SIZE as usize + 1]))
+        .with_shared_context_input(shared_ctx)
+        .with_input(input)
         .with_gas_limit(TEST_GAS_LIMIT);
 
-    let err = main_entry(&mut sdk).unwrap_err();
-    assert_eq!(err, ExitCode::MalformedBuiltinParams);
+    let result = main_entry(&mut sdk);
     assert_eq!(
         sdk.consumed_fuel(),
         0,
         "engine-metered runtime must not charge static fuel"
     );
-    assert!(sdk.take_output().is_empty());
+    (result, sdk.take_output().to_vec())
+}
+
+/// Reason carried by a Solidity `Error(string)` revert payload.
+fn revert_reason(output: &[u8]) -> &str {
+    assert_eq!(&output[..4], &[0x08, 0xc3, 0x79, 0xa0], "not Error(string)");
+    let len = u32::from_be_bytes(output[64..68].try_into().unwrap()) as usize;
+    core::str::from_utf8(&output[68..68 + len]).unwrap()
+}
+
+#[test]
+fn oversized_input_reverts_with_reason() {
+    let (result, output) = run_entrypoint(vec![0u8; NITRO_MAX_INPUT_SIZE as usize + 1], 0);
+    assert_eq!(result, Err(ExitCode::Panic));
+    assert_eq!(revert_reason(&output), "nitro: input too large");
+
+    // An input of exactly the cap is parsed, and rejected for what it is.
+    let (result, output) = run_entrypoint(vec![0u8; NITRO_MAX_INPUT_SIZE as usize], 0);
+    assert_eq!(result, Err(ExitCode::Panic));
+    assert_eq!(revert_reason(&output), "nitro: not a CoseSign1");
 }
 
 /// Test that validates attestation document field requirements.

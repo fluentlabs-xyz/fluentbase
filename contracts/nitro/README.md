@@ -13,7 +13,7 @@ The implementation follows the AWS Nitro Enclaves attestation validation flow:
 
 ## What This Verifier Checks
 
-- Input size is capped before calldata is copied into memory.
+- Input above `NITRO_MAX_INPUT_SIZE` (16 KiB) is rejected before it is parsed.
 - The input is valid COSE_Sign1 with a present payload.
 - The payload is a Nitro attestation document with required fields.
 - The digest is `SHA384`.
@@ -45,4 +45,6 @@ A future strict selector should accept expected nonce, PCR policy, public key, u
 
 ## Gas/Fuel
 
-The verifier is an engine-metered system runtime: the execution engine charges every instruction it executes, so the cost scales with the attestation being verified. The entrypoint charges no additional static fuel, and input above `NITRO_MAX_INPUT_SIZE` is rejected before the payload is copied.
+The verifier is an engine-metered system runtime: the execution engine charges every instruction it executes, so the cost scales with the attestation being verified. The entrypoint charges no additional static fuel, and input above `NITRO_MAX_INPUT_SIZE` is rejected before it is parsed.
+
+Every rejection reverts with a `nitro: ...` reason and returns the unused gas, so a caller that relays somebody else's attestation loses only the gas the rejected call used.
