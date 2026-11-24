@@ -1,5 +1,6 @@
 use super::*;
-use crate::attestation::AttestationDoc;
+use crate::attestation::{AttestationDoc, MAX_PCR_INDEX};
+use alloy_sol_types::SolValue;
 use der::{Decode, DecodePem, Encode};
 use fluentbase_sdk::SharedContextInputV1;
 use fluentbase_testing::TestingContextImpl;
@@ -222,6 +223,73 @@ fn oversized_input_reverts_with_reason() {
     let (result, output) = run_entrypoint(vec![0u8; NITRO_MAX_INPUT_SIZE as usize], 0);
     assert_eq!(result, Err(ExitCode::Panic));
     assert_eq!(revert_reason(&output), "nitro: not a CoseSign1");
+}
+
+/// The fields a verified document returns, as `abi.decode(output, (string, uint64, bytes[], bytes,
+/// bytes, bytes))` reads them.
+fn decode_fields(output: &[u8]) -> (String, u64, Vec<Bytes>, Bytes, Bytes, Bytes) {
+    <(String, u64, Vec<Bytes>, Bytes, Bytes, Bytes) as SolValue>::abi_decode_params(output).unwrap()
+}
+
+#[test]
+fn verified_document_returns_its_fields() {
+    let doc =
+        AttestationDoc::from_slice(attestation::parse_cose_sign1(SAMPLE).unwrap().payload).unwrap();
+    let (result, output) = run_entrypoint(SAMPLE.to_vec(), SAMPLE_TIMESTAMP);
+    assert_eq!(result, Ok(()));
+
+    let (module_id, timestamp, pcrs, public_key, user_data, nonce) = decode_fields(&output);
+    assert_eq!(module_id, doc.module_id);
+    assert_eq!(timestamp, doc.timestamp);
+    assert_eq!(pcrs.len(), doc.pcrs.len());
+    for (index, value) in &doc.pcrs {
+        assert_eq!(pcrs[*index as usize], value[..], "PCR {index}");
+    }
+    assert_eq!(public_key, doc.public_key.unwrap_or_default()[..]);
+    assert_eq!(user_data, doc.user_data.unwrap_or_default()[..]);
+    assert_eq!(nonce, doc.nonce.unwrap_or_default()[..]);
+}
+
+/// A PCR index the document lacks is an empty entry, and an absent optional field empty bytes.
+#[test]
+fn missing_pcrs_and_absent_fields_are_empty() {
+    let doc = AttestationDoc {
+        module_id: "i-0".into(),
+        timestamp: 7,
+        pcrs: vec![(2, vec![0xaa; 48]), (0, vec![0xbb; 32])],
+        user_data: Some(vec![1, 2, 3]),
+        ..AttestationDoc::default()
+    };
+
+    let fields = decode_fields(&encode_fields(doc).unwrap());
+
+    let empty = Bytes::new();
+    assert_eq!(
+        fields,
+        (
+            "i-0".into(),
+            7,
+            vec![
+                Bytes::from(vec![0xbb; 32]),
+                empty.clone(),
+                Bytes::from(vec![0xaa; 48])
+            ],
+            empty.clone(),
+            Bytes::from(vec![1, 2, 3]),
+            empty,
+        )
+    );
+}
+
+/// A PCR index past the highest a document may carry is rejected, not indexed.
+#[test]
+fn pcr_index_past_the_bound_is_rejected() {
+    let doc = AttestationDoc {
+        pcrs: vec![(MAX_PCR_INDEX + 1, vec![0xaa; 48])],
+        ..AttestationDoc::default()
+    };
+
+    assert_eq!(encode_fields(doc).unwrap_err(), "nitro: invalid pcr index");
 }
 
 /// A signature that is not 96 bytes long used to panic in the conversion to a fixed-size array,

@@ -1,6 +1,6 @@
 use crate::EvmTestingContextWithGenesis;
-use alloy_sol_types::{sol, SolCall};
-use fluentbase_sdk::{address, Address, PRECOMPILE_NITRO_VERIFIER, U256};
+use alloy_sol_types::{sol, SolCall, SolValue};
+use fluentbase_sdk::{address, Address, Bytes, PRECOMPILE_NITRO_VERIFIER, U256};
 use fluentbase_testing::{try_print_utf8_error, EvmTestingContext, TxBuilder};
 use revm::{context::result::ExecutionResult, primitives::hardfork::SpecId};
 use std::time::Instant;
@@ -167,6 +167,16 @@ fn test_nitro_verifier_precompiled_version() {
         panic!("attestation verification failed, result: {:?}", result);
     }
     total_gas += result.tx_gas_used();
+
+    let (_module_id, timestamp, pcrs, _public_key, _user_data, _nonce) =
+        <(String, u64, Vec<Bytes>, Bytes, Bytes, Bytes)>::abi_decode_params(
+            result.output().unwrap(),
+        )
+        .unwrap();
+    assert_eq!(timestamp / 1000, ATTESTATION_TIMESTAMP);
+    assert_eq!(pcrs.len(), 16);
+    assert!(pcrs.iter().all(|pcr| pcr.len() == 48));
+
     println!(
         "NitroVerifier.wasm: time={:.2?}, gas={}",
         start.elapsed(),

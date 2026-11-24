@@ -2077,6 +2077,7 @@ dependencies = [
 name = "fluentbase-contracts-nitro"
 version = "0.1.0"
 dependencies = [
+ "alloy-sol-types",
  "ciborium",
  "der",
  "fluentbase-sdk",
