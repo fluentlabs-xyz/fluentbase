@@ -174,6 +174,12 @@ Precompiles (`contracts/*`, `crates/crypto`):
   length fields. `blake2f`: rounds parameter and final-block flag validation per EIP-152. Point
   decompression (`bn254`, `bls12381`, edwards/weierstrass): subgroup and curve-membership checks.
   `ecrecover` / `secp256r1` / `ed25519` / `webauthn`: signature malleability and wrong-length slices.
+- **Recursive parsing before authentication.** A general CBOR/COSE/ASN.1 parser follows whatever
+  nesting the input declares, and the guest stack ends long before the parser's own depth limit
+  (about 190 nested CBOR items used to trap the Nitro verifier; byte-string-wrapped COSE headers
+  reset the limit at every level). Until a signature has been checked, match fixed envelopes byte for byte
+  and cap the depth of everything else at what the schema needs. A trap is a halt: it burns all
+  the gas the caller forwarded, where a rejection only reverts.
 
 EVM / consensus (`crates/evm`, `crates/revm`):
 
@@ -277,3 +283,4 @@ AI coding agents working in this repository must:
 | 2026-06-10 | Added Auditor's Checklist (known vulnerability classes); paired with AGENTS.md Security Audit Mode. |
 | 2026-09-11 | Checklist: per-transaction conditions escaping as fatal EVM errors (bridge pre-hook overflow). |
 | 2026-11-17 | Checklist: host recovery work after abnormal exits (system-runtime reload). |
+| 2026-11-24 | Checklist: recursive parsing before authentication (Nitro verifier envelope and payload). |

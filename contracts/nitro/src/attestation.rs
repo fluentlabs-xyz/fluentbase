@@ -4,7 +4,9 @@
 //! a COSE_Sign1 envelope.
 //!
 //! Security goals:
-//! - never panic on attacker-controlled input
+//! - never panic or trap on attacker-controlled input
+//! - parse the unauthenticated envelope without recursion and bound the
+//!   nesting of the unauthenticated payload
 //! - reject malformed / ambiguous CBOR fields
 //! - validate X.509 chain structure and extensions
 //! - validate certificate validity against a supplied timestamp
@@ -25,7 +27,6 @@
 //!   provided either in seconds or milliseconds and is normalized internally.
 
 use alloc::{string::String, vec::Vec};
-use coset::{CborSerializable, CoseSign1};
 use der::{asn1::ObjectIdentifier, Decode, DecodePem, Encode};
 use fluentbase_sdk::crypto::crypto_keccak256;
 use p384::ecdsa::signature::Verifier;
@@ -42,6 +43,21 @@ const KEY_USAGE_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.15"
 
 /// ECDSA with SHA-384 as used by Nitro certificates / signatures.
 const ECDSA_SHA384_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.3");
+
+/// Protected header of a Nitro COSE_Sign1 envelope: the CBOR map `{1: -35}`
+/// (`alg` = ES384). AWS fixes this value, so it is matched byte for byte.
+const COSE_PROTECTED_ES384: [u8; 4] = [0xa1, 0x01, 0x38, 0x22];
+
+/// Length of a raw P-384 ECDSA signature (`r || s`), as COSE carries it.
+const COSE_SIGNATURE_LEN: usize = 96;
+
+/// Nesting depth of an attestation document: the top-level map, then the
+/// `pcrs` map or the `cabundle` array inside it.
+///
+/// The payload is parsed before its signature can be checked (the signing
+/// certificate is inside it), so the parser must not follow attacker-chosen
+/// nesting: about 190 nested items exhaust the guest stack.
+const ATTESTATION_DOC_MAX_DEPTH: usize = 2;
 
 /// Maximum PCR index supported by Nitro.
 const MAX_PCR_INDEX: u64 = 31;
@@ -69,6 +85,122 @@ const ATTESTATION_DIGEST: [u8; 32] = [
     0x50, 0x1a, 0x3a, 0x7a, 0x4e, 0x0c, 0xf5, 0x4b, 0x03, 0xf2, 0x48, 0x80, 0x98, 0xbd, 0xd5, 0x9b,
     0xc1, 0xc2, 0xe8, 0xd7, 0x41, 0xa3, 0x00, 0xd6, 0xb2, 0x59, 0x26, 0xd5, 0x31, 0x73, 0x3f, 0xef,
 ];
+
+/// Payload and signature of a Nitro COSE_Sign1 envelope.
+#[derive(Debug)]
+pub(crate) struct CoseSign1<'a> {
+    /// Serialized attestation document: the content that was signed.
+    pub payload: &'a [u8],
+
+    /// Raw ECDSA signature, `COSE_SIGNATURE_LEN` bytes.
+    pub signature: &'a [u8],
+}
+
+/// Splits a definite-length CBOR byte string off the front of `input` and
+/// returns `(content, rest)`.
+fn read_cbor_bstr(input: &[u8]) -> Option<(&[u8], &[u8])> {
+    let (&head, rest) = input.split_first()?;
+    // Major type 2 is a byte string.
+    if head >> 5 != 2 {
+        return None;
+    }
+
+    let (len, rest) = match head & 0x1f {
+        len @ 0..=23 => (len as usize, rest),
+        24 => {
+            let (&len, rest) = rest.split_first()?;
+            (len as usize, rest)
+        }
+        25 => {
+            let (len, rest) = rest.split_first_chunk::<2>()?;
+            (u16::from_be_bytes(*len) as usize, rest)
+        }
+        26 => {
+            let (len, rest) = rest.split_first_chunk::<4>()?;
+            (usize::try_from(u32::from_be_bytes(*len)).ok()?, rest)
+        }
+        // 64-bit and indefinite lengths never describe a Nitro envelope field.
+        _ => return None,
+    };
+
+    rest.split_at_checked(len)
+}
+
+/// Appends the head of a definite-length CBOR byte string in its shortest
+/// form, which is the form the signer serialized.
+fn push_cbor_bstr_head(out: &mut Vec<u8>, len: usize) {
+    if len < 24 {
+        out.push(0x40 | len as u8);
+    } else if let Ok(len) = u8::try_from(len) {
+        out.extend_from_slice(&[0x58, len]);
+    } else if let Ok(len) = u16::try_from(len) {
+        out.push(0x59);
+        out.extend_from_slice(&len.to_be_bytes());
+    } else {
+        // `read_cbor_bstr` yields at most `u32::MAX` bytes.
+        out.push(0x5a);
+        out.extend_from_slice(&(len as u32).to_be_bytes());
+    }
+}
+
+/// Parses the COSE_Sign1 envelope of a Nitro attestation.
+///
+/// AWS fixes its shape: an untagged array of four items,
+/// `[h'A1013822', {}, payload, signature]`. Every byte outside the payload
+/// and the signature is matched against that shape, in a single pass and
+/// without recursion.
+///
+/// The envelope is not authenticated, so it must not reach a general-purpose
+/// COSE or CBOR parser: COSE header maps may carry counter signatures whose
+/// own headers nest again, and about 90 such levels exhaust the guest stack.
+pub(crate) fn parse_cose_sign1(input: &[u8]) -> Result<CoseSign1<'_>, &'static str> {
+    const NOT_COSE_SIGN1: &str = "nitro: not a CoseSign1";
+
+    // An array of four items.
+    let rest = input.strip_prefix(&[0x84]).ok_or(NOT_COSE_SIGN1)?;
+
+    let (protected, rest) = read_cbor_bstr(rest).ok_or(NOT_COSE_SIGN1)?;
+    if protected != COSE_PROTECTED_ES384 {
+        return Err("nitro: unsupported COSE protected header");
+    }
+
+    // The unprotected header is an empty map.
+    let rest = rest
+        .strip_prefix(&[0xa0])
+        .ok_or("nitro: unsupported COSE unprotected header")?;
+
+    let (payload, rest) = read_cbor_bstr(rest).ok_or(NOT_COSE_SIGN1)?;
+    let (signature, rest) = read_cbor_bstr(rest).ok_or(NOT_COSE_SIGN1)?;
+    if !rest.is_empty() {
+        return Err(NOT_COSE_SIGN1);
+    }
+    if signature.len() != COSE_SIGNATURE_LEN {
+        return Err("nitro: invalid signature length");
+    }
+
+    Ok(CoseSign1 { payload, signature })
+}
+
+/// Builds the COSE `Sig_structure` that the enclave signed (RFC 9052, section
+/// 4.4): `["Signature1", protected, external_aad, payload]`, with an empty
+/// `external_aad`.
+fn cose_sig_structure(payload: &[u8]) -> Vec<u8> {
+    const CONTEXT: &[u8; 10] = b"Signature1";
+
+    let mut out = Vec::with_capacity(payload.len() + 24);
+    // An array of four items.
+    out.push(0x84);
+    // text(10)
+    out.push(0x6a);
+    out.extend_from_slice(CONTEXT);
+    push_cbor_bstr_head(&mut out, COSE_PROTECTED_ES384.len());
+    out.extend_from_slice(&COSE_PROTECTED_ES384);
+    // Empty `external_aad`.
+    out.push(0x40);
+    push_cbor_bstr_head(&mut out, payload.len());
+    out.extend_from_slice(payload);
+    out
+}
 
 /// Parsed Nitro attestation payload.
 #[derive(Debug, Default)]
@@ -115,8 +247,11 @@ impl AttestationDoc {
     /// - duplicate PCR indices are rejected
     /// - negative / lossy integer conversions are rejected
     /// - present fields may not be CBOR null
+    /// - nesting beyond `ATTESTATION_DOC_MAX_DEPTH` is rejected
     pub fn from_slice(slice: &[u8]) -> Option<Self> {
-        let value: ciborium::Value = ciborium::de::from_reader(slice).ok()?;
+        let value: ciborium::Value =
+            ciborium::de::from_reader_with_recursion_limit(slice, ATTESTATION_DOC_MAX_DEPTH)
+                .ok()?;
         let mut doc = Self::default();
 
         for (key, value) in value.into_map().ok()?.into_iter() {
@@ -602,7 +737,10 @@ fn verify_attestation_doc(
 }
 
 /// Verifies the COSE_Sign1 signature using the attestation leaf certificate.
-fn verify_cosesign1(cosesign1: &CoseSign1, certificate: &Certificate) -> Result<(), &'static str> {
+fn verify_cosesign1(
+    cosesign1: &CoseSign1<'_>,
+    certificate: &Certificate,
+) -> Result<(), &'static str> {
     let verifying_key = certificate
         .tbs_certificate
         .subject_public_key_info
@@ -614,16 +752,16 @@ fn verify_cosesign1(cosesign1: &CoseSign1, certificate: &Certificate) -> Result<
         return Err("nitro: unsupported certificate signature algorithm");
     }
 
-    cosesign1.verify_signature(&[], |signature, signed_data| {
-        let signature = p384::ecdsa::Signature::from_bytes(signature.into())
-            .map_err(|_| "nitro: invalid ECDSA signature")?;
-        let verify_key = p384::ecdsa::VerifyingKey::from_sec1_bytes(verifying_key)
-            .map_err(|_| "nitro: invalid ECDSA public key")?;
+    // `from_slice` rejects a signature of the wrong length. Converting the
+    // slice into the fixed-size array `from_bytes` takes panics on one.
+    let signature = p384::ecdsa::Signature::from_slice(cosesign1.signature)
+        .map_err(|_| "nitro: invalid ECDSA signature")?;
+    let verify_key = p384::ecdsa::VerifyingKey::from_sec1_bytes(verifying_key)
+        .map_err(|_| "nitro: invalid ECDSA public key")?;
 
-        verify_key
-            .verify(signed_data, &signature)
-            .map_err(|_| "nitro: invalid ECDSA signature")
-    })
+    verify_key
+        .verify(&cose_sig_structure(cosesign1.payload), &signature)
+        .map_err(|_| "nitro: invalid ECDSA signature")
 }
 
 /// Parses a COSE_Sign1 Nitro attestation and verifies:
@@ -641,15 +779,10 @@ pub fn parse_attestation_and_verify(
     slice: &[u8],
     current_timestamp: u64,
 ) -> Result<AttestationDoc, &'static str> {
-    let sign1 = CoseSign1::from_slice(slice).map_err(|_| "nitro: not a CoseSign1")?;
-
-    let sign_payload = sign1
-        .payload
-        .as_ref()
-        .ok_or("nitro: missing sign payload")?;
+    let sign1 = parse_cose_sign1(slice)?;
 
     let doc =
-        AttestationDoc::from_slice(sign_payload).ok_or("nitro: malformed attestation document")?;
+        AttestationDoc::from_slice(sign1.payload).ok_or("nitro: malformed attestation document")?;
 
     validate_attestation_document(&doc)?;
 
