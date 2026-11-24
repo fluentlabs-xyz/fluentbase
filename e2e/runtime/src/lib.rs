@@ -26,6 +26,8 @@ use fluentbase_testing::EvmTestingContext;
 use revm::{bytecode::Bytecode, state::AccountInfo};
 
 #[cfg(test)]
+mod bench;
+#[cfg(test)]
 mod blockhash;
 #[cfg(test)]
 mod bootstrap_authority;
@@ -36,9 +38,13 @@ mod builtins;
 #[cfg(test)]
 mod constructor;
 #[cfg(test)]
+mod ddos;
+#[cfg(test)]
 mod deployer;
 #[cfg(test)]
 mod eip2935;
+#[cfg(test)]
+mod eip7702;
 #[cfg(test)]
 mod eip7951;
 #[cfg(test)]
@@ -48,21 +54,15 @@ mod events;
 #[cfg(test)]
 mod evm;
 #[cfg(test)]
-mod fuel;
-#[cfg(test)]
-mod gas;
-// #[cfg(test)]
-// mod nitro;
-#[cfg(test)]
-mod bench;
-#[cfg(test)]
-mod ddos;
-#[cfg(test)]
-mod eip7702;
-#[cfg(test)]
 mod exec_input;
 #[cfg(test)]
 mod fee_manager;
+#[cfg(test)]
+mod fuel;
+#[cfg(test)]
+mod gas;
+#[cfg(test)]
+mod nitro;
 #[cfg(test)]
 mod oom;
 #[cfg(test)]
